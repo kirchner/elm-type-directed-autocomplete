@@ -5,9 +5,14 @@
   "repository": "git@github.com:kirchner/elm-type-directed-autocomplete.git",
   "author": "Fabian Kirchner <kirchner@posteo.de>",
   "license": "MIT",
+  "scripts": {
+    "dev": "parcel index.html --port 3000",
+    "build": "parcel build index.html"
+  },
   "dependencies": {},
   "devDependencies": {
     "elm": "^0.19.0-bugfix6",
-    "elm-test": "^0.19.0-rev4"
+    "elm-test": "^0.19.0-rev4",
+    "parcel": "1.10.3"
   }
 }
