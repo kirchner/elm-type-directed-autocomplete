@@ -13,6 +13,14 @@ import State exposing (State)
 import Type
 
 
+usefulConstants : Dict String Type
+usefulConstants =
+    Dict.fromList
+        [ ( "0", Type "Int" [] )
+        , ( "\"\"", Type "String" [] )
+        ]
+
+
 type Expr
     = Call String (List String)
 
@@ -27,7 +35,13 @@ toString expr =
 
 suggest : Dict String Type -> Type -> List Expr
 suggest knownValues =
-    moreGeneralValues 1 (Dict.map (always removeScope) knownValues) Dict.empty
+    let
+        usedKnownValues =
+            knownValues
+                |> Dict.map (always removeScope)
+                |> Dict.union usefulConstants
+    in
+    moreGeneralValues 1 usedKnownValues Dict.empty
 
 
 moreGeneralValues : Int -> Dict String Type -> Dict String Type -> Type -> List Expr

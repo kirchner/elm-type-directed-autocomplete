@@ -102,6 +102,22 @@ isGeneralizationOfTest =
                         , Dict.fromList
                             [ ( "a", Type "String" [] ) ]
                         )
+        , test "List comparable -> comparable == List Int -> Int" <|
+            \_ ->
+                Lambda
+                    (Type "List" [ Var "comparable" ])
+                    (Var "comparable")
+                    |> Type.isGeneralizationOf
+                        (Lambda
+                            (Type "List" [ Type "Int" [] ])
+                            (Type "Int" [])
+                        )
+                    |> State.run Dict.empty
+                    |> Expect.equal
+                        ( True
+                        , Dict.fromList
+                            [ ( "comparable", Type "Int" [] ) ]
+                        )
         , test "number == Int" <|
             \_ ->
                 Var "number"

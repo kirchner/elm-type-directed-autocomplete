@@ -3,6 +3,8 @@ module Main exposing (main)
 import Browser
 import Dict exposing (Dict)
 import Element exposing (Element)
+import Element.Background as Background
+import Element.Border as Border
 import Element.Font as Font
 import Element.Input as Input
 import Elm.Docs exposing (Module)
@@ -12,6 +14,7 @@ import Html exposing (Html)
 import Http
 import Json.Decode as Decode
 import Set
+import Type
 
 
 main : Program {} Model Msg
@@ -29,6 +32,9 @@ type Model
     | Loaded
         { coreModules : List Module
         , targetType : String
+        , localValues : Dict String Type
+        , newName : String
+        , newType : String
         }
     | Failed Http.Error
 
@@ -70,56 +76,137 @@ view model =
 
 
 viewLoaded data =
-    Element.column
+    Element.row
         [ Element.width Element.fill
         , Element.height Element.fill
-        , Element.padding 64
-        , Element.spacing 32
-        , Font.family
-            [ Font.monospace ]
-        , Font.size 16
         ]
-        (case decodeTargetType data.targetType of
-            Just targetType ->
-                let
-                    knownValues =
-                        data.coreModules
-                            |> List.map valuesFromModule
-                            |> List.foldl Dict.union Dict.empty
-                in
-                [ Input.text
-                    [ Element.spacing 8
-                    , Element.width (Element.px 640)
+        [ Element.column
+            [ Element.width Element.fill
+            , Element.height Element.fill
+            , Element.padding 64
+            , Element.spacing 32
+            , Font.family
+                [ Font.monospace ]
+            , Font.size 16
+            ]
+            (case decodeTargetType data.targetType of
+                Just targetType ->
+                    let
+                        knownValues =
+                            data.coreModules
+                                |> List.map valuesFromModule
+                                |> List.foldl Dict.union Dict.empty
+                    in
+                    [ Input.text
+                        [ Element.spacing 8
+                        , Element.width Element.fill
+                        ]
+                        { onChange = TargetTypeChanged
+                        , text = data.targetType
+                        , placeholder = Nothing
+                        , label =
+                            Input.labelAbove [ Font.bold ]
+                                (Element.text "Target type")
+                        }
+                    , Element.column
+                        [ Element.width Element.fill
+                        , Element.height Element.fill
+                        , Element.spacing 16
+                        ]
+                        [ Element.el [ Font.bold ]
+                            (Element.text "Suggestions")
+                        , viewExprs <|
+                            Expr.suggest (Dict.union data.localValues knownValues)
+                                targetType
+                        ]
                     ]
-                    { onChange = TargetTypeChanged
-                    , text = data.targetType
-                    , placeholder = Nothing
-                    , label =
-                        Input.labelAbove [ Font.bold ]
-                            (Element.text "Target type")
-                    }
-                , Element.column
-                    [ Element.width Element.fill
-                    , Element.height Element.fill
-                    , Element.spacing 16
-                    ]
-                    [ Element.el [ Font.bold ]
-                        (Element.text "Suggestions")
-                    , viewExprs (Expr.suggest knownValues targetType)
-                    ]
-                ]
 
-            Nothing ->
+                Nothing ->
+                    [ Input.text
+                        [ Element.spacing 8
+                        , Element.width Element.fill
+                        ]
+                        { onChange = TargetTypeChanged
+                        , text = data.targetType
+                        , placeholder = Nothing
+                        , label = Input.labelAbove [ Font.bold ] (Element.text "Target type")
+                        }
+                    , Element.text "This is not a valid type"
+                    ]
+            )
+        , Element.column
+            [ Element.width Element.fill
+            , Element.height Element.fill
+            , Element.padding 64
+            , Element.spacing 32
+            , Font.family
+                [ Font.monospace ]
+            , Font.size 16
+            ]
+            [ Element.column
+                [ Element.width Element.fill
+                , Element.spacing 16
+                ]
+                [ Element.el [ Font.bold ]
+                    (Element.text "Local values")
+                , viewValues data.localValues
+                ]
+            , Element.column
+                [ Element.width Element.fill
+                , Element.spacing 16
+                ]
                 [ Input.text
                     [ Element.spacing 8
-                    , Element.width (Element.px 640)
+                    , Element.width Element.fill
                     ]
-                    { onChange = TargetTypeChanged
-                    , text = data.targetType
+                    { onChange = NewNameChanged
+                    , text = data.newName
                     , placeholder = Nothing
-                    , label = Input.labelAbove [ Font.bold ] (Element.text "Target type")
+                    , label = Input.labelAbove [ Font.bold ] (Element.text "Name")
                     }
-                , Element.text "This is not a valid type"
+                , Input.text
+                    [ Element.spacing 8
+                    , Element.width Element.fill
+                    ]
+                    { onChange = NewTypeChanged
+                    , text = data.newType
+                    , placeholder = Nothing
+                    , label = Input.labelAbove [ Font.bold ] (Element.text "Type")
+                    }
+                , Input.button
+                    [ Element.paddingXY 16 8
+                    , Border.width 1
+                    , Border.color (Element.rgb 0 0 0)
+                    , Element.mouseOver
+                        [ Background.color (Element.rgb 0.8 0.8 0.8)
+                        ]
+                    ]
+                    { onPress = Just LocalValueAddPressed
+                    , label = Element.el [ Font.bold ] (Element.text "Add")
+                    }
+                ]
+            ]
+        ]
+
+
+viewValues values =
+    Element.column
+        [ Element.spacing 8
+        ]
+        (List.map viewValue (Dict.toList values))
+
+
+viewValue : ( String, Type ) -> Element msg
+viewValue ( name, type_ ) =
+    Element.el
+        [ Font.family
+            [ Font.monospace ]
+        ]
+        (Element.text <|
+            String.concat
+                [ name
+                , " : "
+                , Type.toString type_
                 ]
         )
 
@@ -165,6 +252,9 @@ type Msg
     = GotCoreModule (Result Http.Error (List Module))
       --
     | TargetTypeChanged String
+    | NewNameChanged String
+    | NewTypeChanged String
+    | LocalValueAddPressed
 
 
 update msg model =
@@ -177,6 +267,9 @@ update msg model =
                             ( Loaded
                                 { coreModules = coreModules
                                 , targetType = ""
+                                , localValues = Dict.empty
+                                , newName = ""
+                                , newType = ""
                                 }
                             , Cmd.none
                             )
@@ -199,13 +292,42 @@ update msg model =
 
 updateLoaded msg data =
     case msg of
+        GotCoreModule _ ->
+            ( data, Cmd.none )
+
         TargetTypeChanged newTargetType ->
             ( { data | targetType = newTargetType }
             , Cmd.none
             )
 
-        _ ->
-            ( data, Cmd.none )
+        NewNameChanged newValue ->
+            ( { data | newName = newValue }
+            , Cmd.none
+            )
+
+        NewTypeChanged newValue ->
+            ( { data | newType = newValue }
+            , Cmd.none
+            )
+
+        LocalValueAddPressed ->
+            case
+                Decode.decodeString Elm.Type.decoder
+                    ("\"" ++ data.newType ++ "\"")
+            of
+                Err _ ->
+                    ( data
+                    , Cmd.none
+                    )
+
+                Ok type_ ->
+                    ( { data
+                        | newName = ""
+                        , newType = ""
+                        , localValues = Dict.insert data.newName type_ data.localValues
+                      }
+                    , Cmd.none
+                    )
 
 
 subscriptions _ =

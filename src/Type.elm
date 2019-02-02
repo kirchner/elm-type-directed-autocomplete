@@ -65,10 +65,19 @@ isGeneralizationOf typeA typeB =
                         case Dict.get varB vars of
                             Nothing ->
                                 if
-                                    (varB /= "number")
+                                    ((varB /= "number")
+                                        && (varB /= "comparable")
+                                    )
                                         || ((varB == "number")
                                                 && ((typeA == Type "Int" [])
                                                         || (typeA == Type "Float" [])
+                                                   )
+                                           )
+                                        || ((varB == "comparable")
+                                                && ((typeA == Type "Int" [])
+                                                        || (typeA == Type "Float" [])
+                                                        || (typeA == Type "String" [])
+                                                        || (typeA == Type "Bool" [])
                                                    )
                                            )
                                 then
