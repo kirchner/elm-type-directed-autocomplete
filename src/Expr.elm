@@ -34,51 +34,129 @@ toString expr =
 
 
 suggest : Dict String Type -> Type -> List Expr
-suggest knownValues =
+suggest knownValues targetType =
     let
         usedKnownValues =
             knownValues
+                |> Dict.filter
+                    (\name _ ->
+                        not
+                            (List.member name
+                                [ "Basics.identity"
+                                , "Basics.always"
+                                , "Debug.todo"
+                                , "Debug.toString"
+                                , "Debug.log"
+                                ]
+                            )
+                    )
                 |> Dict.map (always removeScope)
                 |> Dict.union usefulConstants
     in
-    moreGeneralValues 1 usedKnownValues Dict.empty
+    List.concat
+        [ suggestDirect usedKnownValues targetType
+        , suggestWithArgument usedKnownValues targetType
+        , suggestWithTwoArguments usedKnownValues targetType
+        ]
 
 
-moreGeneralValues : Int -> Dict String Type -> Dict String Type -> Type -> List Expr
-moreGeneralValues _ knownValues setVars targetType =
+suggestDirect : Dict String Type -> Type -> List Expr
+suggestDirect knownValues targetType =
     let
         checkKnownValue name knownType exprs =
             if
                 knownType
                     |> Type.isGeneralizationOf targetType
-                    |> State.finalValue setVars
+                    |> State.finalValue Dict.empty
             then
                 Call name [] :: exprs
 
             else
-                case knownType of
-                    Lambda from to ->
-                        to
-                            |> Type.isGeneralizationOf targetType
-                            |> State.andThen
-                                (\toIsGeneralization ->
-                                    if toIsGeneralization then
+                exprs
+    in
+    Dict.foldl checkKnownValue [] knownValues
+
+
+suggestWithArgument : Dict String Type -> Type -> List Expr
+suggestWithArgument knownValues targetType =
+    let
+        checkKnownValue name knownType exprs =
+            case knownType of
+                Lambda from to ->
+                    to
+                        |> Type.isGeneralizationOf targetType
+                        |> State.andThen
+                            (\toIsGeneralization ->
+                                if toIsGeneralization then
+                                    State.get
+                                        |> State.map
+                                            (\setVars ->
+                                                from
+                                                    |> lessGeneralValues knownValues setVars
+                                            )
+
+                                else
+                                    State.state []
+                            )
+                        |> State.finalValue Dict.empty
+                        |> List.map (\calledName -> Call name [ calledName ])
+                        |> List.append exprs
+
+                _ ->
+                    exprs
+    in
+    Dict.foldl checkKnownValue [] knownValues
+
+
+suggestWithTwoArguments : Dict String Type -> Type -> List Expr
+suggestWithTwoArguments knownValues targetType =
+    let
+        checkKnownValue name knownType exprs =
+            case knownType of
+                Lambda fromA (Lambda fromB to) ->
+                    let
+                        ( namesA, namesB ) =
+                            to
+                                |> Type.isGeneralizationOf targetType
+                                |> State.andThen
+                                    (\toIsGeneralization ->
+                                        if toIsGeneralization then
+                                            State.get
+                                                |> State.map
+                                                    (\setVars ->
+                                                        fromA
+                                                            |> lessGeneralValues knownValues setVars
+                                                    )
+
+                                        else
+                                            State.state []
+                                    )
+                                |> State.andThen
+                                    (\namesA_ ->
                                         State.get
                                             |> State.map
-                                                (\nextSetVars ->
-                                                    from
-                                                        |> lessGeneralValues knownValues nextSetVars
+                                                (\setVars ->
+                                                    fromB
+                                                        |> lessGeneralValues knownValues setVars
                                                 )
-
-                                    else
-                                        State.state []
+                                            |> State.map (Tuple.pair namesA_)
+                                    )
+                                |> State.finalValue Dict.empty
+                    in
+                    List.map
+                        (\nameA ->
+                            List.map
+                                (\nameB ->
+                                    Call name [ nameA, nameB ]
                                 )
-                            |> State.finalValue setVars
-                            |> List.map (\calledName -> Call name [ calledName ])
-                            |> List.append exprs
+                                namesB
+                        )
+                        namesA
+                        |> List.concat
+                        |> List.append exprs
 
-                    _ ->
-                        exprs
+                _ ->
+                    exprs
     in
     Dict.foldl checkKnownValue [] knownValues
 
