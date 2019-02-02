@@ -11,7 +11,7 @@ import Html exposing (Html)
 import Http
 import Json.Decode as Decode
 import Set
-import Suggest exposing (Expr(..))
+import Suggest exposing (Expr)
 
 
 main : Program {} Model Msg
@@ -154,13 +154,11 @@ viewExprs exprs =
 
 viewExpr : Expr -> Element msg
 viewExpr expr =
-    case expr of
-        Call name args ->
-            Element.el
-                [ Font.family
-                    [ Font.monospace ]
-                ]
-                (Element.text (String.join " " (name :: args)))
+    Element.el
+        [ Font.family
+            [ Font.monospace ]
+        ]
+        (Element.text (Suggest.printExpr expr))
 
 
 type Msg

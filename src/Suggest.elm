@@ -1,48 +1,88 @@
 module Suggest exposing
-    ( Expr(..)
+    ( Expr
     , isGeneralizationOf
+    , printExpr
+    , printType
     , suggest
     )
 
 import Dict exposing (Dict)
 import Elm.Docs exposing (Module)
 import Elm.Type exposing (Type(..))
+import List.Extra as List
 import Set
 import State exposing (State)
 
 
 type Expr
-    = Call String (List String)
+    = Call String (List String) Type
+
+
+printExpr : Expr -> String
+printExpr expr =
+    case expr of
+        Call name args type_ ->
+            String.concat
+                [ String.join " " (name :: args)
+                , " : "
+                , printType (removeScope type_)
+                ]
+
+
+printType : Type -> String
+printType type_ =
+    case type_ of
+        Var var ->
+            var
+
+        Type name subTypes ->
+            if List.isEmpty subTypes then
+                name
+
+            else
+                name ++ " " ++ String.join " " (List.map printType subTypes)
+
+        Lambda from to ->
+            printType from ++ " -> " ++ printType to
+
+        Tuple subTypes ->
+            if List.isEmpty subTypes then
+                "()"
+
+            else
+                "( "
+                    ++ String.join ", " (List.map printType subTypes)
+                    ++ " )"
+
+        Record _ _ ->
+            "TODO"
 
 
 suggest : Dict String Type -> Type -> List Expr
 suggest knownValues targetType =
     let
-        toExpr name =
-            Call name []
-
-        makeUnique =
-            Set.fromList >> Set.toList
+        toExpr ( name, knownType ) =
+            Call name [] knownType
     in
     [ exactMatch knownValues targetType
     , generalizations knownValues targetType
     ]
         |> List.concat
-        |> makeUnique
+        |> List.uniqueBy Tuple.first
         |> List.map toExpr
 
 
-exactMatch : Dict String Type -> Type -> List String
+exactMatch : Dict String Type -> Type -> List ( String, Type )
 exactMatch knownValues targetType =
     knownValues
         |> Dict.filter
             (\name knownType ->
                 removeScope knownType == removeScope targetType
             )
-        |> Dict.keys
+        |> Dict.toList
 
 
-generalizations : Dict String Type -> Type -> List String
+generalizations : Dict String Type -> Type -> List ( String, Type )
 generalizations knownValues targetType =
     knownValues
         |> Dict.filter
@@ -55,7 +95,7 @@ generalizations knownValues targetType =
                 in
                 isGeneralization
             )
-        |> Dict.keys
+        |> Dict.toList
 
 
 

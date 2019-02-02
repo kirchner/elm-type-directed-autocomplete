@@ -160,9 +160,9 @@ expectToBeGeneralizationOf typeA typeB =
         |> State.finalValue Dict.empty
         |> Expect.true
             ("Expected\n\n    "
-                ++ printType typeB
+                ++ Suggest.printType typeB
                 ++ "\n\nto be a generalization of\n\n    "
-                ++ printType typeA
+                ++ Suggest.printType typeA
                 ++ "\n"
             )
 
@@ -215,35 +215,6 @@ isGeneral type_ =
 
         _ ->
             False
-
-
-printType : Type -> String
-printType type_ =
-    case type_ of
-        Var var ->
-            var
-
-        Type name subTypes ->
-            if List.isEmpty subTypes then
-                name
-
-            else
-                name ++ " " ++ String.join " " (List.map printType subTypes)
-
-        Lambda from to ->
-            printType from ++ " -> " ++ printType to
-
-        Tuple subTypes ->
-            if List.isEmpty subTypes then
-                "()"
-
-            else
-                "( "
-                    ++ String.join ", " (List.map printType subTypes)
-                    ++ " )"
-
-        Record _ _ ->
-            "TODO"
 
 
 
