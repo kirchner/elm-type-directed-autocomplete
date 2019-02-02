@@ -141,6 +141,21 @@ isGeneralizationOfTest =
                         ( False
                         , Dict.fromList [ ( "a", Type "Int" [] ) ]
                         )
+        , test "List a -> List a /= List Int -> List" <|
+            \_ ->
+                Lambda
+                    (Type "List" [ Var "a" ])
+                    (Type "List" [ Var "a" ])
+                    |> Suggest.isGeneralizationOf
+                        (Lambda
+                            (Type "List" [ Type "Int" [] ])
+                            (Type "List" [])
+                        )
+                    |> State.run Dict.empty
+                    |> Expect.equal
+                        ( False
+                        , Dict.fromList [ ( "a", Type "Int" [] ) ]
+                        )
         , fuzz typeFuzzer "every type is a generalization of itself" <|
             \type_ ->
                 type_

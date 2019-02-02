@@ -15,18 +15,15 @@ import State exposing (State)
 
 
 type Expr
-    = Call String (List String) Type
+    = Call String (List String)
 
 
 printExpr : Expr -> String
 printExpr expr =
     case expr of
-        Call name args type_ ->
+        Call name args ->
             String.concat
-                [ String.join " " (name :: args)
-                , " : "
-                , printType (removeScope type_)
-                ]
+                [ String.join " " (name :: args) ]
 
 
 printType : Type -> String
@@ -60,46 +57,86 @@ printType type_ =
 
 suggest : Dict String Type -> Type -> List Expr
 suggest knownValues targetType =
-    let
-        toExpr ( name, knownType ) =
-            Call name [] knownType
-    in
-    [ exactMatch knownValues targetType
-    , generalizations knownValues targetType
-    ]
-        |> List.concat
-        |> List.uniqueBy Tuple.first
-        |> List.map toExpr
+    targetType
+        |> findExprs (Dict.map (\_ knownValue -> removeScope knownValue) knownValues)
+        |> State.finalValue Dict.empty
 
 
-exactMatch : Dict String Type -> Type -> List ( String, Type )
-exactMatch knownValues targetType =
+computeGeneralizations : Dict String Type -> Type -> List Expr
+computeGeneralizations knownValues targetType =
     knownValues
-        |> Dict.filter
-            (\name knownType ->
-                removeScope knownType == removeScope targetType
+        |> Dict.foldl
+            (\name knownType exprs ->
+                knownType
+                    |> isGeneralizationOf targetType
+                    |> State.andThen
+                        (\isGeneralization ->
+                            if isGeneralization then
+                                State.state (Call name [] :: exprs)
+
+                            else
+                                case knownType of
+                                    Lambda from to ->
+                                        to
+                                            |> isGeneralizationOf targetType
+                                            |> State.andThen
+                                                (\toIsGeneralization ->
+                                                    if toIsGeneralization then
+                                                        State.map (List.append exprs)
+                                                            (computeGeneralizationsHelp knownValues name from)
+
+                                                    else
+                                                        State.state exprs
+                                                )
+
+                                    _ ->
+                                        State.state exprs
+                        )
+                    |> State.finalValue Dict.empty
             )
-        |> Dict.toList
+            []
 
 
-generalizations : Dict String Type -> Type -> List ( String, Type )
-generalizations knownValues targetType =
+computeGeneralizationsHelp :
+    Dict String Type
+    -> String
+    -> Type
+    -> State (Dict String Type) (List Expr)
+computeGeneralizationsHelp knownValues name targetType =
     knownValues
-        |> Dict.filter
-            (\name knownType ->
-                let
-                    isGeneralization =
-                        removeScope knownType
-                            |> isGeneralizationOf targetType
-                            |> State.finalValue Dict.empty
-                in
-                isGeneralization
+        |> Dict.foldl
+            (\calledName knownType exprs ->
+                targetType
+                    |> isGeneralizationOf knownType
+                    |> State.andThen
+                        (\isGeneralization ->
+                            if isGeneralization then
+                                State.map ((::) (Call name [ calledName ]))
+                                    exprs
+
+                            else
+                                exprs
+                        )
             )
-        |> Dict.toList
+            (State.state [])
 
 
 
 ---- COMPARE
+
+
+findExprs : Dict String Type -> Type -> State (Dict String Type) (List Expr)
+findExprs knownValues targetType =
+    let
+        directExprs =
+            targetType
+                |> computeGeneralizations knownValues
+                |> State.state
+
+        toExpr ( name, knownType ) =
+            Call name []
+    in
+    directExprs
 
 
 {-| Check if the second `Type` is a generalization of the first `Type`
@@ -159,13 +196,17 @@ isGeneralizationOf typeA typeB =
 
 zipTraverse : List Type -> List Type -> State (Dict String Type) Bool
 zipTraverse typeAs typeBs =
-    State.map (List.all identity) <|
-        State.traverse
-            (\( typeA, typeB ) ->
-                typeB
-                    |> isGeneralizationOf typeA
-            )
-            (zip typeAs typeBs)
+    if List.length typeAs /= List.length typeBs then
+        State.state False
+
+    else
+        State.map (List.all identity) <|
+            State.traverse
+                (\( typeA, typeB ) ->
+                    typeB
+                        |> isGeneralizationOf typeA
+                )
+                (zip typeAs typeBs)
 
 
 zip : List a -> List b -> List ( a, b )
@@ -200,7 +241,7 @@ removeScope scopedType =
                     |> List.head
                     |> Maybe.withDefault name
                 )
-                subTypes
+                (List.map removeScope subTypes)
 
         Lambda typeA typeB ->
             Lambda (removeScope typeA) (removeScope typeB)
