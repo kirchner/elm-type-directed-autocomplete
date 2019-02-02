@@ -1,12 +1,12 @@
-module SuggestTest exposing (suite)
+module TypeTest exposing (suite)
 
 import Dict
 import Elm.Type exposing (Type(..))
-import Expect
+import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import State exposing (State)
-import Suggest
 import Test exposing (..)
+import Type
 
 
 suite : Test
@@ -21,28 +21,28 @@ isGeneralizationOfTest =
         [ test "a == Int" <|
             \_ ->
                 Var "a"
-                    |> Suggest.isGeneralizationOf (Type "Int" [])
+                    |> Type.isGeneralizationOf (Type "Int" [])
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True, Dict.fromList [ ( "a", Type "Int" [] ) ] )
         , test "a == b" <|
             \_ ->
                 Var "a"
-                    |> Suggest.isGeneralizationOf (Var "a")
+                    |> Type.isGeneralizationOf (Var "a")
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True, Dict.fromList [ ( "a", Var "a" ) ] )
         , test "a == List a" <|
             \_ ->
                 Var "a"
-                    |> Suggest.isGeneralizationOf (Type "List" [ Var "a" ])
+                    |> Type.isGeneralizationOf (Type "List" [ Var "a" ])
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True, Dict.fromList [ ( "a", Type "List" [ Var "a" ] ) ] )
         , test "List a == List String" <|
             \_ ->
                 Type "List" [ Var "a" ]
-                    |> Suggest.isGeneralizationOf
+                    |> Type.isGeneralizationOf
                         (Type "List" [ Type "String" [] ])
                     |> State.run Dict.empty
                     |> Expect.equal
@@ -53,7 +53,7 @@ isGeneralizationOfTest =
         , test "a -> a == Int -> Int" <|
             \_ ->
                 Lambda (Var "a") (Var "a")
-                    |> Suggest.isGeneralizationOf
+                    |> Type.isGeneralizationOf
                         (Lambda (Type "Int" []) (Type "Int" []))
                     |> State.run Dict.empty
                     |> Expect.equal
@@ -64,7 +64,7 @@ isGeneralizationOfTest =
         , test "a -> a == a -> a" <|
             \_ ->
                 Lambda (Var "a") (Var "a")
-                    |> Suggest.isGeneralizationOf (Lambda (Var "a") (Var "a"))
+                    |> Type.isGeneralizationOf (Lambda (Var "a") (Var "a"))
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True
@@ -73,7 +73,7 @@ isGeneralizationOfTest =
         , test "a -> a == b -> b" <|
             \_ ->
                 Lambda (Var "a") (Var "a")
-                    |> Suggest.isGeneralizationOf (Lambda (Var "b") (Var "b"))
+                    |> Type.isGeneralizationOf (Lambda (Var "b") (Var "b"))
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True
@@ -82,7 +82,7 @@ isGeneralizationOfTest =
         , test "a -> b == a -> a" <|
             \_ ->
                 Lambda (Var "a") (Var "b")
-                    |> Suggest.isGeneralizationOf (Lambda (Var "a") (Var "a"))
+                    |> Type.isGeneralizationOf (Lambda (Var "a") (Var "a"))
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True
@@ -94,7 +94,7 @@ isGeneralizationOfTest =
         , test "List a -> Int == List String -> Int" <|
             \_ ->
                 Lambda (Type "List" [ Var "a" ]) (Type "Int" [])
-                    |> Suggest.isGeneralizationOf
+                    |> Type.isGeneralizationOf
                         (Lambda (Type "List" [ Type "String" [] ]) (Type "Int" []))
                     |> State.run Dict.empty
                     |> Expect.equal
@@ -105,7 +105,7 @@ isGeneralizationOfTest =
         , test "number == Int" <|
             \_ ->
                 Var "number"
-                    |> Suggest.isGeneralizationOf (Type "Int" [])
+                    |> Type.isGeneralizationOf (Type "Int" [])
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True
@@ -115,7 +115,7 @@ isGeneralizationOfTest =
         , test "number == Float" <|
             \_ ->
                 Var "number"
-                    |> Suggest.isGeneralizationOf (Type "Float" [])
+                    |> Type.isGeneralizationOf (Type "Float" [])
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( True
@@ -125,7 +125,7 @@ isGeneralizationOfTest =
         , test "number /= String" <|
             \_ ->
                 Var "number"
-                    |> Suggest.isGeneralizationOf (Type "String" [])
+                    |> Type.isGeneralizationOf (Type "String" [])
                     |> State.run Dict.empty
                     |> Expect.equal
                         ( False
@@ -134,7 +134,7 @@ isGeneralizationOfTest =
         , test "a -> a /= Int -> String" <|
             \_ ->
                 Lambda (Var "a") (Var "a")
-                    |> Suggest.isGeneralizationOf
+                    |> Type.isGeneralizationOf
                         (Lambda (Type "Int" []) (Type "String" []))
                     |> State.run Dict.empty
                     |> Expect.equal
@@ -146,7 +146,7 @@ isGeneralizationOfTest =
                 Lambda
                     (Type "List" [ Var "a" ])
                     (Type "List" [ Var "a" ])
-                    |> Suggest.isGeneralizationOf
+                    |> Type.isGeneralizationOf
                         (Lambda
                             (Type "List" [ Type "Int" [] ])
                             (Type "List" [])
@@ -169,21 +169,26 @@ isGeneralizationOfTest =
         ]
 
 
+
+---- EXPECTATIONS
+
+
+expectToBeGeneralizationOf : Type -> Type -> Expectation
 expectToBeGeneralizationOf typeA typeB =
     typeB
-        |> Suggest.isGeneralizationOf typeA
+        |> Type.isGeneralizationOf typeA
         |> State.finalValue Dict.empty
         |> Expect.true
             ("Expected\n\n    "
-                ++ Suggest.printType typeB
+                ++ Type.toString typeB
                 ++ "\n\nto be a generalization of\n\n    "
-                ++ Suggest.printType typeA
+                ++ Type.toString typeA
                 ++ "\n"
             )
 
 
 
----- HELP
+---- HELPER
 
 
 generalize : Type -> State Int Type

@@ -7,11 +7,11 @@ import Element.Font as Font
 import Element.Input as Input
 import Elm.Docs exposing (Module)
 import Elm.Type exposing (Type(..))
+import Expr exposing (Expr)
 import Html exposing (Html)
 import Http
 import Json.Decode as Decode
 import Set
-import Suggest exposing (Expr)
 
 
 main : Program {} Model Msg
@@ -105,7 +105,7 @@ viewLoaded data =
                     ]
                     [ Element.el [ Font.bold ]
                         (Element.text "Suggestions")
-                    , viewExprs (Suggest.suggest knownValues targetType)
+                    , viewExprs (Expr.suggest knownValues targetType)
                     ]
                 ]
 
@@ -158,7 +158,7 @@ viewExpr expr =
         [ Font.family
             [ Font.monospace ]
         ]
-        (Element.text (Suggest.printExpr expr))
+        (Element.text (Expr.toString expr))
 
 
 type Msg
