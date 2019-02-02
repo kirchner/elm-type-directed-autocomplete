@@ -1,0 +1,6 @@
+# Run locally
+
+```
+$ yarn dev
+```
+
