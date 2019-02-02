@@ -10,6 +10,8 @@ import Elm.Type exposing (Type(..))
 import Html exposing (Html)
 import Http
 import Json.Decode as Decode
+import Set
+import Suggest exposing (Expr(..))
 
 
 main : Program {} Model Msg
@@ -103,7 +105,7 @@ viewLoaded data =
                     ]
                     [ Element.el [ Font.bold ]
                         (Element.text "Suggestions")
-                    , viewExprs (suggest knownValues targetType)
+                    , viewExprs (Suggest.suggest knownValues targetType)
                     ]
                 ]
 
@@ -210,53 +212,3 @@ updateLoaded msg data =
 
 subscriptions _ =
     Sub.none
-
-
-
----- SUGGEST
-
-
-type Expr
-    = Call String (List String)
-
-
-suggest : Dict String Type -> Type -> List Expr
-suggest knownValues targetType =
-    let
-        toExpr name =
-            Call name []
-    in
-    knownValues
-        |> Dict.filter
-            (\name knownType ->
-                removeScope knownType == removeScope targetType
-            )
-        |> Dict.keys
-        |> List.map toExpr
-
-
-removeScope : Type -> Type
-removeScope scopedType =
-    case scopedType of
-        Var name ->
-            Var name
-
-        Type name subTypes ->
-            Type
-                (String.split "." name
-                    |> List.reverse
-                    |> List.head
-                    |> Maybe.withDefault name
-                )
-                subTypes
-
-        Lambda typeA typeB ->
-            Lambda (removeScope typeA) (removeScope typeB)
-
-        Tuple types ->
-            Tuple (List.map removeScope types)
-
-        Record values var ->
-            Record
-                (List.map (Tuple.mapSecond removeScope) values)
-                var
