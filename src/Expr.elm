@@ -62,19 +62,8 @@ suggest knownValues targetType =
 
 suggestDirect : Dict String Type -> Type -> List Expr
 suggestDirect knownValues targetType =
-    let
-        checkKnownValue name knownType exprs =
-            if
-                knownType
-                    |> Type.isGeneralizationOf targetType
-                    |> State.finalValue Dict.empty
-            then
-                Call name [] :: exprs
-
-            else
-                exprs
-    in
-    Dict.foldl checkKnownValue [] knownValues
+    allGeneralizationsOf knownValues Dict.empty targetType
+        |> List.map (\name -> Call name [])
 
 
 suggestWithArgument : Dict String Type -> Type -> List Expr
@@ -91,8 +80,9 @@ suggestWithArgument knownValues targetType =
                                     State.get
                                         |> State.map
                                             (\setVars ->
-                                                from
-                                                    |> lessGeneralValues knownValues setVars
+                                                allSpecializationsOf knownValues
+                                                    setVars
+                                                    from
                                             )
 
                                 else
@@ -124,8 +114,9 @@ suggestWithTwoArguments knownValues targetType =
                                             State.get
                                                 |> State.map
                                                     (\setVars ->
-                                                        fromA
-                                                            |> lessGeneralValues knownValues setVars
+                                                        allSpecializationsOf knownValues
+                                                            setVars
+                                                            fromA
                                                     )
 
                                         else
@@ -136,8 +127,9 @@ suggestWithTwoArguments knownValues targetType =
                                         State.get
                                             |> State.map
                                                 (\setVars ->
-                                                    fromB
-                                                        |> lessGeneralValues knownValues setVars
+                                                    allSpecializationsOf knownValues
+                                                        setVars
+                                                        fromB
                                                 )
                                             |> State.map (Tuple.pair namesA_)
                                     )
@@ -161,8 +153,25 @@ suggestWithTwoArguments knownValues targetType =
     Dict.foldl checkKnownValue [] knownValues
 
 
-lessGeneralValues : Dict String Type -> Dict String Type -> Type -> List String
-lessGeneralValues knownValues setVars targetType =
+allGeneralizationsOf : Dict String Type -> Dict String Type -> Type -> List String
+allGeneralizationsOf knownValues setVars targetType =
+    let
+        checkKnownValue name knownType names =
+            if
+                knownType
+                    |> Type.isGeneralizationOf targetType
+                    |> State.finalValue setVars
+            then
+                name :: names
+
+            else
+                names
+    in
+    Dict.foldl checkKnownValue [] knownValues
+
+
+allSpecializationsOf : Dict String Type -> Dict String Type -> Type -> List String
+allSpecializationsOf knownValues setVars targetType =
     let
         checkKnownValue name knownType names =
             targetType
