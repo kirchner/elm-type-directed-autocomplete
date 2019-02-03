@@ -33,8 +33,23 @@ toString type_ =
                     ++ String.join ", " (List.map toString subTypes)
                     ++ " )"
 
-        Record _ _ ->
-            "TODO"
+        Record values maybeVar ->
+            let
+                valueToString ( name, subType ) =
+                    name ++ " : " ++ toString subType
+            in
+            String.concat
+                [ "{ "
+                , case maybeVar of
+                    Nothing ->
+                        ""
+                    Just var ->
+                        var ++ " | "
+                , values
+                    |> List.map valueToString
+                    |> String.join ", "
+                , " }"
+                ]
 
 
 {-| Check if the second `Type` is a generalization of the first `Type`

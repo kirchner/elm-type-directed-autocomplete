@@ -367,11 +367,20 @@ typeDecoder =
                             (Decode.field "subTypes" (Decode.list typeDecoder))
 
                     "record" ->
-                        Decode.fail "TODO"
+                        Decode.map2 Record
+                            (Decode.field "values" (Decode.list valueDecoder))
+                            (Decode.field "var" (Decode.maybe Decode.string))
 
                     _ ->
                         Decode.fail ("unsupported kind: " ++ kind)
             )
+
+
+valueDecoder : Decoder ( String, Type )
+valueDecoder =
+    Decode.map2 Tuple.pair
+        (Decode.field "name" Decode.string)
+        (Decode.field "type" typeDecoder)
 
 
 
@@ -412,7 +421,19 @@ encodeType type_ =
                 , ( "subTypes", Encode.list encodeType subTypes )
                 ]
 
-        Record _ _ ->
+        Record values maybeVar ->
             Encode.object
                 [ ( "kind", Encode.string "record" )
+                , ( "values", Encode.list encodeValue values )
+                , ( "var"
+                  , Maybe.withDefault Encode.null (Maybe.map Encode.string maybeVar)
+                  )
                 ]
+
+
+encodeValue : ( String, Type ) -> Value
+encodeValue ( name, type_ ) =
+    Encode.object
+        [ ( "name", Encode.string name )
+        , ( "type", encodeType type_ )
+        ]
