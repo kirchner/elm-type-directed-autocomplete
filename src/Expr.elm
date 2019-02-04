@@ -23,6 +23,7 @@ usefulConstants =
 
 type Expr
     = Call String (List String)
+    | UpdateRecord String (List ( String, String ))
 
 
 toString : Expr -> String
@@ -31,6 +32,24 @@ toString expr =
         Call name args ->
             String.concat
                 [ String.join " " (name :: args) ]
+
+        UpdateRecord name values ->
+            if List.isEmpty values then
+                name
+
+            else
+                let
+                    valueToString ( fieldName, value ) =
+                        fieldName ++ " = " ++ value
+                in
+                String.concat
+                    [ "{ "
+                    , name
+                    , " | "
+                    , String.join " , " <|
+                        List.map valueToString values
+                    , " }"
+                    ]
 
 
 suggest : Dict String Type -> Type -> List Expr
@@ -57,6 +76,7 @@ suggest knownValues targetType =
         [ suggestDirect usedKnownValues targetType
         , suggestWithArgument usedKnownValues targetType
         , suggestWithTwoArguments usedKnownValues targetType
+        , suggestRecordUpdate usedKnownValues targetType
         ]
 
 
@@ -153,6 +173,53 @@ suggestWithTwoArguments knownValues targetType =
     Dict.foldl checkKnownValue [] knownValues
 
 
+suggestRecordUpdate : Dict String Type -> Type -> List Expr
+suggestRecordUpdate knownValues targetType =
+    case targetType of
+        Record values var ->
+            knownValues
+                |> Dict.toList
+                |> List.filterMap
+                    (\( name, knownValue ) ->
+                        if knownValue == targetType then
+                            Just name
+
+                        else
+                            Nothing
+                    )
+                |> List.map
+                    (\initialValue ->
+                        values
+                            |> List.foldl
+                                (\( value, type_ ) updates ->
+                                    knownValues
+                                        |> Dict.toList
+                                        |> List.filterMap
+                                            (\( name, knownType ) ->
+                                                if knownType == type_ then
+                                                    Just ( value, name )
+
+                                                else
+                                                    Nothing
+                                            )
+                                        |> List.append updates
+                                )
+                                []
+                            |> List.map
+                                (\( value, name ) ->
+                                    UpdateRecord initialValue [ ( value, name ) ]
+                                )
+                    )
+                |> List.concat
+
+        _ ->
+            []
+
+
+
+---- HELPER
+
+
 allGeneralizationsOf : Dict String Type -> Dict String Type -> Type -> List String
 allGeneralizationsOf knownValues setVars targetType =
     let
@@ -187,10 +254,6 @@ allSpecializationsOf knownValues setVars targetType =
                 |> State.finalValue setVars
     in
     Dict.foldl checkKnownValue [] knownValues
-
-
-
----- HELPER
 
 
 removeScope : Type -> Type
