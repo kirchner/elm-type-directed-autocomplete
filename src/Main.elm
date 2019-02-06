@@ -11,6 +11,7 @@ import Elm.Docs exposing (Module)
 import Elm.Type exposing (Type(..))
 import Expr exposing (Expr)
 import Html exposing (Html)
+import Html.Attributes
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode exposing (Value)
@@ -248,18 +249,21 @@ valuesFromModule module_ =
 viewExprs : List Expr -> Element msg
 viewExprs exprs =
     Element.column
-        [ Element.spacing 8
+        [ Element.spacing 16
         ]
         (List.map viewExpr exprs)
 
 
 viewExpr : Expr -> Element msg
 viewExpr expr =
-    Element.el
+    Element.column
         [ Font.family
             [ Font.monospace ]
+        , Element.spacing 8
         ]
-        (Element.text (Expr.toString expr))
+        (List.map Element.text <|
+            String.split "\n" (Expr.toString expr)
+        )
 
 
 type Msg

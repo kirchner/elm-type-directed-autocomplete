@@ -24,6 +24,7 @@ usefulConstants =
 type Expr
     = Call String (List String)
     | UpdateRecord String (List ( String, String ))
+    | CreateTuple Expr Expr
 
 
 toString : Expr -> String
@@ -51,6 +52,15 @@ toString expr =
                     , " }"
                     ]
 
+        CreateTuple exprA exprB ->
+            String.concat
+                [ "( "
+                , toString exprA
+                , "\n, "
+                , toString exprB
+                , "\n)"
+                ]
+
 
 suggest : Dict String Type -> Type -> List Expr
 suggest knownValues targetType =
@@ -73,10 +83,18 @@ suggest knownValues targetType =
                 |> Dict.union usefulConstants
     in
     List.concat
-        [ suggestDirect usedKnownValues targetType
-        , suggestWithArgument usedKnownValues targetType
-        , suggestWithTwoArguments usedKnownValues targetType
-        , suggestRecordUpdate usedKnownValues targetType
+        [ suggestHelp usedKnownValues targetType
+        ]
+
+
+suggestHelp : Dict String Type -> Type -> List Expr
+suggestHelp knownValues targetType =
+    List.concat
+        [ suggestDirect knownValues targetType
+        , suggestWithArgument knownValues targetType
+        , suggestWithTwoArguments knownValues targetType
+        , suggestRecordUpdate knownValues targetType
+        , suggestCreateTuple knownValues targetType
         ]
 
 
@@ -211,6 +229,21 @@ suggestRecordUpdate knownValues targetType =
                                 )
                     )
                 |> List.concat
+
+        _ ->
+            []
+
+
+suggestCreateTuple : Dict String Type -> Type -> List Expr
+suggestCreateTuple knownValues targetType =
+    case targetType of
+        Tuple (typeA :: typeB :: []) ->
+            List.concatMap
+                (\exprA ->
+                    List.map (CreateTuple exprA)
+                        (suggestHelp knownValues typeB)
+                )
+                (suggestHelp knownValues typeA)
 
         _ ->
             []
