@@ -43,69 +43,68 @@ normalizeTest =
         varB =
             Var "b"
     in
-    only <|
-        describe "normalize"
-            [ test "of [ type alias A = Int ] A" <|
-                \_ ->
-                    Type.normalize [ aliasA ] a
-                        |> Expect.equal int
-            , test "of [ type alias A = Int ] (A -> A)" <|
-                \_ ->
-                    Type.normalize [ aliasA ] (Lambda a a)
-                        |> Expect.equal (Lambda int int)
-            , test "of [ type alias A = Int ] ( A, A )" <|
-                \_ ->
-                    Type.normalize [ aliasA ] (Tuple [ a, a ])
-                        |> Expect.equal (Tuple [ int, int ])
-            , test "of [ type alias A = Int ] { field : A }" <|
-                \_ ->
-                    Type.normalize [ aliasA ] (Record [ ( "field", a ) ] Nothing)
-                        |> Expect.equal (Record [ ( "field", int ) ] Nothing)
-            , test "of [ type alias A = List Int ] A" <|
-                \_ ->
-                    Type.normalize
-                        [ { name = "A"
-                          , comment = ""
-                          , args = []
-                          , tipe = list int
-                          }
-                        ]
-                        a
-                        |> Expect.equal (list int)
-            , test "of [ type alias A a = List a ] (A Int)" <|
-                \_ ->
-                    Type.normalize
-                        [ { name = "A"
-                          , comment = ""
-                          , args = [ "a" ]
-                          , tipe = list varA
-                          }
-                        ]
-                        (Type "A" [ int ])
-                        |> Expect.equal (list int)
-            , test "of [ type alias A a = List a ] (A a)" <|
-                \_ ->
-                    Type.normalize
-                        [ { name = "A"
-                          , comment = ""
-                          , args = [ "a" ]
-                          , tipe = list varA
-                          }
-                        ]
-                        (Type "A" [ varA ])
-                        |> Expect.equal (list varA)
-            , test "of [ type alias A a = List a ] (A b)" <|
-                \_ ->
-                    Type.normalize
-                        [ { name = "A"
-                          , comment = ""
-                          , args = [ "a" ]
-                          , tipe = list varB
-                          }
-                        ]
-                        (Type "A" [ varA ])
-                        |> Expect.equal (list varB)
-            ]
+    describe "normalize"
+        [ test "of [ type alias A = Int ] A" <|
+            \_ ->
+                Type.normalize [ aliasA ] a
+                    |> Expect.equal int
+        , test "of [ type alias A = Int ] (A -> A)" <|
+            \_ ->
+                Type.normalize [ aliasA ] (Lambda a a)
+                    |> Expect.equal (Lambda int int)
+        , test "of [ type alias A = Int ] ( A, A )" <|
+            \_ ->
+                Type.normalize [ aliasA ] (Tuple [ a, a ])
+                    |> Expect.equal (Tuple [ int, int ])
+        , test "of [ type alias A = Int ] { field : A }" <|
+            \_ ->
+                Type.normalize [ aliasA ] (Record [ ( "field", a ) ] Nothing)
+                    |> Expect.equal (Record [ ( "field", int ) ] Nothing)
+        , test "of [ type alias A = List Int ] A" <|
+            \_ ->
+                Type.normalize
+                    [ { name = "A"
+                      , comment = ""
+                      , args = []
+                      , tipe = list int
+                      }
+                    ]
+                    a
+                    |> Expect.equal (list int)
+        , test "of [ type alias A a = List a ] (A Int)" <|
+            \_ ->
+                Type.normalize
+                    [ { name = "A"
+                      , comment = ""
+                      , args = [ "a" ]
+                      , tipe = list varA
+                      }
+                    ]
+                    (Type "A" [ int ])
+                    |> Expect.equal (list int)
+        , test "of [ type alias A a = List a ] (A a)" <|
+            \_ ->
+                Type.normalize
+                    [ { name = "A"
+                      , comment = ""
+                      , args = [ "a" ]
+                      , tipe = list varA
+                      }
+                    ]
+                    (Type "A" [ varA ])
+                    |> Expect.equal (list varA)
+        , test "of [ type alias A a = List a ] (A b)" <|
+            \_ ->
+                Type.normalize
+                    [ { name = "A"
+                      , comment = ""
+                      , args = [ "a" ]
+                      , tipe = list varB
+                      }
+                    ]
+                    (Type "A" [ varA ])
+                    |> Expect.equal (list varB)
+        ]
 
 
 unifierTest : Test
@@ -440,39 +439,38 @@ unifiableTest =
         list tipe =
             Type "List" [ tipe ]
     in
-    only <|
-        describe "unifiable"
-            [ test "of (a -> Int) and (Int -> Int) with a = Int" <|
-                \_ ->
-                    Type.unifiable
-                        (Lambda varA int)
-                        (Lambda int int)
-                        |> State.run
-                            { bindTypeVariables = Dict.singleton "a" int
-                            , bindRecordVariables = Dict.empty
-                            }
-                        |> Expect.equal
-                            ( True
-                            , { bindTypeVariables = Dict.singleton "a" int
-                              , bindRecordVariables = Dict.empty
-                              }
-                            )
-            , test "of (a -> Int) and (Int -> Int) with a = Float" <|
-                \_ ->
-                    Type.unifiable
-                        (Lambda varA int)
-                        (Lambda int int)
-                        |> State.run
-                            { bindTypeVariables = Dict.singleton "a" float
-                            , bindRecordVariables = Dict.empty
-                            }
-                        |> Expect.equal
-                            ( False
-                            , { bindTypeVariables = Dict.singleton "a" float
-                              , bindRecordVariables = Dict.empty
-                              }
-                            )
-            ]
+    describe "unifiable"
+        [ test "of (a -> Int) and (Int -> Int) with a = Int" <|
+            \_ ->
+                Type.unifiable
+                    (Lambda varA int)
+                    (Lambda int int)
+                    |> State.run
+                        { bindTypeVariables = Dict.singleton "a" int
+                        , bindRecordVariables = Dict.empty
+                        }
+                    |> Expect.equal
+                        ( True
+                        , { bindTypeVariables = Dict.singleton "a" int
+                          , bindRecordVariables = Dict.empty
+                          }
+                        )
+        , test "of (a -> Int) and (Int -> Int) with a = Float" <|
+            \_ ->
+                Type.unifiable
+                    (Lambda varA int)
+                    (Lambda int int)
+                    |> State.run
+                        { bindTypeVariables = Dict.singleton "a" float
+                        , bindRecordVariables = Dict.empty
+                        }
+                    |> Expect.equal
+                        ( False
+                        , { bindTypeVariables = Dict.singleton "a" float
+                          , bindRecordVariables = Dict.empty
+                          }
+                        )
+        ]
 
 
 
