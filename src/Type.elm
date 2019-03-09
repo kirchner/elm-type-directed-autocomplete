@@ -1,9 +1,10 @@
 module Type exposing
     ( Substitutions
-    , isGeneralizationOf
+    , noSubstitutions
     , substitute
     , toString
     , typeVariables
+    , unifiable
     , unifier
     )
 
@@ -58,104 +59,6 @@ toString type_ =
                 ]
 
 
-{-| Check if the second `Type` is a generalization of the first `Type`
--}
-isGeneralizationOf : Type -> Type -> State (Dict String Type) Bool
-isGeneralizationOf typeA typeB =
-    case ( typeA, typeB ) of
-        ( Type nameA subTypesA, Type nameB subTypesB ) ->
-            State.map2 (&&)
-                (State.state (nameA == nameB))
-                (zipTraverse subTypesA subTypesB)
-
-        ( Lambda fromA toA, Lambda fromB toB ) ->
-            State.map2 (&&)
-                (fromB |> isGeneralizationOf fromA)
-                (toB |> isGeneralizationOf toA)
-
-        ( Tuple subTypesA, Tuple subTypesB ) ->
-            zipTraverse subTypesA subTypesB
-
-        ( Record valuesA varA, Record valuesB varB ) ->
-            State.state False
-
-        ( _, Var varB ) ->
-            State.get
-                |> State.andThen
-                    (\vars ->
-                        case Dict.get varB vars of
-                            Nothing ->
-                                if
-                                    ((varB /= "number")
-                                        && (varB /= "comparable")
-                                    )
-                                        || ((varB == "number")
-                                                && ((typeA == Type "Int" [])
-                                                        || (typeA == Type "Float" [])
-                                                   )
-                                           )
-                                        || ((varB == "comparable")
-                                                && ((typeA == Type "Int" [])
-                                                        || (typeA == Type "Float" [])
-                                                        || (typeA == Type "String" [])
-                                                        || (typeA == Type "Bool" [])
-                                                   )
-                                           )
-                                then
-                                    State.put (Dict.insert varB typeA vars)
-                                        |> State.map (always True)
-
-                                else
-                                    State.state False
-
-                            Just setTypeA ->
-                                case setTypeA of
-                                    Var varA ->
-                                        State.state True
-
-                                    _ ->
-                                        setTypeA
-                                            |> isGeneralizationOf typeA
-                    )
-
-        _ ->
-            State.state False
-
-
-
----- HELPER
-
-
-zipTraverse : List Type -> List Type -> State (Dict String Type) Bool
-zipTraverse typeAs typeBs =
-    if List.length typeAs /= List.length typeBs then
-        State.state False
-
-    else
-        State.map (List.all identity) <|
-            State.traverse
-                (\( typeA, typeB ) ->
-                    typeB
-                        |> isGeneralizationOf typeA
-                )
-                (zip typeAs typeBs)
-
-
-zip : List a -> List b -> List ( a, b )
-zip =
-    zipHelp []
-
-
-zipHelp : List ( a, b ) -> List a -> List b -> List ( a, b )
-zipHelp listAB listA listB =
-    case ( listA, listB ) of
-        ( a :: restA, b :: restB ) ->
-            zipHelp (( a, b ) :: listAB) restA restB
-
-        _ ->
-            List.reverse listAB
-
-
 
 ---- UNIFICATION
 
@@ -173,17 +76,256 @@ noSubstitutions =
     }
 
 
-mergeSubstitutions : Substitutions -> Substitutions -> Substitutions
-mergeSubstitutions substitutionsA substitutionsB =
-    { bindTypeVariables =
-        Dict.union
-            substitutionsA.bindTypeVariables
-            substitutionsB.bindTypeVariables
-    , bindRecordVariables =
-        Dict.union
-            substitutionsA.bindRecordVariables
-            substitutionsB.bindRecordVariables
-    }
+{-| Return substitutions if both types can be unified.
+-}
+unifier : Type -> Type -> Maybe Substitutions
+unifier typeA typeB =
+    case State.run noSubstitutions (unifiable typeA typeB) of
+        ( False, _ ) ->
+            Nothing
+
+        ( True, substitutions ) ->
+            Just substitutions
+
+
+unifiable : Type -> Type -> State Substitutions Bool
+unifiable typeA typeB =
+    case ( typeA, typeB ) of
+        ( Var nameA, _ ) ->
+            bindTypeVariable nameA typeB
+
+        ( _, Var nameB ) ->
+            bindTypeVariable nameB typeA
+
+        ( Lambda fromA toA, Lambda fromB toB ) ->
+            unifiableMany [ fromA, toA ] [ fromB, toB ]
+
+        ( Tuple typesA, Tuple typesB ) ->
+            unifiableMany typesA typesB
+
+        ( Type nameA varsA, Type nameB varsB ) ->
+            if nameA == nameB then
+                unifiableMany varsA varsB
+
+            else
+                State.state False
+
+        ( Record fieldsA maybeVarA, Record fieldsB maybeVarB ) ->
+            case ( maybeVarA, maybeVarB ) of
+                ( Nothing, Nothing ) ->
+                    unifiableFields fieldsA fieldsB
+
+                ( Just nameA, Nothing ) ->
+                    let
+                        inFieldsA ( fieldNameB, _ ) =
+                            List.any (hasName fieldNameB) fieldsA
+
+                        hasName thisName ( otherName, _ ) =
+                            thisName == otherName
+
+                        bindRecordVariable substitutions =
+                            { substitutions
+                                | bindRecordVariables =
+                                    Dict.insert nameA
+                                        ( List.filter (not << inFieldsA) fieldsB, Nothing )
+                                        substitutions.bindRecordVariables
+                            }
+                    in
+                    State.modify bindRecordVariable
+                        |> State.andThen
+                            (\_ ->
+                                unifiableFields
+                                    fieldsA
+                                    (List.filter inFieldsA fieldsB)
+                            )
+
+                ( Nothing, Just nameB ) ->
+                    let
+                        inFieldsB ( fieldNameA, _ ) =
+                            List.any (hasName fieldNameA) fieldsB
+
+                        hasName thisName ( otherName, _ ) =
+                            thisName == otherName
+
+                        bindRecordVariable substitutions =
+                            { substitutions
+                                | bindRecordVariables =
+                                    Dict.insert nameB
+                                        ( List.filter (not << inFieldsB) fieldsA, Nothing )
+                                        substitutions.bindRecordVariables
+                            }
+                    in
+                    State.modify bindRecordVariable
+                        |> State.andThen
+                            (\_ ->
+                                unifiableFields
+                                    (List.filter inFieldsB fieldsA)
+                                    fieldsB
+                            )
+
+                ( Just nameA, Just nameB ) ->
+                    if nameA == nameB then
+                        unifiableFields fieldsA fieldsB
+
+                    else
+                        let
+                            bindRecordVariable substitutions =
+                                { substitutions
+                                    | bindRecordVariables =
+                                        Dict.insert nameB
+                                            ( [], Just nameA )
+                                            substitutions.bindRecordVariables
+                                }
+                        in
+                        State.modify bindRecordVariable
+                            |> State.andThen
+                                (\_ ->
+                                    unifiableFields fieldsA fieldsB
+                                )
+
+        _ ->
+            State.state False
+
+
+unifiableMany : List Type -> List Type -> State Substitutions Bool
+unifiableMany typesA typesB =
+    unifiableManyHelp
+        typesA
+        typesB
+
+
+unifiableManyHelp : List Type -> List Type -> State Substitutions Bool
+unifiableManyHelp typesA typesB =
+    case ( typesA, typesB ) of
+        ( firstA :: restA, firstB :: restB ) ->
+            State.map2 (&&)
+                (unifiable firstA firstB)
+                (unifiableManyHelp restA restB)
+
+        ( [], [] ) ->
+            State.state True
+
+        _ ->
+            State.state False
+
+
+unifiableFields : List ( String, Type ) -> List ( String, Type ) -> State Substitutions Bool
+unifiableFields fieldsA fieldsB =
+    unifiableFieldsHelp
+        (List.sortBy Tuple.first fieldsA)
+        (List.sortBy Tuple.first fieldsB)
+
+
+unifiableFieldsHelp :
+    List ( String, Type )
+    -> List ( String, Type )
+    -> State Substitutions Bool
+unifiableFieldsHelp fieldsA fieldsB =
+    case ( fieldsA, fieldsB ) of
+        ( ( nameA, typeA ) :: restA, ( nameB, typeB ) :: restB ) ->
+            if nameA == nameB then
+                State.map2 (&&)
+                    (unifiable typeA typeB)
+                    (unifiableFieldsHelp restA restB)
+
+            else
+                State.state False
+
+        ( [], [] ) ->
+            State.state True
+
+        _ ->
+            State.state False
+
+
+bindTypeVariable : String -> Type -> State Substitutions Bool
+bindTypeVariable name tipe =
+    let
+        nameOccursInType =
+            Set.member name (typeVariables tipe)
+
+        bindIfNew substitutions =
+            case Dict.get name substitutions.bindTypeVariables of
+                Nothing ->
+                    ( True
+                    , { substitutions
+                        | bindTypeVariables =
+                            Dict.insert name
+                                tipe
+                                substitutions.bindTypeVariables
+                      }
+                    )
+
+                Just boundType ->
+                    if boundType == tipe then
+                        ( True, substitutions )
+
+                    else
+                        ( False, substitutions )
+    in
+    case tipe of
+        Var otherName ->
+            if otherName == name then
+                State.state True
+
+            else if nameOccursInType then
+                State.state False
+
+            else
+                State.advance bindIfNew
+
+        _ ->
+            if
+                nameOccursInType
+                    || (String.startsWith "number" name && not (isNumber tipe))
+                    || (String.startsWith "comparable" name && not (isComparable tipe))
+            then
+                State.state False
+
+            else
+                State.advance bindIfNew
+
+
+isNumber : Type -> Bool
+isNumber tipe =
+    case tipe of
+        Var name ->
+            String.startsWith "number" name
+
+        Type "Int" [] ->
+            True
+
+        Type "Float" [] ->
+            True
+
+        _ ->
+            False
+
+
+isComparable : Type -> Bool
+isComparable tipe =
+    if isNumber tipe then
+        True
+
+    else
+        case tipe of
+            Var name ->
+                String.startsWith "comparable" name
+
+            Type "Char" [] ->
+                True
+
+            Type "String" [] ->
+                True
+
+            Type "List" [ elementType ] ->
+                isComparable elementType
+
+            Tuple types ->
+                List.all isComparable types
+
+            _ ->
+                False
 
 
 {-| Substitute all type variables.
@@ -261,228 +403,3 @@ typeVariables tipe =
             fields
                 |> List.map (Tuple.second >> typeVariables)
                 |> List.foldl Set.union Set.empty
-
-
-{-| Return substitutions if both types can be unified.
--}
-unifier : Type -> Type -> Maybe Substitutions
-unifier typeA typeB =
-    let
-        bindTypeVariables bindings =
-            { bindTypeVariables = bindings
-            , bindRecordVariables = Dict.empty
-            }
-    in
-    case ( typeA, typeB ) of
-        ( Var nameA, _ ) ->
-            bindTypeVariable nameA typeB
-                |> Maybe.map bindTypeVariables
-
-        ( _, Var nameB ) ->
-            bindTypeVariable nameB typeA
-                |> Maybe.map bindTypeVariables
-
-        ( Lambda fromA toA, Lambda fromB toB ) ->
-            unifierMany [ fromA, toA ] [ fromB, toB ]
-
-        ( Tuple typesA, Tuple typesB ) ->
-            unifierMany typesA typesB
-
-        ( Type nameA varsA, Type nameB varsB ) ->
-            if nameA == nameB then
-                unifierMany varsA varsB
-
-            else
-                Nothing
-
-        ( Record fieldsA maybeVarA, Record fieldsB maybeVarB ) ->
-            case ( maybeVarA, maybeVarB ) of
-                ( Nothing, Nothing ) ->
-                    unifierFields fieldsA fieldsB
-
-                ( Just nameA, Nothing ) ->
-                    let
-                        inFieldsA ( fieldNameB, _ ) =
-                            List.any (hasName fieldNameB) fieldsA
-
-                        hasName thisName ( otherName, _ ) =
-                            thisName == otherName
-
-                        bindRecordVariable substitutions =
-                            { substitutions
-                                | bindRecordVariables =
-                                    Dict.insert nameA
-                                        ( List.filter (not << inFieldsA) fieldsB, Nothing )
-                                        substitutions.bindRecordVariables
-                            }
-                    in
-                    unifierFields
-                        fieldsA
-                        (List.filter inFieldsA fieldsB)
-                        |> Maybe.map bindRecordVariable
-
-                ( Nothing, Just nameB ) ->
-                    let
-                        inFieldsB ( fieldNameA, _ ) =
-                            List.any (hasName fieldNameA) fieldsB
-
-                        hasName thisName ( otherName, _ ) =
-                            thisName == otherName
-
-                        bindRecordVariable substitutions =
-                            { substitutions
-                                | bindRecordVariables =
-                                    Dict.insert nameB
-                                        ( List.filter (not << inFieldsB) fieldsA, Nothing )
-                                        substitutions.bindRecordVariables
-                            }
-                    in
-                    unifierFields
-                        (List.filter inFieldsB fieldsA)
-                        fieldsB
-                        |> Maybe.map bindRecordVariable
-
-                ( Just nameA, Just nameB ) ->
-                    if nameA == nameB then
-                        unifierFields fieldsA fieldsB
-
-                    else
-                        let
-                            bindRecordVariable substitutions =
-                                { substitutions
-                                    | bindRecordVariables =
-                                        Dict.insert nameB
-                                            ( [], Just nameA )
-                                            substitutions.bindRecordVariables
-                                }
-                        in
-                        unifierFields fieldsA fieldsB
-                            |> Maybe.map bindRecordVariable
-
-        _ ->
-            Nothing
-
-
-unifierMany : List Type -> List Type -> Maybe Substitutions
-unifierMany typesA typesB =
-    unifierManyHelp
-        typesA
-        typesB
-        noSubstitutions
-
-
-unifierManyHelp : List Type -> List Type -> Substitutions -> Maybe Substitutions
-unifierManyHelp typesA typesB substitutions =
-    case ( typesA, typesB ) of
-        ( firstA :: restA, firstB :: restB ) ->
-            unifier firstA firstB
-                |> Maybe.map (mergeSubstitutions substitutions)
-                |> Maybe.andThen (unifierManyHelp restA restB)
-
-        ( [], [] ) ->
-            Just substitutions
-
-        _ ->
-            Nothing
-
-
-unifierFields : List ( String, Type ) -> List ( String, Type ) -> Maybe Substitutions
-unifierFields fieldsA fieldsB =
-    unifierFieldsHelp
-        (List.sortBy Tuple.first fieldsA)
-        (List.sortBy Tuple.first fieldsB)
-        noSubstitutions
-
-
-unifierFieldsHelp :
-    List ( String, Type )
-    -> List ( String, Type )
-    -> Substitutions
-    -> Maybe Substitutions
-unifierFieldsHelp fieldsA fieldsB substitutions =
-    case ( fieldsA, fieldsB ) of
-        ( ( nameA, typeA ) :: restA, ( nameB, typeB ) :: restB ) ->
-            if nameA == nameB then
-                unifier typeA typeB
-                    |> Maybe.map (mergeSubstitutions substitutions)
-                    |> Maybe.andThen (unifierFieldsHelp restA restB)
-
-            else
-                Nothing
-
-        ( [], [] ) ->
-            Just substitutions
-
-        _ ->
-            Nothing
-
-
-bindTypeVariable : String -> Type -> Maybe (Dict String Type)
-bindTypeVariable name tipe =
-    let
-        nameOccursInType =
-            Set.member name (typeVariables tipe)
-    in
-    case tipe of
-        Var otherName ->
-            if otherName == name then
-                Just Dict.empty
-
-            else if nameOccursInType then
-                Nothing
-
-            else
-                Just (Dict.singleton name tipe)
-
-        _ ->
-            if
-                nameOccursInType
-                    || (String.startsWith "number" name && not (isNumber tipe))
-                    || (String.startsWith "comparable" name && not (isComparable tipe))
-            then
-                Nothing
-
-            else
-                Just (Dict.singleton name tipe)
-
-
-isNumber : Type -> Bool
-isNumber tipe =
-    case tipe of
-        Var name ->
-            String.startsWith "number" name
-
-        Type "Int" [] ->
-            True
-
-        Type "Float" [] ->
-            True
-
-        _ ->
-            False
-
-
-isComparable : Type -> Bool
-isComparable tipe =
-    if isNumber tipe then
-        True
-
-    else
-        case tipe of
-            Var name ->
-                String.startsWith "comparable" name
-
-            Type "Char" [] ->
-                True
-
-            Type "String" [] ->
-                True
-
-            Type "List" [ elementType ] ->
-                isComparable elementType
-
-            Tuple types ->
-                List.all isComparable types
-
-            _ ->
-                False

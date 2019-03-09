@@ -10,7 +10,7 @@ import Elm.Type exposing (Type(..))
 import List.Extra as List
 import Set
 import State exposing (State)
-import Type
+import Type exposing (Substitutions)
 
 
 usefulConstants : Dict String Type
@@ -100,7 +100,16 @@ suggestHelp knownValues targetType =
 
 suggestDirect : Dict String Type -> Type -> List Expr
 suggestDirect knownValues targetType =
-    allGeneralizationsOf knownValues Dict.empty targetType
+    let
+        checkKnownValue name knownType names =
+            case Type.unifier knownType targetType of
+                Nothing ->
+                    names
+
+                Just _ ->
+                    name :: names
+    in
+    Dict.foldl checkKnownValue [] knownValues
         |> List.map (\name -> Call name [])
 
 
@@ -110,23 +119,22 @@ suggestWithArgument knownValues targetType =
         checkKnownValue name knownType exprs =
             case knownType of
                 Lambda from to ->
-                    to
-                        |> Type.isGeneralizationOf targetType
+                    Type.unifiable targetType to
                         |> State.andThen
-                            (\toIsGeneralization ->
-                                if toIsGeneralization then
+                            (\isUnifiable ->
+                                if isUnifiable then
                                     State.get
                                         |> State.map
-                                            (\setVars ->
+                                            (\substitutions ->
                                                 allSpecializationsOf knownValues
-                                                    setVars
+                                                    substitutions
                                                     from
                                             )
 
                                 else
                                     State.state []
                             )
-                        |> State.finalValue Dict.empty
+                        |> State.finalValue Type.noSubstitutions
                         |> List.map (\calledName -> Call name [ calledName ])
                         |> List.append exprs
 
@@ -144,16 +152,15 @@ suggestWithTwoArguments knownValues targetType =
                 Lambda fromA (Lambda fromB to) ->
                     let
                         ( namesA, namesB ) =
-                            to
-                                |> Type.isGeneralizationOf targetType
+                            Type.unifiable targetType to
                                 |> State.andThen
-                                    (\toIsGeneralization ->
-                                        if toIsGeneralization then
+                                    (\isUnifiable ->
+                                        if isUnifiable then
                                             State.get
                                                 |> State.map
-                                                    (\setVars ->
+                                                    (\substitutions ->
                                                         allSpecializationsOf knownValues
-                                                            setVars
+                                                            substitutions
                                                             fromA
                                                     )
 
@@ -164,14 +171,14 @@ suggestWithTwoArguments knownValues targetType =
                                     (\namesA_ ->
                                         State.get
                                             |> State.map
-                                                (\setVars ->
+                                                (\substitutions ->
                                                     allSpecializationsOf knownValues
-                                                        setVars
+                                                        substitutions
                                                         fromB
                                                 )
                                             |> State.map (Tuple.pair namesA_)
                                     )
-                                |> State.finalValue Dict.empty
+                                |> State.finalValue Type.noSubstitutions
                     in
                     List.map
                         (\nameA ->
@@ -253,38 +260,20 @@ suggestCreateTuple knownValues targetType =
 ---- HELPER
 
 
-allGeneralizationsOf : Dict String Type -> Dict String Type -> Type -> List String
-allGeneralizationsOf knownValues setVars targetType =
+allSpecializationsOf : Dict String Type -> Substitutions -> Type -> List String
+allSpecializationsOf knownValues substitutions targetType =
     let
         checkKnownValue name knownType names =
-            if
-                knownType
-                    |> Type.isGeneralizationOf targetType
-                    |> State.finalValue setVars
-            then
-                name :: names
-
-            else
-                names
-    in
-    Dict.foldl checkKnownValue [] knownValues
-
-
-allSpecializationsOf : Dict String Type -> Dict String Type -> Type -> List String
-allSpecializationsOf knownValues setVars targetType =
-    let
-        checkKnownValue name knownType names =
-            targetType
-                |> Type.isGeneralizationOf knownType
+            Type.unifiable knownType targetType
                 |> State.map
-                    (\otherKnownTypeIsGeneralization ->
-                        if otherKnownTypeIsGeneralization then
+                    (\isUnifiable ->
+                        if isUnifiable then
                             name :: names
 
                         else
                             names
                     )
-                |> State.finalValue setVars
+                |> State.finalValue substitutions
     in
     Dict.foldl checkKnownValue [] knownValues
 
