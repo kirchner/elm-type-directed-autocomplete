@@ -12,7 +12,9 @@ import Type
 suite : Test
 suite =
     concat
-        [ isGeneralizationOfTest ]
+        [ isGeneralizationOfTest
+        , unifierTest
+        ]
 
 
 isGeneralizationOfTest : Test
@@ -182,6 +184,215 @@ isGeneralizationOfTest =
                     |> generalize
                     |> State.finalValue 1
                     |> expectToBeGeneralizationOf type_
+        ]
+
+
+unifierTest : Test
+unifierTest =
+    let
+        varA =
+            Var "a"
+
+        varB =
+            Var "b"
+
+        int =
+            Type "Int" []
+    in
+    describe "unifier"
+        [ test "of a and Int" <|
+            \_ ->
+                Type.unifier varA int
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.singleton "a" int
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of Int and b" <|
+            \_ ->
+                Type.unifier int (Var "b")
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.singleton "b" int
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of (a -> b) and (Int -> Int)" <|
+            \_ ->
+                Type.unifier
+                    (Lambda varA varB)
+                    (Lambda int int)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables =
+                                Dict.fromList
+                                    [ ( "a", int )
+                                    , ( "b", int )
+                                    ]
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of (Int -> Int) and (a -> b)" <|
+            \_ ->
+                Type.unifier
+                    (Lambda int int)
+                    (Lambda varA varB)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables =
+                                Dict.fromList
+                                    [ ( "a", int )
+                                    , ( "b", int )
+                                    ]
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of ( a, b ) and ( Int, Int )" <|
+            \_ ->
+                Type.unifier
+                    (Tuple [ varA, varB ])
+                    (Tuple [ int, int ])
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables =
+                                Dict.fromList
+                                    [ ( "a", int )
+                                    , ( "b", int )
+                                    ]
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of ( Int, Int ) and ( a, b )" <|
+            \_ ->
+                Type.unifier
+                    (Tuple [ int, int ])
+                    (Tuple [ varA, varB ])
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables =
+                                Dict.fromList
+                                    [ ( "a", int )
+                                    , ( "b", int )
+                                    ]
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of Int and Int" <|
+            \_ ->
+                Type.unifier int int
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of { field : Int } and { field : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "field", int ) ] Nothing)
+                    (Record [ ( "field", int ) ] Nothing)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of { field : a } and { field : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "field", varA ) ] Nothing)
+                    (Record [ ( "field", int ) ] Nothing)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.singleton "a" int
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of { a | field : Int } and { field : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "field", int ) ] (Just "a"))
+                    (Record [ ( "field", int ) ] Nothing)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables = Dict.singleton "a" ( [], Nothing )
+                            }
+                        )
+        , test "of { a | fieldA : Int } and { fieldA : Int, fieldB : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "fieldA", int ) ] (Just "a"))
+                    (Record
+                        [ ( "fieldA", int )
+                        , ( "fieldB", int )
+                        ]
+                        Nothing
+                    )
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables =
+                                Dict.singleton "a"
+                                    ( [ ( "fieldB", int ) ]
+                                    , Nothing
+                                    )
+                            }
+                        )
+        , test "of { field : Int } and { field : a }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "field", int ) ] Nothing)
+                    (Record [ ( "field", varA ) ] Nothing)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.singleton "a" int
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
+        , test "of { field : Int } and { a | field : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "field", int ) ] Nothing)
+                    (Record [ ( "field", int ) ] (Just "a"))
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables = Dict.singleton "a" ( [], Nothing )
+                            }
+                        )
+        , test "of { fieldA : Int, fieldB : Int } and { a | fieldA : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record
+                        [ ( "fieldA", int )
+                        , ( "fieldB", int )
+                        ]
+                        Nothing
+                    )
+                    (Record [ ( "fieldA", int ) ] (Just "a"))
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables =
+                                Dict.singleton "a"
+                                    ( [ ( "fieldB", int ) ]
+                                    , Nothing
+                                    )
+                            }
+                        )
+        , test "of { a | field : Int } and { a | field : Int }" <|
+            \_ ->
+                Type.unifier
+                    (Record [ ( "field", int ) ] Nothing)
+                    (Record [ ( "field", int ) ] Nothing)
+                    |> Expect.equal
+                        (Just
+                            { bindTypeVariables = Dict.empty
+                            , bindRecordVariables = Dict.empty
+                            }
+                        )
         ]
 
 
