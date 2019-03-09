@@ -99,8 +99,11 @@ init flags =
 
 view : Model -> Html Msg
 view model =
-    Element.layout [] <|
-        Element.row
+    Element.layout
+        [ Element.width Element.fill
+        , Element.height Element.fill
+        ]
+        (Element.row
             [ Element.width Element.fill
             , Element.height Element.fill
             ]
@@ -136,6 +139,9 @@ view model =
                             [ Element.width Element.fill
                             , Element.height Element.fill
                             , Element.spacing 16
+                            , Element.clip
+                            , Element.htmlAttribute <|
+                                Html.Attributes.style "flex-shrink" "1"
                             ]
                             [ Element.el [ Font.bold ]
                                 (Element.text "Suggestions")
@@ -271,6 +277,7 @@ view model =
                     ]
                 ]
             ]
+        )
 
 
 viewValues : Dict String Type -> Element Msg
@@ -378,6 +385,9 @@ viewExprs : List Expr -> Element msg
 viewExprs exprs =
     Element.column
         [ Element.spacing 16
+        , Element.scrollbarY
+        , Element.width Element.fill
+        , Element.height Element.fill
         ]
         (List.map viewExpr exprs)
 
