@@ -37,12 +37,19 @@ type alias Model =
     { coreModules : List Module
     , targetType : String
 
-    -- LOCALE VALUES
+    -- ALGORITHMS
+    , suggestRecordUpdates : Bool
+    , suggestTuples : Bool
+    , suggestExactMatches : Bool
+    , suggestOnceEvaluated : Bool
+    , suggestTwiceEvaluated : Bool
+
+    -- LOCAL VALUES
     , localValues : Dict String Type
     , newName : String
     , newType : String
 
-    -- LOCALE ALIASES
+    -- LOCAL ALIASES
     , localAliases : Dict String Alias
     , newAliasName : String
     , newAliasType : String
@@ -66,6 +73,13 @@ init flags =
             ( { coreModules = coreModules
               , targetType = ""
 
+              -- ALGORITHMS
+              , suggestRecordUpdates = True
+              , suggestTuples = True
+              , suggestExactMatches = True
+              , suggestOnceEvaluated = True
+              , suggestTwiceEvaluated = True
+
               -- LOCAL VALUES
               , localValues = storage.localValues
               , newName = ""
@@ -82,6 +96,13 @@ init flags =
         _ ->
             ( { coreModules = []
               , targetType = ""
+
+              -- ALGORITHMS
+              , suggestRecordUpdates = True
+              , suggestTuples = True
+              , suggestExactMatches = True
+              , suggestOnceEvaluated = True
+              , suggestTwiceEvaluated = True
 
               -- LOCAL VALUES
               , localValues = Dict.empty
@@ -108,7 +129,7 @@ view model =
             , Element.height Element.fill
             ]
             [ Element.column
-                [ Element.width Element.fill
+                [ Element.width (Element.fillPortion 1)
                 , Element.height Element.fill
                 , Element.padding 64
                 , Element.spacing 32
@@ -116,26 +137,24 @@ view model =
                     [ Font.monospace ]
                 , Font.size 16
                 ]
-                (case decodeTargetType model.targetType of
+                [ Input.text
+                    [ Element.spacing 8
+                    , Element.width Element.fill
+                    ]
+                    { onChange = TargetTypeChanged
+                    , text = model.targetType
+                    , placeholder = Nothing
+                    , label =
+                        Input.labelAbove [ Font.bold ]
+                            (Element.text "Target type")
+                    }
+                , viewSuggesters model
+                , case decodeTargetType model.targetType of
+                    Nothing ->
+                        Element.none
+
                     Just targetType ->
-                        let
-                            knownValues =
-                                model.coreModules
-                                    |> List.map valuesFromModule
-                                    |> List.foldl Dict.union Dict.empty
-                        in
-                        [ Input.text
-                            [ Element.spacing 8
-                            , Element.width Element.fill
-                            ]
-                            { onChange = TargetTypeChanged
-                            , text = model.targetType
-                            , placeholder = Nothing
-                            , label =
-                                Input.labelAbove [ Font.bold ]
-                                    (Element.text "Target type")
-                            }
-                        , Element.column
+                        Element.column
                             [ Element.width Element.fill
                             , Element.height Element.fill
                             , Element.spacing 16
@@ -146,28 +165,12 @@ view model =
                             [ Element.el [ Font.bold ]
                                 (Element.text "Suggestions")
                             , viewExprs <|
-                                Expr.suggest
-                                    (Dict.values model.localAliases)
-                                    (Dict.union model.localValues knownValues)
+                                suggest model
                                     targetType
                             ]
-                        ]
-
-                    Nothing ->
-                        [ Input.text
-                            [ Element.spacing 8
-                            , Element.width Element.fill
-                            ]
-                            { onChange = TargetTypeChanged
-                            , text = model.targetType
-                            , placeholder = Nothing
-                            , label = Input.labelAbove [ Font.bold ] (Element.text "Target type")
-                            }
-                        , Element.text "This is not a valid type"
-                        ]
-                )
+                ]
             , Element.column
-                [ Element.width Element.fill
+                [ Element.width (Element.fillPortion 2)
                 , Element.height Element.fill
                 , Element.spacing 32
                 ]
@@ -219,7 +222,7 @@ view model =
                                 ]
                             ]
                             { onPress = Just LocalValueAddPressed
-                            , label = Element.el [ Font.bold ] (Element.text "Add locale value")
+                            , label = Element.el [ Font.bold ] (Element.text "Add local value")
                             }
                         ]
                     ]
@@ -271,13 +274,73 @@ view model =
                                 ]
                             ]
                             { onPress = Just LocalAliasAddPressed
-                            , label = Element.el [ Font.bold ] (Element.text "Add locale alias")
+                            , label = Element.el [ Font.bold ] (Element.text "Add local alias")
                             }
                         ]
                     ]
                 ]
             ]
         )
+
+
+viewSuggesters : Model -> Element Msg
+viewSuggesters model =
+    Element.column
+        [ Element.width Element.fill
+        , Element.spacing 16
+        ]
+        [ Element.el [ Font.bold ]
+            (Element.text "Algorithms")
+        , Element.column
+            [ Element.width Element.fill
+            , Element.spacing 8
+            ]
+            [ viewSuggesterCheckbox
+                { onChange = SuggestRecordUpdatesChecked
+                , checked = model.suggestRecordUpdates
+                , label = Element.text "Suggest record updates"
+                }
+            , viewSuggesterCheckbox
+                { onChange = SuggestTuplesChecked
+                , checked = model.suggestTuples
+                , label = Element.text "Suggest tuples"
+                }
+            , viewSuggesterCheckbox
+                { onChange = SuggestExactMatchesChecked
+                , checked = model.suggestExactMatches
+                , label = Element.text "Suggest exact matches"
+                }
+            , viewSuggesterCheckbox
+                { onChange = SuggestOnceEvaluatedChecked
+                , checked = model.suggestOnceEvaluated
+                , label = Element.text "Suggest functions along with their 1st argument"
+                }
+            , viewSuggesterCheckbox
+                { onChange = SuggestTwiceEvaluatedChecked
+                , checked = model.suggestTwiceEvaluated
+                , label = Element.text "Suggest functions along with their 1st and 2nd arguments"
+                }
+            ]
+        ]
+
+
+bold text =
+    Element.el [ Font.bold ] <|
+        Element.text text
+
+
+viewSuggesterCheckbox { onChange, checked, label } =
+    Input.checkbox
+        [ Element.width Element.fill
+        ]
+        { onChange = onChange
+        , icon = Input.defaultCheckbox
+        , checked = checked
+        , label =
+            Input.labelRight
+                [ Element.width Element.fill ]
+                label
+        }
 
 
 viewValues : Dict String Type -> Element Msg
@@ -417,6 +480,12 @@ type Msg
     | NewAliasTypeChanged String
     | LocalAliasAddPressed
     | LocalAliasRemovePressed String
+      -- ALGORITHMS
+    | SuggestRecordUpdatesChecked Bool
+    | SuggestTuplesChecked Bool
+    | SuggestExactMatchesChecked Bool
+    | SuggestOnceEvaluatedChecked Bool
+    | SuggestTwiceEvaluatedChecked Bool
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -546,9 +615,146 @@ update msg model =
                 )
             )
 
+        -- ALGORITHMS
+        SuggestRecordUpdatesChecked value ->
+            ( { model | suggestRecordUpdates = value }
+            , Cmd.none
+            )
+
+        SuggestTuplesChecked value ->
+            ( { model | suggestTuples = value }
+            , Cmd.none
+            )
+
+        SuggestExactMatchesChecked value ->
+            ( { model | suggestExactMatches = value }
+            , Cmd.none
+            )
+
+        SuggestOnceEvaluatedChecked value ->
+            ( { model | suggestOnceEvaluated = value }
+            , Cmd.none
+            )
+
+        SuggestTwiceEvaluatedChecked value ->
+            ( { model | suggestTwiceEvaluated = value }
+            , Cmd.none
+            )
+
 
 subscriptions _ =
     Sub.none
+
+
+
+----
+
+
+suggest : Model -> Type -> List Expr
+suggest model targetType =
+    let
+        knownValues =
+            model.coreModules
+                |> List.map valuesFromModule
+                |> List.foldl Dict.union Dict.empty
+                |> Dict.union model.localValues
+                |> Dict.filter
+                    (\name _ ->
+                        not
+                            (List.member name
+                                [ "Basics.identity"
+                                , "Basics.always"
+                                , "Debug.todo"
+                                , "Debug.toString"
+                                , "Debug.log"
+                                ]
+                            )
+                    )
+                |> Dict.map
+                    (\_ tipe ->
+                        tipe
+                            |> removeScope
+                            |> Type.normalize
+                                (Dict.values model.localAliases)
+                    )
+                |> Dict.union usefulConstants
+
+        usefulConstants =
+            Dict.fromList
+                [ ( "0", Type "Int" [] )
+                , ( "\"\"", Type "String" [] )
+                ]
+    in
+    List.concat
+        [ suggestHelp model
+            knownValues
+            (Type.normalize (Dict.values model.localAliases)
+                targetType
+            )
+        ]
+
+
+suggestHelp : Model -> Dict String Type -> Type -> List Expr
+suggestHelp model knownValues targetType =
+    List.concat <|
+        List.filterMap identity
+            [ if model.suggestRecordUpdates then
+                Just (Expr.suggestRecordUpdate knownValues targetType)
+
+              else
+                Nothing
+            , if model.suggestTuples then
+                Just
+                    (Expr.suggestCreateTuple (suggestHelp model knownValues)
+                        knownValues
+                        targetType
+                    )
+
+              else
+                Nothing
+            , if model.suggestExactMatches then
+                Just (Expr.suggestDirect knownValues targetType)
+
+              else
+                Nothing
+            , if model.suggestOnceEvaluated then
+                Just (Expr.suggestWithArgument knownValues targetType)
+
+              else
+                Nothing
+            , if model.suggestTwiceEvaluated then
+                Just (Expr.suggestWithTwoArguments knownValues targetType)
+
+              else
+                Nothing
+            ]
+
+
+removeScope : Type -> Type
+removeScope scopedType =
+    case scopedType of
+        Var name ->
+            Var name
+
+        Type name subTypes ->
+            Type
+                (String.split "." name
+                    |> List.reverse
+                    |> List.head
+                    |> Maybe.withDefault name
+                )
+                (List.map removeScope subTypes)
+
+        Lambda typeA typeB ->
+            Lambda (removeScope typeA) (removeScope typeB)
+
+        Tuple types ->
+            Tuple (List.map removeScope types)
+
+        Record values var ->
+            Record
+                (List.map (Tuple.mapSecond removeScope) values)
+                var
 
 
 

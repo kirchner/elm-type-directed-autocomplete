@@ -1,6 +1,10 @@
 module Expr exposing
     ( Expr
-    , suggest
+    , suggestCreateTuple
+    , suggestDirect
+    , suggestRecordUpdate
+    , suggestWithArgument
+    , suggestWithTwoArguments
     , toString
     )
 
@@ -11,14 +15,6 @@ import List.Extra as List
 import Set
 import State exposing (State)
 import Type exposing (Substitutions)
-
-
-usefulConstants : Dict String Type
-usefulConstants =
-    Dict.fromList
-        [ ( "0", Type "Int" [] )
-        , ( "\"\"", Type "String" [] )
-        ]
 
 
 type Expr
@@ -60,47 +56,6 @@ toString expr =
                 , toString exprB
                 , "\n)"
                 ]
-
-
-suggest : List Alias -> Dict String Type -> Type -> List Expr
-suggest aliases knownValues targetType =
-    let
-        usedKnownValues =
-            knownValues
-                |> Dict.filter
-                    (\name _ ->
-                        not
-                            (List.member name
-                                [ "Basics.identity"
-                                , "Basics.always"
-                                , "Debug.todo"
-                                , "Debug.toString"
-                                , "Debug.log"
-                                ]
-                            )
-                    )
-                |> Dict.map
-                    (\_ tipe ->
-                        tipe
-                            |> removeScope
-                            |> Type.normalize aliases
-                    )
-                |> Dict.union usefulConstants
-    in
-    List.concat
-        [ suggestHelp usedKnownValues (Type.normalize aliases targetType)
-        ]
-
-
-suggestHelp : Dict String Type -> Type -> List Expr
-suggestHelp knownValues targetType =
-    List.concat
-        [ suggestDirect knownValues targetType
-        , suggestWithArgument knownValues targetType
-        , suggestWithTwoArguments knownValues targetType
-        , suggestRecordUpdate knownValues targetType
-        , suggestCreateTuple knownValues targetType
-        ]
 
 
 suggestDirect : Dict String Type -> Type -> List Expr
@@ -246,16 +201,16 @@ suggestRecordUpdate knownValues targetType =
             []
 
 
-suggestCreateTuple : Dict String Type -> Type -> List Expr
-suggestCreateTuple knownValues targetType =
+suggestCreateTuple : (Type -> List Expr) -> Dict String Type -> Type -> List Expr
+suggestCreateTuple suggest knownValues targetType =
     case targetType of
         Tuple (typeA :: typeB :: []) ->
             List.concatMap
                 (\exprA ->
                     List.map (CreateTuple exprA)
-                        (suggestHelp knownValues typeB)
+                        (suggest typeB)
                 )
-                (suggestHelp knownValues typeA)
+                (suggest typeA)
 
         _ ->
             []
@@ -281,30 +236,3 @@ allSpecializationsOf knownValues substitutions targetType =
                 |> State.finalValue substitutions
     in
     Dict.foldl checkKnownValue [] knownValues
-
-
-removeScope : Type -> Type
-removeScope scopedType =
-    case scopedType of
-        Var name ->
-            Var name
-
-        Type name subTypes ->
-            Type
-                (String.split "." name
-                    |> List.reverse
-                    |> List.head
-                    |> Maybe.withDefault name
-                )
-                (List.map removeScope subTypes)
-
-        Lambda typeA typeB ->
-            Lambda (removeScope typeA) (removeScope typeB)
-
-        Tuple types ->
-            Tuple (List.map removeScope types)
-
-        Record values var ->
-            Record
-                (List.map (Tuple.mapSecond removeScope) values)
-                var
