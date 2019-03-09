@@ -12,9 +12,132 @@ import Type
 suite : Test
 suite =
     concat
-        [ unifierTest
+        [ normalizeTest
+        , unifierTest
         , unifiableTest
         ]
+
+
+normalizeTest : Test
+normalizeTest =
+    let
+        aliasA =
+            { name = "A"
+            , comment = ""
+            , args = []
+            , tipe = int
+            }
+
+        a =
+            Type "A" []
+
+        int =
+            Type "Int" []
+
+        list tipe =
+            Type "List" [ tipe ]
+
+        varA =
+            Var "a"
+
+        varB =
+            Var "b"
+    in
+    only <|
+        describe "normalize"
+            [ test "of [ type alias A = Int ] A" <|
+                \_ ->
+                    Type.normalize [ aliasA ] a
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( int
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A = Int ] (A -> A)" <|
+                \_ ->
+                    Type.normalize [ aliasA ] (Lambda a a)
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( Lambda int int
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A = Int ] ( A, A )" <|
+                \_ ->
+                    Type.normalize [ aliasA ] (Tuple [ a, a ])
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( Tuple [ int, int ]
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A = Int ] { field : A }" <|
+                \_ ->
+                    Type.normalize [ aliasA ] (Record [ ( "field", a ) ] Nothing)
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( Record [ ( "field", int ) ] Nothing
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A = List Int ] A" <|
+                \_ ->
+                    Type.normalize
+                        [ { name = "A"
+                          , comment = ""
+                          , args = []
+                          , tipe = list int
+                          }
+                        ]
+                        a
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( list int
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A a = List a ] (A Int)" <|
+                \_ ->
+                    Type.normalize
+                        [ { name = "A"
+                          , comment = ""
+                          , args = [ "a" ]
+                          , tipe = list varA
+                          }
+                        ]
+                        (Type "A" [ int ])
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( list int
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A a = List a ] (A a)" <|
+                \_ ->
+                    Type.normalize
+                        [ { name = "A"
+                          , comment = ""
+                          , args = [ "a" ]
+                          , tipe = list varA
+                          }
+                        ]
+                        (Type "A" [ varA ])
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( list varA
+                            , Type.noSubstitutions
+                            )
+            , test "of [ type alias A a = List a ] (A b)" <|
+                \_ ->
+                    Type.normalize
+                        [ { name = "A"
+                          , comment = ""
+                          , args = [ "a" ]
+                          , tipe = list varB
+                          }
+                        ]
+                        (Type "A" [ varA ])
+                        |> State.run Type.noSubstitutions
+                        |> Expect.equal
+                            ( list varB
+                            , Type.noSubstitutions
+                            )
+            ]
 
 
 unifierTest : Test

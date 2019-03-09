@@ -1,6 +1,7 @@
 module Type exposing
     ( Substitutions
     , noSubstitutions
+    , normalize
     , substitute
     , toString
     , typeVariables
@@ -9,7 +10,9 @@ module Type exposing
     )
 
 import Dict exposing (Dict)
+import Elm.Docs exposing (Alias)
 import Elm.Type exposing (Type(..))
+import List.Extra as List
 import Set exposing (Set)
 import State exposing (State)
 
@@ -57,6 +60,75 @@ toString type_ =
                     |> String.join ", "
                 , " }"
                 ]
+
+
+
+---- NORMALIZATION
+
+
+{-| Normalize a type by recursivly replacing all type aliases.
+-}
+normalize : List Alias -> Type -> State Substitutions Type
+normalize aliases tipe =
+    let
+        getAlias name =
+            List.find (.name >> (==) name) aliases
+    in
+    case tipe of
+        Var _ ->
+            State.state tipe
+
+        Type name subTypes ->
+            case getAlias name of
+                Nothing ->
+                    State.state tipe
+
+                Just alias_ ->
+                    let
+                        bindings =
+                            bindingsHelp Dict.empty subTypes alias_.args
+
+                        bindingsHelp dict types args =
+                            case ( types, args ) of
+                                ( nextTipe :: restTypes, arg :: restArgs ) ->
+                                    bindingsHelp
+                                        (Dict.insert arg nextTipe dict)
+                                        restTypes
+                                        restArgs
+
+                                _ ->
+                                    dict
+                    in
+                    alias_.args
+                        |> List.foldl
+                            (\arg nextTipe ->
+                                substitute
+                                    { bindTypeVariables = bindings
+                                    , bindRecordVariables = Dict.empty
+                                    }
+                                    nextTipe
+                            )
+                            alias_.tipe
+                        |> State.state
+
+        Lambda from to ->
+            State.map2 Lambda
+                (normalize aliases from)
+                (normalize aliases to)
+
+        Tuple subTypes ->
+            subTypes
+                |> State.traverse (normalize aliases)
+                |> State.map Tuple
+
+        Record values maybeVar ->
+            values
+                |> State.traverse
+                    (\( name, fieldType ) ->
+                        State.map (Tuple.pair name)
+                            (normalize aliases fieldType)
+                    )
+                |> State.map (\newValues -> Record newValues maybeVar)
 
 
 
