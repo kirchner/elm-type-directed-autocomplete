@@ -435,8 +435,54 @@ bindTypeVariable name tipe =
                 Just (Dict.singleton name tipe)
 
         _ ->
-            if nameOccursInType then
+            if
+                nameOccursInType
+                    || (String.startsWith "number" name && not (isNumber tipe))
+                    || (String.startsWith "comparable" name && not (isComparable tipe))
+            then
                 Nothing
 
             else
                 Just (Dict.singleton name tipe)
+
+
+isNumber : Type -> Bool
+isNumber tipe =
+    case tipe of
+        Var name ->
+            String.startsWith "number" name
+
+        Type "Int" [] ->
+            True
+
+        Type "Float" [] ->
+            True
+
+        _ ->
+            False
+
+
+isComparable : Type -> Bool
+isComparable tipe =
+    if isNumber tipe then
+        True
+
+    else
+        case tipe of
+            Var name ->
+                String.startsWith "comparable" name
+
+            Type "Char" [] ->
+                True
+
+            Type "String" [] ->
+                True
+
+            Type "List" [ elementType ] ->
+                isComparable elementType
+
+            Tuple types ->
+                List.all isComparable types
+
+            _ ->
+                False
