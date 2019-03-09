@@ -104,6 +104,26 @@ normalizeTest =
                     ]
                     (Type "A" [ varA ])
                     |> Expect.equal (list varB)
+        , test "of [ type alias A = { b : B }, type alias B = Int ] A" <|
+            \_ ->
+                Type.normalize
+                    [ { name = "A"
+                      , comment = ""
+                      , args = []
+                      , tipe = Record [ ( "b", Type "B" [] ) ] Nothing
+                      }
+                    , { name = "B"
+                      , comment = ""
+                      , args = []
+                      , tipe = Type "Int" []
+                      }
+                    ]
+                    (Type "A" [])
+                    |> Expect.equal
+                        (Record
+                            [ ( "b", Type "Int" [] ) ]
+                            Nothing
+                        )
         ]
 
 

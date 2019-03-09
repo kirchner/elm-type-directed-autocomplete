@@ -110,6 +110,7 @@ normalize aliases tipe =
                                     nextTipe
                             )
                             alias_.tipe
+                        |> normalize aliases
 
         Lambda from to ->
             Lambda
