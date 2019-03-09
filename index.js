@@ -10,7 +10,7 @@ const cacheKey = "elm-type-directed-autocomplete"
 
 var app = Elm.Main.init({
   flags: {
-    localValues:  localStorage.getItem(cacheKey) || "",
+    localStorage:  localStorage.getItem(cacheKey) || "",
     coreJson: require("./docs/core.json")
   },
   node: document.getElementById("elm-container")

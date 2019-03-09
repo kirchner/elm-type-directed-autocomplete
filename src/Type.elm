@@ -68,7 +68,7 @@ toString type_ =
 
 {-| Normalize a type by recursivly replacing all type aliases.
 -}
-normalize : List Alias -> Type -> State Substitutions Type
+normalize : List Alias -> Type -> Type
 normalize aliases tipe =
     let
         getAlias name =
@@ -76,12 +76,13 @@ normalize aliases tipe =
     in
     case tipe of
         Var _ ->
-            State.state tipe
+            tipe
 
         Type name subTypes ->
             case getAlias name of
                 Nothing ->
-                    State.state tipe
+                    Type name
+                        (List.map (normalize aliases) subTypes)
 
                 Just alias_ ->
                     let
@@ -109,26 +110,19 @@ normalize aliases tipe =
                                     nextTipe
                             )
                             alias_.tipe
-                        |> State.state
 
         Lambda from to ->
-            State.map2 Lambda
+            Lambda
                 (normalize aliases from)
                 (normalize aliases to)
 
         Tuple subTypes ->
-            subTypes
-                |> State.traverse (normalize aliases)
-                |> State.map Tuple
+            Tuple (List.map (normalize aliases) subTypes)
 
         Record values maybeVar ->
-            values
-                |> State.traverse
-                    (\( name, fieldType ) ->
-                        State.map (Tuple.pair name)
-                            (normalize aliases fieldType)
-                    )
-                |> State.map (\newValues -> Record newValues maybeVar)
+            Record
+                (List.map (Tuple.mapSecond (normalize aliases)) values)
+                maybeVar
 
 
 

@@ -7,13 +7,14 @@ import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
 import Element.Input as Input
-import Elm.Docs exposing (Module)
+import Elm.Docs exposing (Alias, Module)
 import Elm.Type exposing (Type(..))
 import Expr exposing (Expr)
 import Html exposing (Html)
 import Html.Attributes
 import Http
 import Json.Decode as Decode exposing (Decoder)
+import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
 import Set
 import Type
@@ -35,30 +36,45 @@ main =
 type alias Model =
     { coreModules : List Module
     , targetType : String
+
+    -- LOCALE VALUES
     , localValues : Dict String Type
     , newName : String
     , newType : String
+
+    -- LOCALE ALIASES
+    , localAliases : Dict String Alias
+    , newAliasName : String
+    , newAliasType : String
     }
 
 
 type alias Flags =
-    { localValues : String
+    { localStorage : String
     , coreJson : Value
     }
 
 
+init : Flags -> ( Model, Cmd Msg )
 init flags =
     case
-        ( Decode.decodeString localValuesDecoder flags.localValues
+        ( Decode.decodeString localStorageDecoder flags.localStorage
         , Decode.decodeValue (Decode.list Elm.Docs.decoder) flags.coreJson
         )
     of
-        ( Ok localValues, Ok coreModules ) ->
+        ( Ok storage, Ok coreModules ) ->
             ( { coreModules = coreModules
               , targetType = ""
-              , localValues = localValues
+
+              -- LOCAL VALUES
+              , localValues = storage.localValues
               , newName = ""
               , newType = ""
+
+              -- LOCAL ALIASES
+              , localAliases = storage.localAliases
+              , newAliasName = ""
+              , newAliasType = ""
               }
             , Cmd.none
             )
@@ -66,14 +82,22 @@ init flags =
         _ ->
             ( { coreModules = []
               , targetType = ""
+
+              -- LOCAL VALUES
               , localValues = Dict.empty
               , newName = ""
               , newType = ""
+
+              -- LOCAL ALIASES
+              , localAliases = Dict.empty
+              , newAliasName = ""
+              , newAliasType = ""
               }
             , Cmd.none
             )
 
 
+view : Model -> Html Msg
 view model =
     Element.layout [] <|
         Element.row
@@ -116,7 +140,9 @@ view model =
                             [ Element.el [ Font.bold ]
                                 (Element.text "Suggestions")
                             , viewExprs <|
-                                Expr.suggest (Dict.union model.localValues knownValues)
+                                Expr.suggest
+                                    (Dict.values model.localAliases)
+                                    (Dict.union model.localValues knownValues)
                                     targetType
                             ]
                         ]
@@ -137,58 +163,117 @@ view model =
             , Element.column
                 [ Element.width Element.fill
                 , Element.height Element.fill
-                , Element.padding 64
                 , Element.spacing 32
-                , Font.family
-                    [ Font.monospace ]
-                , Font.size 16
                 ]
                 [ Element.column
                     [ Element.width Element.fill
-                    , Element.spacing 16
+                    , Element.height Element.fill
+                    , Element.padding 64
+                    , Element.spacing 32
+                    , Font.family
+                        [ Font.monospace ]
+                    , Font.size 16
                     ]
-                    [ Element.el [ Font.bold ]
-                        (Element.text "Local values")
-                    , viewValues model.localValues
+                    [ Element.column
+                        [ Element.width Element.fill
+                        , Element.spacing 16
+                        ]
+                        [ Element.el [ Font.bold ]
+                            (Element.text "Local values")
+                        , viewValues model.localValues
+                        ]
+                    , Element.column
+                        [ Element.width Element.fill
+                        , Element.spacing 16
+                        ]
+                        [ Input.text
+                            [ Element.spacing 8
+                            , Element.width Element.fill
+                            ]
+                            { onChange = NewNameChanged
+                            , text = model.newName
+                            , placeholder = Nothing
+                            , label = Input.labelAbove [ Font.bold ] (Element.text "Name")
+                            }
+                        , Input.text
+                            [ Element.spacing 8
+                            , Element.width Element.fill
+                            ]
+                            { onChange = NewTypeChanged
+                            , text = model.newType
+                            , placeholder = Nothing
+                            , label = Input.labelAbove [ Font.bold ] (Element.text "Type")
+                            }
+                        , Input.button
+                            [ Element.paddingXY 16 8
+                            , Border.width 1
+                            , Border.color (Element.rgb 0 0 0)
+                            , Element.mouseOver
+                                [ Background.color (Element.rgb 0.8 0.8 0.8)
+                                ]
+                            ]
+                            { onPress = Just LocalValueAddPressed
+                            , label = Element.el [ Font.bold ] (Element.text "Add locale value")
+                            }
+                        ]
                     ]
                 , Element.column
                     [ Element.width Element.fill
-                    , Element.spacing 16
+                    , Element.height Element.fill
+                    , Element.padding 64
+                    , Element.spacing 32
+                    , Font.family
+                        [ Font.monospace ]
+                    , Font.size 16
                     ]
-                    [ Input.text
-                        [ Element.spacing 8
-                        , Element.width Element.fill
+                    [ Element.column
+                        [ Element.width Element.fill
+                        , Element.spacing 16
                         ]
-                        { onChange = NewNameChanged
-                        , text = model.newName
-                        , placeholder = Nothing
-                        , label = Input.labelAbove [ Font.bold ] (Element.text "Name")
-                        }
-                    , Input.text
-                        [ Element.spacing 8
-                        , Element.width Element.fill
+                        [ Element.el [ Font.bold ]
+                            (Element.text "Local aliases")
+                        , viewAliases model.localAliases
                         ]
-                        { onChange = NewTypeChanged
-                        , text = model.newType
-                        , placeholder = Nothing
-                        , label = Input.labelAbove [ Font.bold ] (Element.text "Type")
-                        }
-                    , Input.button
-                        [ Element.paddingXY 16 8
-                        , Border.width 1
-                        , Border.color (Element.rgb 0 0 0)
-                        , Element.mouseOver
-                            [ Background.color (Element.rgb 0.8 0.8 0.8)
+                    , Element.column
+                        [ Element.width Element.fill
+                        , Element.spacing 16
+                        ]
+                        [ Input.text
+                            [ Element.spacing 8
+                            , Element.width Element.fill
                             ]
+                            { onChange = NewAliasNameChanged
+                            , text = model.newAliasName
+                            , placeholder = Nothing
+                            , label = Input.labelAbove [ Font.bold ] (Element.text "Name")
+                            }
+                        , Input.text
+                            [ Element.spacing 8
+                            , Element.width Element.fill
+                            ]
+                            { onChange = NewAliasTypeChanged
+                            , text = model.newAliasType
+                            , placeholder = Nothing
+                            , label = Input.labelAbove [ Font.bold ] (Element.text "Type")
+                            }
+                        , Input.button
+                            [ Element.paddingXY 16 8
+                            , Border.width 1
+                            , Border.color (Element.rgb 0 0 0)
+                            , Element.mouseOver
+                                [ Background.color (Element.rgb 0.8 0.8 0.8)
+                                ]
+                            ]
+                            { onPress = Just LocalAliasAddPressed
+                            , label = Element.el [ Font.bold ] (Element.text "Add locale alias")
+                            }
                         ]
-                        { onPress = Just LocalValueAddPressed
-                        , label = Element.el [ Font.bold ] (Element.text "Add")
-                        }
                     ]
                 ]
             ]
 
 
+viewValues : Dict String Type -> Element Msg
 viewValues values =
     Element.column
         [ Element.spacing 8
@@ -220,6 +305,49 @@ viewValue ( name, type_ ) =
                     ]
                 ]
                 { onPress = Just (LocalValueRemovePressed name)
+                , label = Element.text "Remove"
+                }
+            )
+        ]
+
+
+viewAliases : Dict String Alias -> Element Msg
+viewAliases aliases =
+    Element.column
+        [ Element.spacing 8
+        , Element.width Element.fill
+        ]
+        (List.map viewAlias (Dict.toList aliases))
+
+
+viewAlias : ( String, Alias ) -> Element Msg
+viewAlias ( name, alias_ ) =
+    Element.row
+        [ Font.family
+            [ Font.monospace ]
+        , Element.width Element.fill
+        ]
+        [ Element.text <|
+            String.join " "
+                [ "type alias"
+                , if List.isEmpty alias_.args then
+                    alias_.name
+
+                  else
+                    String.join " " (alias_.name :: alias_.args)
+                , ":"
+                , Type.toString alias_.tipe
+                ]
+        , Element.el
+            [ Element.alignRight ]
+            (Input.button
+                [ Font.color (Element.rgb 0.4 0.4 0.4)
+                , Font.underline
+                , Element.mouseOver
+                    [ Font.color (Element.rgb 0 0 0)
+                    ]
+                ]
+                { onPress = Just (LocalAliasRemovePressed name)
                 , label = Element.text "Remove"
                 }
             )
@@ -275,8 +403,13 @@ type Msg
     | NewTypeChanged String
     | LocalValueAddPressed
     | LocalValueRemovePressed String
+    | NewAliasNameChanged String
+    | NewAliasTypeChanged String
+    | LocalAliasAddPressed
+    | LocalAliasRemovePressed String
 
 
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NoOp ->
@@ -320,7 +453,12 @@ update msg model =
                         , newType = ""
                         , localValues = newLocalValues
                       }
-                    , cache (encodeLocalValues newLocalValues)
+                    , cache
+                        (encodeLocalStorage
+                            { localValues = newLocalValues
+                            , localAliases = model.localAliases
+                            }
+                        )
                     )
 
         LocalValueRemovePressed name ->
@@ -329,7 +467,73 @@ update msg model =
                     Dict.remove name model.localValues
             in
             ( { model | localValues = newLocalValues }
-            , cache (encodeLocalValues newLocalValues)
+            , cache
+                (encodeLocalStorage
+                    { localValues = newLocalValues
+                    , localAliases = model.localAliases
+                    }
+                )
+            )
+
+        NewAliasNameChanged newName ->
+            ( { model | newAliasName = newName }
+            , Cmd.none
+            )
+
+        NewAliasTypeChanged newType ->
+            ( { model | newAliasType = newType }
+            , Cmd.none
+            )
+
+        LocalAliasAddPressed ->
+            case
+                Decode.decodeString Elm.Type.decoder
+                    ("\"" ++ model.newAliasType ++ "\"")
+            of
+                Err _ ->
+                    ( model, Cmd.none )
+
+                Ok tipe ->
+                    case String.words model.newAliasName of
+                        name :: args ->
+                            let
+                                newLocalAliases =
+                                    Dict.insert name
+                                        { name = name
+                                        , comment = ""
+                                        , tipe = tipe
+                                        , args = args
+                                        }
+                                        model.localAliases
+                            in
+                            ( { model
+                                | newAliasName = ""
+                                , newAliasType = ""
+                                , localAliases = newLocalAliases
+                              }
+                            , cache
+                                (encodeLocalStorage
+                                    { localValues = model.localValues
+                                    , localAliases = newLocalAliases
+                                    }
+                                )
+                            )
+
+                        [] ->
+                            ( model, Cmd.none )
+
+        LocalAliasRemovePressed name ->
+            let
+                newLocalAliases =
+                    Dict.remove name model.localAliases
+            in
+            ( { model | localAliases = newLocalAliases }
+            , cache
+                (encodeLocalStorage
+                    { localValues = model.localValues
+                    , localAliases = newLocalAliases
+                    }
+                )
             )
 
 
@@ -341,9 +545,36 @@ subscriptions _ =
 ---- DECODER
 
 
+type alias Storage =
+    { localValues : Dict String Type
+    , localAliases : Dict String Alias
+    }
+
+
+localStorageDecoder : Decoder Storage
+localStorageDecoder =
+    Decode.succeed Storage
+        |> Decode.required "localValues" localValuesDecoder
+        |> Decode.required "localAliases" localAliasesDecoder
+
+
 localValuesDecoder : Decoder (Dict String Type)
 localValuesDecoder =
     Decode.dict typeDecoder
+
+
+localAliasesDecoder : Decoder (Dict String Alias)
+localAliasesDecoder =
+    Decode.dict aliasDecoder
+
+
+aliasDecoder : Decoder Alias
+aliasDecoder =
+    Decode.succeed Alias
+        |> Decode.required "name" Decode.string
+        |> Decode.required "comment" Decode.string
+        |> Decode.required "args" (Decode.list Decode.string)
+        |> Decode.required "tipe" typeDecoder
 
 
 typeDecoder : Decoder Type
@@ -391,9 +622,32 @@ valueDecoder =
 ---- ENCODE
 
 
+encodeLocalStorage : Storage -> Value
+encodeLocalStorage storage =
+    Encode.object
+        [ ( "localValues", encodeLocalValues storage.localValues )
+        , ( "localAliases", encodeLocalAliases storage.localAliases )
+        ]
+
+
 encodeLocalValues : Dict String Type -> Value
 encodeLocalValues =
     Encode.dict identity encodeType
+
+
+encodeLocalAliases : Dict String Alias -> Value
+encodeLocalAliases =
+    Encode.dict identity encodeAlias
+
+
+encodeAlias : Alias -> Value
+encodeAlias alias_ =
+    Encode.object
+        [ ( "name", Encode.string alias_.name )
+        , ( "comment", Encode.string alias_.comment )
+        , ( "args", Encode.list Encode.string alias_.args )
+        , ( "tipe", encodeType alias_.tipe )
+        ]
 
 
 encodeType : Type -> Value

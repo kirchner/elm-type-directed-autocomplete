@@ -48,35 +48,19 @@ normalizeTest =
             [ test "of [ type alias A = Int ] A" <|
                 \_ ->
                     Type.normalize [ aliasA ] a
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( int
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal int
             , test "of [ type alias A = Int ] (A -> A)" <|
                 \_ ->
                     Type.normalize [ aliasA ] (Lambda a a)
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( Lambda int int
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (Lambda int int)
             , test "of [ type alias A = Int ] ( A, A )" <|
                 \_ ->
                     Type.normalize [ aliasA ] (Tuple [ a, a ])
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( Tuple [ int, int ]
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (Tuple [ int, int ])
             , test "of [ type alias A = Int ] { field : A }" <|
                 \_ ->
                     Type.normalize [ aliasA ] (Record [ ( "field", a ) ] Nothing)
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( Record [ ( "field", int ) ] Nothing
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (Record [ ( "field", int ) ] Nothing)
             , test "of [ type alias A = List Int ] A" <|
                 \_ ->
                     Type.normalize
@@ -87,11 +71,7 @@ normalizeTest =
                           }
                         ]
                         a
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( list int
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (list int)
             , test "of [ type alias A a = List a ] (A Int)" <|
                 \_ ->
                     Type.normalize
@@ -102,11 +82,7 @@ normalizeTest =
                           }
                         ]
                         (Type "A" [ int ])
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( list int
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (list int)
             , test "of [ type alias A a = List a ] (A a)" <|
                 \_ ->
                     Type.normalize
@@ -117,11 +93,7 @@ normalizeTest =
                           }
                         ]
                         (Type "A" [ varA ])
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( list varA
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (list varA)
             , test "of [ type alias A a = List a ] (A b)" <|
                 \_ ->
                     Type.normalize
@@ -132,11 +104,7 @@ normalizeTest =
                           }
                         ]
                         (Type "A" [ varA ])
-                        |> State.run Type.noSubstitutions
-                        |> Expect.equal
-                            ( list varB
-                            , Type.noSubstitutions
-                            )
+                        |> Expect.equal (list varB)
             ]
 
 

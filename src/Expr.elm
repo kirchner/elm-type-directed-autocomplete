@@ -5,7 +5,7 @@ module Expr exposing
     )
 
 import Dict exposing (Dict)
-import Elm.Docs exposing (Module)
+import Elm.Docs exposing (Alias, Module)
 import Elm.Type exposing (Type(..))
 import List.Extra as List
 import Set
@@ -62,8 +62,8 @@ toString expr =
                 ]
 
 
-suggest : Dict String Type -> Type -> List Expr
-suggest knownValues targetType =
+suggest : List Alias -> Dict String Type -> Type -> List Expr
+suggest aliases knownValues targetType =
     let
         usedKnownValues =
             knownValues
@@ -79,11 +79,16 @@ suggest knownValues targetType =
                                 ]
                             )
                     )
-                |> Dict.map (always removeScope)
+                |> Dict.map
+                    (\_ tipe ->
+                        tipe
+                            |> removeScope
+                            |> Type.normalize aliases
+                    )
                 |> Dict.union usefulConstants
     in
     List.concat
-        [ suggestHelp usedKnownValues targetType
+        [ suggestHelp usedKnownValues (Type.normalize aliases targetType)
         ]
 
 
