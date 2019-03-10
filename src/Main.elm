@@ -20,7 +20,6 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
-import Set
 import Task
 import Type
 
@@ -184,6 +183,7 @@ view model =
                 [ Input.text
                     [ Element.spacing 8
                     , Element.width Element.fill
+                    , Input.focusedOnLoad
                     ]
                     { onChange = TargetTypeChanged
                     , text = model.targetType
