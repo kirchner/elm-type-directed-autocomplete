@@ -1,17 +1,10 @@
 import { Elm } from './src/Main.elm';
 
-if (module.hot) {
-  module.hot.dispose(() => {
-    window.location.reload();
-  });
-}
-
 const cacheKey = "elm-type-directed-autocomplete"
 
 var app = Elm.Main.init({
   flags: {
-    localStorage:  localStorage.getItem(cacheKey) || "",
-    coreJson: require("./docs/core.json")
+    localStorage: localStorage.getItem(cacheKey) || ""
   },
   node: document.getElementById("elm-container")
 });

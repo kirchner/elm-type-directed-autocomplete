@@ -57,9 +57,7 @@ type alias Model =
 
 
 type alias Flags =
-    { localStorage : String
-    , coreJson : Value
-    }
+    { localStorage : String }
 
 
 init : Flags -> ( Model, Cmd Msg )
@@ -96,7 +94,7 @@ init flags =
             ( { modules = []
               , packages = []
               , targetType = ""
-              , code = ""
+              , code = defaultCode
 
               -- ALGORITHMS
               , suggestRecordUpdates = True
@@ -108,8 +106,32 @@ init flags =
               -- PACKAGES
               , importPackagesHover = False
               }
-            , Cmd.none
+            , Cmd.batch
+                [ Http.get
+                    { url = "/elm-type-directed-autocomplete/docs.json"
+                    , expect = Http.expectString GotPackage
+                    }
+                , cache
+                    (encodeLocalStorage
+                        { code = defaultCode
+                        , packages = []
+                        }
+                    )
+                ]
             )
+
+
+defaultCode : String
+defaultCode =
+    """type alias Model =
+  { count : Int }
+
+initialModel : Model
+
+type Msg
+  = Increment
+  | Decrement
+"""
 
 
 view : Model -> Html Msg
@@ -324,7 +346,7 @@ viewModules model =
                 ]
                 [ Element.text "You have to upload the "
                 , bold "docs.json"
-                , Element.text " files of an Elm package in order to add its modules to the index. A simply way is to save the links below somewhere on your machine so you can drag and drop them here."
+                , Element.text " files of an Elm package in order to add its modules to the index. A simple way is to save the links below somewhere on your machine so you can drag and drop them here."
                 ]
             ]
         , Element.paragraph
@@ -490,6 +512,7 @@ type Msg
     | SuggestOnceEvaluatedChecked Bool
     | SuggestTwiceEvaluatedChecked Bool
       -- PACKAGES
+    | GotPackage (Result Http.Error String)
     | ImportPackagesDragEnter
     | ImportPackagesDragLeave
     | ImportPackagesGotFiles File (List File)
@@ -546,6 +569,33 @@ update msg model =
             )
 
         -- PACKAGES
+        GotPackage result ->
+            case result of
+                Err _ ->
+                    ( model, Cmd.none )
+
+                Ok rawPackage ->
+                    case Decode.decodeString (Decode.list Elm.Docs.decoder) rawPackage of
+                        Err _ ->
+                            ( model, Cmd.none )
+
+                        Ok modules ->
+                            let
+                                newPackages =
+                                    rawPackage :: model.packages
+                            in
+                            ( { model
+                                | modules = model.modules ++ modules
+                                , packages = newPackages
+                              }
+                            , cache
+                                (encodeLocalStorage
+                                    { code = model.code
+                                    , packages = newPackages
+                                    }
+                                )
+                            )
+
         ImportPackagesDragEnter ->
             ( { model | importPackagesHover = True }
             , Cmd.none
