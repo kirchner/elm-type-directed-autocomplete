@@ -163,101 +163,116 @@ view model =
             , Element.padding 32
             , Element.spacing 16
             ]
-            [ Element.column
-                [ Element.width (Element.fillPortion 1)
-                , Element.height Element.fill
-                , Element.spacing 32
-                , Font.family
-                    [ Font.monospace ]
-                , Font.size 16
-                ]
-                [ viewSuggesters model
-                , viewModules model
-                ]
-            , Input.multiline
-                [ Element.spacing 8
-                , Element.width (Element.fillPortion 2)
-                , Element.height Element.fill
-                , Font.family
-                    [ Font.monospace ]
-                , Font.size 16
-                ]
-                { onChange = CodeChanged
-                , text = model.code
-                , placeholder = Nothing
-                , spellcheck = False
-                , label =
-                    Input.labelAbove [ Font.bold ]
-                        (Element.text "Custom types, type aliases and declarations")
-                }
-            , Element.column
-                [ Element.width (Element.fillPortion 2)
-                , Element.height Element.fill
-                , Element.spacing 32
-                , Font.family
-                    [ Font.monospace ]
-                , Font.size 16
-                ]
-                [ Input.text
-                    [ Element.spacing 8
-                    , Element.width Element.fill
-                    , Input.focusedOnLoad
-                    ]
-                    { onChange = TargetTypeChanged
-                    , text = model.targetType
-                    , placeholder = Nothing
-                    , label =
-                        Input.labelAbove [] <|
-                            Element.column
-                                [ Element.width Element.fill
-                                , Element.spacing 8
-                                ]
-                                [ Element.el [ Font.bold ]
-                                    (Element.text "Target type")
-                                , Element.paragraph
-                                    [ Font.size 14
-                                    , Font.color (Element.rgb 0.3 0.3 0.3)
-                                    ]
-                                    [ Element.text "Try something like "
-                                    , bold "List String -> String"
-                                    , Element.text ", "
-                                    , bold "List Int -> List Int"
-                                    , Element.text " or one of the types you have defined on the left."
-                                    ]
-                                , Element.paragraph
-                                    [ Font.size 14
-                                    , Font.color (Element.rgb 0.3 0.3 0.3)
-                                    ]
-                                    [ Element.text "To get more results you can activate more "
-                                    , bold "Algorithms"
-                                    , Element.text " or add more "
-                                    , bold "Modules"
-                                    , Element.text "."
-                                    ]
-                                ]
-                    }
-                , case decodeTargetType model.targetType of
-                    Nothing ->
-                        Element.none
-
-                    Just targetType ->
-                        Element.column
-                            [ Element.width Element.fill
-                            , Element.height Element.fill
-                            , Element.spacing 16
-                            , Element.clip
-                            , Element.htmlAttribute <|
-                                Html.Attributes.style "flex-shrink" "1"
-                            ]
-                            [ Element.el [ Font.bold ]
-                                (Element.text "Suggestions")
-                            , viewExprs <|
-                                suggest model
-                                    targetType
-                            ]
-                ]
+            [ viewTargetType model
+            , viewCode model
+            , viewOptions model
             ]
         )
+
+
+viewOptions : Model -> Element Msg
+viewOptions model =
+    Element.column
+        [ Element.width (Element.fillPortion 1)
+        , Element.height Element.fill
+        , Element.spacing 32
+        , Font.family
+            [ Font.monospace ]
+        , Font.size 16
+        ]
+        [ viewSuggesters model
+        , viewModules model
+        ]
+
+
+viewCode : Model -> Element Msg
+viewCode model =
+    Input.multiline
+        [ Element.spacing 8
+        , Element.width (Element.fillPortion 2)
+        , Element.height Element.fill
+        , Font.family
+            [ Font.monospace ]
+        , Font.size 16
+        ]
+        { onChange = CodeChanged
+        , text = model.code
+        , placeholder = Nothing
+        , spellcheck = False
+        , label =
+            Input.labelAbove [ Font.bold ]
+                (Element.text "Custom types, type aliases and declarations")
+        }
+
+
+viewTargetType : Model -> Element Msg
+viewTargetType model =
+    Element.column
+        [ Element.width (Element.fillPortion 2)
+        , Element.height Element.fill
+        , Element.spacing 32
+        , Font.family
+            [ Font.monospace ]
+        , Font.size 16
+        ]
+        [ Input.text
+            [ Element.spacing 8
+            , Element.width Element.fill
+            , Input.focusedOnLoad
+            ]
+            { onChange = TargetTypeChanged
+            , text = model.targetType
+            , placeholder = Nothing
+            , label =
+                Input.labelAbove [] <|
+                    Element.column
+                        [ Element.width Element.fill
+                        , Element.spacing 8
+                        ]
+                        [ Element.el [ Font.bold ]
+                            (Element.text "Target type")
+                        , Element.paragraph
+                            [ Font.size 14
+                            , Font.color (Element.rgb 0.3 0.3 0.3)
+                            ]
+                            [ Element.text "Try something like "
+                            , bold "List String -> String"
+                            , Element.text ", "
+                            , bold "List Int -> List Int"
+                            , Element.text " or one of the types you have defined on the left."
+                            ]
+                        , Element.paragraph
+                            [ Font.size 14
+                            , Font.color (Element.rgb 0.3 0.3 0.3)
+                            ]
+                            [ Element.text "To get more results you can activate more "
+                            , bold "Algorithms"
+                            , Element.text " or add more "
+                            , bold "Modules"
+                            , Element.text "."
+                            ]
+                        ]
+            }
+        , case decodeTargetType model.targetType of
+            Nothing ->
+                Element.none
+
+            Just targetType ->
+                Element.column
+                    [ Element.width Element.fill
+                    , Element.height Element.fill
+                    , Element.spacing 16
+                    , Element.clip
+                    , Element.htmlAttribute <|
+                        Html.Attributes.style "flex-shrink" "1"
+                    ]
+                    [ Element.el [ Font.bold ]
+                        (Element.text "Suggestions")
+                    , viewExprs <|
+                        suggest model
+                            targetType
+                    ]
+        ]
 
 
 viewSuggesters : Model -> Element Msg
