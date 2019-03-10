@@ -149,7 +149,7 @@ view model =
                 , spellcheck = False
                 , label =
                     Input.labelAbove [ Font.bold ]
-                        (Element.text "Local custom types, type aliases and declarations")
+                        (Element.text "Custom types, type aliases and declarations")
                 }
             , Element.column
                 [ Element.width (Element.fillPortion 2)
@@ -167,8 +167,34 @@ view model =
                     , text = model.targetType
                     , placeholder = Nothing
                     , label =
-                        Input.labelAbove [ Font.bold ]
-                            (Element.text "Target type")
+                        Input.labelAbove [] <|
+                            Element.column
+                                [ Element.width Element.fill
+                                , Element.spacing 8
+                                ]
+                                [ Element.el [ Font.bold ]
+                                    (Element.text "Target type")
+                                , Element.paragraph
+                                    [ Font.size 14
+                                    , Font.color (Element.rgb 0.3 0.3 0.3)
+                                    ]
+                                    [ Element.text "Try something like "
+                                    , bold "List String -> String"
+                                    , Element.text ", "
+                                    , bold "List Int -> List Int"
+                                    , Element.text " or one of the types you have defined on the left."
+                                    ]
+                                , Element.paragraph
+                                    [ Font.size 14
+                                    , Font.color (Element.rgb 0.3 0.3 0.3)
+                                    ]
+                                    [ Element.text "To get more results you can activate more "
+                                    , bold "Algorithms"
+                                    , Element.text " or add more "
+                                    , bold "Modules"
+                                    , Element.text "."
+                                    ]
+                                ]
                     }
                 , case decodeTargetType model.targetType of
                     Nothing ->
@@ -200,8 +226,19 @@ viewSuggesters model =
         [ Element.width Element.fill
         , Element.spacing 16
         ]
-        [ Element.el [ Font.bold ]
-            (Element.text "Algorithms")
+        [ Element.column
+            [ Element.width Element.fill
+            , Element.spacing 8
+            ]
+            [ Element.el [ Font.bold ]
+                (Element.text "Algorithms")
+            , Element.paragraph
+                [ Font.size 14
+                , Font.color (Element.rgb 0.3 0.3 0.3)
+                ]
+                [ Element.text "If you have a lot of modules/custom types/type aliases/declarations loaded, you may not want to select many algorithms."
+                ]
+            ]
         , Element.column
             [ Element.width Element.fill
             , Element.spacing 8
@@ -275,8 +312,21 @@ viewModules model =
         [ Element.width Element.fill
         , Element.spacing 16
         ]
-        [ Element.el [ Font.bold ]
-            (Element.text "Modules")
+        [ Element.column
+            [ Element.width Element.fill
+            , Element.spacing 8
+            ]
+            [ Element.el [ Font.bold ]
+                (Element.text "Modules")
+            , Element.paragraph
+                [ Font.size 14
+                , Font.color (Element.rgb 0.3 0.3 0.3)
+                ]
+                [ Element.text "You have to upload the "
+                , bold "docs.json"
+                , Element.text " files of an Elm package in order to add its modules to the index. A simply way is to save the links below somewhere on your machine so you can drag and drop them here."
+                ]
+            ]
         , Element.paragraph
             [ Element.width Element.fill
             , Element.spacing 8
@@ -286,20 +336,24 @@ viewModules model =
                     List.sort <|
                         List.map .name model.modules
             ]
-        , Input.button
-            [ Element.paddingXY 16 8
-            , Border.rounded 5
-            , Border.width 1
-            , Border.color (Element.rgb 0 0 0)
-            , Element.mouseOver
-                [ Background.color (Element.rgb 0.9 0.9 0.9) ]
-            ]
-            { onPress = Just RemoveAllModulesPressed
-            , label =
-                Element.el
-                    [ Font.bold ]
-                    (Element.text "Remove all modules")
-            }
+        , if List.isEmpty model.modules then
+            Element.none
+
+          else
+            Input.button
+                [ Element.paddingXY 16 8
+                , Border.rounded 5
+                , Border.width 1
+                , Border.color (Element.rgb 0 0 0)
+                , Element.mouseOver
+                    [ Background.color (Element.rgb 0.9 0.9 0.9) ]
+                ]
+                { onPress = Just RemoveAllModulesPressed
+                , label =
+                    Element.el
+                        [ Font.bold ]
+                        (Element.text "Remove all modules")
+                }
         , Element.row
             [ Element.spacing 8
             , Element.width Element.fill
