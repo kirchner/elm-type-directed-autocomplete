@@ -11,13 +11,17 @@ import Element.Input as Input
 import Elm.Docs exposing (Alias, Module)
 import Elm.Type exposing (Type(..))
 import Expr exposing (Expr)
+import File exposing (File)
+import File.Select
 import Html exposing (Html)
 import Html.Attributes
+import Html.Events
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
 import Set
+import Task
 import Type
 
 
@@ -35,7 +39,8 @@ main =
 
 
 type alias Model =
-    { coreModules : List Module
+    { modules : List Module
+    , packages : List String
     , targetType : String
     , code : String
 
@@ -45,6 +50,9 @@ type alias Model =
     , suggestExactMatches : Bool
     , suggestOnceEvaluated : Bool
     , suggestTwiceEvaluated : Bool
+
+    -- PACKAGES
+    , importPackagesHover : Bool
     }
 
 
@@ -56,13 +64,18 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    case
-        ( Decode.decodeString localStorageDecoder flags.localStorage
-        , Decode.decodeValue (Decode.list Elm.Docs.decoder) flags.coreJson
-        )
-    of
-        ( Ok storage, Ok coreModules ) ->
-            ( { coreModules = coreModules
+    case Decode.decodeString localStorageDecoder flags.localStorage of
+        Ok storage ->
+            ( { modules =
+                    storage.packages
+                        |> List.filterMap
+                            (\rawPackage ->
+                                rawPackage
+                                    |> Decode.decodeString (Decode.list Elm.Docs.decoder)
+                                    |> Result.toMaybe
+                            )
+                        |> List.concat
+              , packages = storage.packages
               , targetType = ""
               , code = storage.code
 
@@ -70,14 +83,18 @@ init flags =
               , suggestRecordUpdates = True
               , suggestTuples = True
               , suggestExactMatches = True
-              , suggestOnceEvaluated = True
-              , suggestTwiceEvaluated = True
+              , suggestOnceEvaluated = False
+              , suggestTwiceEvaluated = False
+
+              -- PACKAGES
+              , importPackagesHover = False
               }
             , Cmd.none
             )
 
         _ ->
-            ( { coreModules = []
+            ( { modules = []
+              , packages = []
               , targetType = ""
               , code = ""
 
@@ -85,8 +102,11 @@ init flags =
               , suggestRecordUpdates = True
               , suggestTuples = True
               , suggestExactMatches = True
-              , suggestOnceEvaluated = True
-              , suggestTwiceEvaluated = True
+              , suggestOnceEvaluated = False
+              , suggestTwiceEvaluated = False
+
+              -- PACKAGES
+              , importPackagesHover = False
               }
             , Cmd.none
             )
@@ -101,11 +121,39 @@ view model =
         (Element.row
             [ Element.width Element.fill
             , Element.height Element.fill
+            , Element.padding 32
+            , Element.spacing 16
             ]
             [ Element.column
                 [ Element.width (Element.fillPortion 1)
                 , Element.height Element.fill
-                , Element.padding 64
+                , Element.spacing 32
+                , Font.family
+                    [ Font.monospace ]
+                , Font.size 16
+                ]
+                [ viewSuggesters model
+                , viewModules model
+                ]
+            , Input.multiline
+                [ Element.spacing 8
+                , Element.width (Element.fillPortion 2)
+                , Element.height Element.fill
+                , Font.family
+                    [ Font.monospace ]
+                , Font.size 16
+                ]
+                { onChange = CodeChanged
+                , text = model.code
+                , placeholder = Nothing
+                , spellcheck = False
+                , label =
+                    Input.labelAbove [ Font.bold ]
+                        (Element.text "Local custom types, type aliases and declarations")
+                }
+            , Element.column
+                [ Element.width (Element.fillPortion 2)
+                , Element.height Element.fill
                 , Element.spacing 32
                 , Font.family
                     [ Font.monospace ]
@@ -122,7 +170,6 @@ view model =
                         Input.labelAbove [ Font.bold ]
                             (Element.text "Target type")
                     }
-                , viewSuggesters model
                 , case decodeTargetType model.targetType of
                     Nothing ->
                         Element.none
@@ -142,29 +189,6 @@ view model =
                                 suggest model
                                     targetType
                             ]
-                ]
-            , Element.column
-                [ Element.width (Element.fillPortion 2)
-                , Element.height Element.fill
-                , Element.spacing 32
-                , Element.padding 64
-                , Font.family
-                    [ Font.monospace ]
-                , Font.size 16
-                ]
-                [ Input.multiline
-                    [ Element.spacing 8
-                    , Element.width Element.fill
-                    , Element.height Element.fill
-                    ]
-                    { onChange = CodeChanged
-                    , text = model.code
-                    , placeholder = Nothing
-                    , spellcheck = False
-                    , label =
-                        Input.labelAbove [ Font.bold ]
-                            (Element.text "Local custom types, type aliases and declarations")
-                    }
                 ]
             ]
         )
@@ -200,12 +224,12 @@ viewSuggesters model =
             , viewSuggesterCheckbox
                 { onChange = SuggestOnceEvaluatedChecked
                 , checked = model.suggestOnceEvaluated
-                , label = Element.text "Suggest functions along with their 1st argument"
+                , label = Element.text "Suggest functions with 1st argument"
                 }
             , viewSuggesterCheckbox
                 { onChange = SuggestTwiceEvaluatedChecked
                 , checked = model.suggestTwiceEvaluated
-                , label = Element.text "Suggest functions along with their 1st and 2nd arguments"
+                , label = Element.text "Suggest functions with 1st & 2nd arguments"
                 }
             ]
         ]
@@ -216,6 +240,12 @@ bold text =
         Element.text text
 
 
+viewSuggesterCheckbox :
+    { onChange : Bool -> Msg
+    , checked : Bool
+    , label : Element Msg
+    }
+    -> Element Msg
 viewSuggesterCheckbox { onChange, checked, label } =
     Input.checkbox
         [ Element.width Element.fill
@@ -228,6 +258,127 @@ viewSuggesterCheckbox { onChange, checked, label } =
                 [ Element.width Element.fill ]
                 label
         }
+
+
+viewModules : Model -> Element Msg
+viewModules model =
+    let
+        hoverAttributes attrs =
+            if model.importPackagesHover then
+                Background.color (Element.rgb 0.9 0.9 0.9)
+                    :: attrs
+
+            else
+                attrs
+    in
+    Element.column
+        [ Element.width Element.fill
+        , Element.spacing 16
+        ]
+        [ Element.el [ Font.bold ]
+            (Element.text "Modules")
+        , Element.paragraph
+            [ Element.width Element.fill
+            , Element.spacing 8
+            ]
+            [ Element.text <|
+                String.join ", " <|
+                    List.sort <|
+                        List.map .name model.modules
+            ]
+        , Input.button
+            [ Element.paddingXY 16 8
+            , Border.rounded 5
+            , Border.width 1
+            , Border.color (Element.rgb 0 0 0)
+            , Element.mouseOver
+                [ Background.color (Element.rgb 0.9 0.9 0.9) ]
+            ]
+            { onPress = Just RemoveAllModulesPressed
+            , label =
+                Element.el
+                    [ Font.bold ]
+                    (Element.text "Remove all modules")
+            }
+        , Element.row
+            [ Element.spacing 8
+            , Element.width Element.fill
+            ]
+            [ Element.el
+                ([ Element.width (Element.fillPortion 3)
+                 , Element.height Element.fill
+                 , Border.width 2
+                 , Border.rounded 4
+                 , Border.dashed
+                 , hijackOn "dragenter" (Decode.succeed ImportPackagesDragEnter)
+                 , hijackOn "dragover" (Decode.succeed ImportPackagesDragEnter)
+                 , hijackOn "dragleave" (Decode.succeed ImportPackagesDragLeave)
+                 , hijackOn "drop"
+                    (Decode.at [ "dataTransfer", "files" ]
+                        (Decode.oneOrMore ImportPackagesGotFiles File.decoder)
+                    )
+                 ]
+                    |> hoverAttributes
+                )
+                (Element.el
+                    [ Element.centerX
+                    , Element.centerY
+                    ]
+                    (Input.button
+                        [ Element.paddingXY 16 8
+                        , Border.rounded 5
+                        , Border.width 1
+                        , Border.color (Element.rgb 0 0 0)
+                        , Element.mouseOver
+                            [ Background.color (Element.rgb 0.9 0.9 0.9) ]
+                        ]
+                        { onPress = Just ImportPackagesPick
+                        , label =
+                            Element.el
+                                [ Font.bold ]
+                                (Element.text "Upload")
+                        }
+                    )
+                )
+            , Element.column
+                [ Element.width (Element.fillPortion 1)
+                , Element.spacing 8
+                , Element.padding 4
+                ]
+                (List.map viewDocsLink
+                    [ "elm/core"
+                    , "elm/html"
+                    , "elm/json"
+                    , "elm/browser"
+                    , "elm/url"
+                    , "elm/http"
+                    ]
+                )
+            ]
+        ]
+
+
+viewDocsLink : String -> Element msg
+viewDocsLink name =
+    Element.download
+        [ Font.underline
+        , Element.mouseOver
+            [ Font.color (Element.rgb (59 / 255) (153 / 255) (252 / 255)) ]
+        ]
+        { url = "https://package.elm-lang.org/packages/" ++ name ++ "/latest/docs.json"
+        , label = Element.text name
+        }
+
+
+hijackOn : String -> Decoder msg -> Element.Attribute msg
+hijackOn event decoder =
+    Element.htmlAttribute <|
+        Html.Events.preventDefaultOn event (Decode.map hijack decoder)
+
+
+hijack : msg -> ( msg, Bool )
+hijack msg =
+    ( msg, True )
 
 
 decodeTargetType : String -> Maybe Type
@@ -276,8 +427,6 @@ viewExpr expr =
 
 type Msg
     = NoOp
-    | GotCoreModule (Result Http.Error (List Module))
-      --
     | TargetTypeChanged String
     | CodeChanged String
       -- ALGORITHMS
@@ -286,15 +435,19 @@ type Msg
     | SuggestExactMatchesChecked Bool
     | SuggestOnceEvaluatedChecked Bool
     | SuggestTwiceEvaluatedChecked Bool
+      -- PACKAGES
+    | ImportPackagesDragEnter
+    | ImportPackagesDragLeave
+    | ImportPackagesGotFiles File (List File)
+    | ImportPackagesPick
+    | ImportPackagesGotPackage String (Result Decode.Error ( String, List Module ))
+    | RemoveAllModulesPressed
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NoOp ->
-            ( model, Cmd.none )
-
-        GotCoreModule _ ->
             ( model, Cmd.none )
 
         TargetTypeChanged newTargetType ->
@@ -304,7 +457,12 @@ update msg model =
 
         CodeChanged newCode ->
             ( { model | code = newCode }
-            , cache (encodeLocalStorage { code = newCode })
+            , cache
+                (encodeLocalStorage
+                    { code = newCode
+                    , packages = model.packages
+                    }
+                )
             )
 
         -- ALGORITHMS
@@ -331,6 +489,85 @@ update msg model =
         SuggestTwiceEvaluatedChecked value ->
             ( { model | suggestTwiceEvaluated = value }
             , Cmd.none
+            )
+
+        -- PACKAGES
+        ImportPackagesDragEnter ->
+            ( { model | importPackagesHover = True }
+            , Cmd.none
+            )
+
+        ImportPackagesDragLeave ->
+            ( { model | importPackagesHover = False }
+            , Cmd.none
+            )
+
+        ImportPackagesGotFiles firstFile otherFiles ->
+            ( { model
+                | importPackagesHover = False
+              }
+            , Cmd.batch <|
+                List.map
+                    (\file ->
+                        File.toString file
+                            |> Task.andThen
+                                (\rawFile ->
+                                    case
+                                        Decode.decodeString
+                                            (Decode.list Elm.Docs.decoder)
+                                            rawFile
+                                    of
+                                        Err error ->
+                                            Task.fail error
+
+                                        Ok modules ->
+                                            Task.succeed ( rawFile, modules )
+                                )
+                            |> Task.attempt (ImportPackagesGotPackage (File.name file))
+                    )
+                    (firstFile :: otherFiles)
+            )
+
+        ImportPackagesPick ->
+            ( model
+            , File.Select.files [ "application/json" ] ImportPackagesGotFiles
+            )
+
+        ImportPackagesGotPackage name result ->
+            case result of
+                Err decodeError ->
+                    ( model
+                    , Cmd.none
+                    )
+
+                Ok ( rawPackage, modules ) ->
+                    let
+                        newPackages =
+                            rawPackage :: model.packages
+                    in
+                    ( { model
+                        | modules = model.modules ++ modules
+                        , packages = newPackages
+                      }
+                    , cache
+                        (encodeLocalStorage
+                            { code = model.code
+                            , packages = newPackages
+                            }
+                        )
+                    )
+
+        RemoveAllModulesPressed ->
+            ( { model
+                | modules = []
+                , packages = []
+              }
+            , cache
+                (encodeLocalStorage
+                    { code = model.code
+                    , packages = []
+                    }
+                )
             )
 
 
@@ -379,7 +616,7 @@ suggest model targetType =
                     )
 
         knownValues =
-            model.coreModules
+            model.modules
                 |> List.map valuesFromModule
                 |> List.foldl Dict.union Dict.empty
                 |> Dict.union localValues
@@ -484,13 +721,16 @@ removeScope scopedType =
 
 
 type alias Storage =
-    { code : String }
+    { code : String
+    , packages : List String
+    }
 
 
 localStorageDecoder : Decoder Storage
 localStorageDecoder =
     Decode.succeed Storage
         |> Decode.required "code" Decode.string
+        |> Decode.required "packages" (Decode.list Decode.string)
 
 
 
@@ -501,4 +741,5 @@ encodeLocalStorage : Storage -> Value
 encodeLocalStorage storage =
     Encode.object
         [ ( "code", Encode.string storage.code )
+        , ( "packages", Encode.list Encode.string storage.packages )
         ]
