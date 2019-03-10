@@ -26,7 +26,7 @@ import Element.Background as Background
 import Element.Border as Border
 import Element.Font as Font
 import Element.Input as Input
-import Elm.Docs exposing (Alias, Module)
+import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
 import Expr exposing (Expr)
 import File exposing (File)
@@ -64,6 +64,7 @@ type alias Model =
     -- ALGORITHMS
     , suggestRecordUpdates : Bool
     , suggestTuples : Bool
+    , suggestCases : Bool
     , suggestExactMatches : Bool
     , suggestOnceEvaluated : Bool
     , suggestTwiceEvaluated : Bool
@@ -97,6 +98,7 @@ init flags =
               -- ALGORITHMS
               , suggestRecordUpdates = True
               , suggestTuples = True
+              , suggestCases = True
               , suggestExactMatches = True
               , suggestOnceEvaluated = False
               , suggestTwiceEvaluated = False
@@ -107,7 +109,7 @@ init flags =
             , Cmd.none
             )
 
-        _ ->
+        Err _ ->
             ( { modules = []
               , packages = []
               , targetType = ""
@@ -116,6 +118,7 @@ init flags =
               -- ALGORITHMS
               , suggestRecordUpdates = True
               , suggestTuples = True
+              , suggestCases = True
               , suggestExactMatches = True
               , suggestOnceEvaluated = False
               , suggestTwiceEvaluated = False
@@ -261,7 +264,7 @@ viewTargetType model =
                 Element.column
                     [ Element.width Element.fill
                     , Element.height Element.fill
-                    , Element.spacing 16
+                    , Element.spacing 32
                     , Element.clip
                     , Element.htmlAttribute <|
                         Html.Attributes.style "flex-shrink" "1"
@@ -307,6 +310,11 @@ viewSuggesters model =
                 { onChange = SuggestTuplesChecked
                 , checked = model.suggestTuples
                 , label = Element.text "Suggest tuples"
+                }
+            , viewSuggesterCheckbox
+                { onChange = SuggestCasesChecked
+                , checked = model.suggestCases
+                , label = Element.text "Suggest case expressions"
                 }
             , viewSuggesterCheckbox
                 { onChange = SuggestExactMatchesChecked
@@ -513,13 +521,35 @@ valuesFromModule module_ =
 
 viewExprs : List Expr -> Element msg
 viewExprs exprs =
+    let
+        horizontalBar =
+            Element.el
+                [ Element.paddingXY 128 0
+                , Element.width Element.fill
+                ]
+                (Element.el
+                    [ Element.width Element.fill
+                    , Element.height (Element.px 0)
+                    , Border.widthEach
+                        { top = 1
+                        , bottom = 0
+                        , left = 0
+                        , right = 0
+                        }
+                    , Border.color (Element.rgb 0.8 0.8 0.8)
+                    ]
+                    Element.none
+                )
+    in
     Element.column
-        [ Element.spacing 16
+        [ Element.spacing 32
         , Element.scrollbarY
         , Element.width Element.fill
         , Element.height Element.fill
         ]
-        (List.map viewExpr exprs)
+        (List.intersperse horizontalBar
+            (List.map viewExpr exprs)
+        )
 
 
 viewExpr : Expr -> Element msg
@@ -541,6 +571,7 @@ type Msg
       -- ALGORITHMS
     | SuggestRecordUpdatesChecked Bool
     | SuggestTuplesChecked Bool
+    | SuggestCasesChecked Bool
     | SuggestExactMatchesChecked Bool
     | SuggestOnceEvaluatedChecked Bool
     | SuggestTwiceEvaluatedChecked Bool
@@ -583,6 +614,11 @@ update msg model =
 
         SuggestTuplesChecked value ->
             ( { model | suggestTuples = value }
+            , Cmd.none
+            )
+
+        SuggestCasesChecked value ->
+            ( { model | suggestCases = value }
             , Cmd.none
             )
 
@@ -752,6 +788,23 @@ suggest model targetType =
                                 Nothing
                     )
 
+        localUnions =
+            declarations
+                |> List.filterMap
+                    (\declaration ->
+                        case declaration of
+                            CustomType name args tags ->
+                                Just
+                                    { name = name
+                                    , comment = ""
+                                    , args = args
+                                    , tags = tags
+                                    }
+
+                            _ ->
+                                Nothing
+                    )
+
         knownValues =
             model.modules
                 |> List.map valuesFromModule
@@ -775,23 +828,24 @@ suggest model targetType =
                             |> removeScope
                             |> Type.normalize localAliases
                     )
-                |> Dict.union usefulConstants
+    in
+    List.concat
+        [ suggestHelp model
+            knownValues
+            localUnions
+            (Type.normalize localAliases targetType)
+        ]
 
+
+suggestHelp : Model -> Dict String Type -> List Union -> Type -> List Expr
+suggestHelp model knownValues unions targetType =
+    let
         usefulConstants =
             Dict.fromList
                 [ ( "0", Type "Int" [] )
                 , ( "\"\"", Type "String" [] )
                 ]
     in
-    List.concat
-        [ suggestHelp model
-            knownValues
-            (Type.normalize localAliases targetType)
-        ]
-
-
-suggestHelp : Model -> Dict String Type -> Type -> List Expr
-suggestHelp model knownValues targetType =
     List.concat <|
         List.filterMap identity
             [ if model.suggestRecordUpdates then
@@ -801,8 +855,38 @@ suggestHelp model knownValues targetType =
                 Nothing
             , if model.suggestTuples then
                 Just
-                    (Expr.suggestCreateTuple (suggestHelp model knownValues)
+                    (Expr.suggestCreateTuple
+                        (Expr.suggestRecordUpdate knownValues)
                         knownValues
+                        targetType
+                    )
+
+              else
+                Nothing
+            , if model.suggestCases then
+                Just
+                    (Expr.suggestCreateCase
+                        (\newValues tipe ->
+                            let
+                                values =
+                                    Dict.union newValues knownValues
+                            in
+                            List.concat
+                                [ Expr.suggestRecordUpdate values tipe
+                                , Expr.suggestDirect values tipe
+                                , Expr.suggestCreateTuple
+                                    (\elementTipe ->
+                                        List.concat
+                                            [ Expr.suggestRecordUpdate values elementTipe
+                                            , Expr.suggestDirect values elementTipe
+                                            ]
+                                    )
+                                    values
+                                    tipe
+                                ]
+                        )
+                        knownValues
+                        unions
                         targetType
                     )
 
@@ -814,12 +898,20 @@ suggestHelp model knownValues targetType =
               else
                 Nothing
             , if model.suggestOnceEvaluated then
-                Just (Expr.suggestWithArgument knownValues targetType)
+                Just
+                    (Expr.suggestWithArgument
+                        (Dict.union usefulConstants knownValues)
+                        targetType
+                    )
 
               else
                 Nothing
             , if model.suggestTwiceEvaluated then
-                Just (Expr.suggestWithTwoArguments knownValues targetType)
+                Just
+                    (Expr.suggestWithTwoArguments
+                        (Dict.union usefulConstants knownValues)
+                        targetType
+                    )
 
               else
                 Nothing

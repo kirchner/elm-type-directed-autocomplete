@@ -1,5 +1,6 @@
 module Expr exposing
     ( Expr
+    , suggestCreateCase
     , suggestCreateTuple
     , suggestDirect
     , suggestRecordUpdate
@@ -27,11 +28,12 @@ module Expr exposing
 -}
 
 import Dict exposing (Dict)
-import Elm.Docs exposing (Alias, Module)
+import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
 import List.Extra as List
 import Set
 import State exposing (State)
+import String.Extra as String
 import Type exposing (Substitutions)
 
 
@@ -39,6 +41,7 @@ type Expr
     = Call String (List String)
     | UpdateRecord String (List ( String, String ))
     | CreateTuple Expr Expr
+    | Case Expr (List ( String, Expr ))
 
 
 toString : Expr -> String
@@ -74,6 +77,32 @@ toString expr =
                 , toString exprB
                 , "\n)"
                 ]
+
+        Case matchedExpr branches ->
+            let
+                branchToString ( branch, branchExpr ) =
+                    String.concat
+                        [ branch
+                        , " ->\n"
+                        , indent (toString branchExpr)
+                        ]
+            in
+            String.concat
+                [ "case "
+                , toString matchedExpr
+                , " of\n"
+                , indent <|
+                    String.join "\n\n" <|
+                        List.map branchToString branches
+                ]
+
+
+indent : String -> String
+indent text =
+    text
+        |> String.lines
+        |> List.map (\line -> "    " ++ line)
+        |> String.join "\n"
 
 
 suggestDirect : Dict String Type -> Type -> List Expr
@@ -229,6 +258,80 @@ suggestCreateTuple suggest knownValues targetType =
                         (suggest typeB)
                 )
                 (suggest typeA)
+
+        _ ->
+            []
+
+
+suggestCreateCase :
+    (Dict String Type -> Type -> List Expr)
+    -> Dict String Type
+    -> List Union
+    -> Type
+    -> List Expr
+suggestCreateCase suggest values unions targetType =
+    let
+        suggestCase union =
+            valuesOfUnion union
+                |> List.map
+                    (\( value, _ ) ->
+                        List.map suggestBranch union.tags
+                            |> Case (Call value [])
+                    )
+
+        valuesOfUnion union =
+            List.filter (valueOfUnion union) (Dict.toList values)
+
+        valueOfUnion union ( _, tipe ) =
+            case tipe of
+                Type name _ ->
+                    union.name == name
+
+                _ ->
+                    False
+
+        suggestBranch ( name, subTypes ) =
+            ( if List.isEmpty subTypes then
+                name
+
+              else
+                String.join " "
+                    (name
+                        :: List.map String.decapitalize
+                            (List.map typeName subTypes)
+                    )
+            , suggest (toNewValues subTypes) targetType
+                |> List.head
+                |> Maybe.withDefault (Call "Debug.todo" [ "\"implement\"" ])
+            )
+
+        typeName tipe =
+            case tipe of
+                Type name _ ->
+                    name
+
+                _ ->
+                    "a"
+
+        toNewValues types =
+            types
+                |> List.map toNewValue
+                |> Dict.fromList
+
+        toNewValue tipe =
+            ( String.decapitalize (typeName tipe)
+            , tipe
+            )
+    in
+    case targetType of
+        Type _ _ ->
+            List.concatMap suggestCase unions
+
+        Tuple _ ->
+            List.concatMap suggestCase unions
+
+        Record _ _ ->
+            List.concatMap suggestCase unions
 
         _ ->
             []
