@@ -1,17 +1,17 @@
 module Suggest exposing
     ( Expr
     , Generator
+    , addUnions
+    , addValues
     , all
     , cases
     , exprToString
     , for
-    , knownValue
     , recordUpdate
     , tuple
+    , value
     , withArgument
     , withArguments
-    , withUnions
-    , withValues
     )
 
 import Dict exposing (Dict)
@@ -42,8 +42,8 @@ exprToString expr =
 
             else
                 let
-                    valueToString ( fieldName, value ) =
-                        fieldName ++ " = " ++ exprToString value
+                    valueToString ( fieldName, tipe ) =
+                        fieldName ++ " = " ++ exprToString tipe
                 in
                 String.concat
                     [ "{ "
@@ -94,18 +94,18 @@ type Generator
     = Generator (Type -> List Union -> Dict String Type -> List Expr)
 
 
-withUnions : List Union -> Generator -> Generator
-withUnions unions (Generator generator) =
+addUnions : List Union -> Generator -> Generator
+addUnions newUnions (Generator generator) =
     Generator <|
-        \targetType _ values ->
-            generator targetType unions values
+        \targetType unions values ->
+            generator targetType (newUnions ++ unions) values
 
 
-withValues : Dict String Type -> Generator -> Generator
-withValues values (Generator generator) =
+addValues : Dict String Type -> Generator -> Generator
+addValues newValues (Generator generator) =
     Generator <|
-        \targetType unions _ ->
-            generator targetType unions values
+        \targetType unions values ->
+            generator targetType unions (Dict.union newValues values)
 
 
 for : Type -> Generator -> List Expr
@@ -124,8 +124,8 @@ all generators =
                 generators
 
 
-knownValue : Generator
-knownValue =
+value : Generator
+value =
     Generator <|
         \targetType unions values ->
             let
@@ -152,11 +152,11 @@ withArgument generator =
             case targetType of
                 Lambda from to ->
                     let
-                        suggestValue value tipe collected =
+                        ofToType name tipe collected =
                             Type.unifiable targetType to
                                 |> State.andThen suggestArgument
                                 |> State.finalValue Type.noSubstitutions
-                                |> List.map (toCall value)
+                                |> List.map (toCall name)
                                 |> List.append collected
 
                         suggestArgument isUnifiable =
@@ -172,10 +172,10 @@ withArgument generator =
                             else
                                 State.state []
 
-                        toCall value argument =
-                            Call value [ argument ]
+                        toCall name argument =
+                            Call name [ argument ]
                     in
-                    Dict.foldl suggestValue [] values
+                    Dict.foldl ofToType [] values
 
                 _ ->
                     []
@@ -188,7 +188,7 @@ withArguments generator =
             case targetType of
                 Lambda fromA (Lambda fromB to) ->
                     let
-                        suggestValue value tipe collected =
+                        suggestValue name tipe collected =
                             Type.unifiable targetType to
                                 |> State.andThen (suggestArgumentFor fromA)
                                 |> State.andThen
@@ -203,7 +203,7 @@ withArguments generator =
                                             |> State.map (Tuple.pair namesA)
                                     )
                                 |> State.finalValue Type.noSubstitutions
-                                |> toCalls value
+                                |> toCalls name
                                 |> List.append collected
 
                         suggestArgumentFor from isUnifiable =
@@ -219,12 +219,12 @@ withArguments generator =
                             else
                                 State.state []
 
-                        toCalls value ( argumentsA, argumentsB ) =
+                        toCalls name ( argumentsA, argumentsB ) =
                             List.map
                                 (\argumentA ->
                                     List.map
                                         (\argumentB ->
-                                            Call value [ argumentA, argumentB ]
+                                            Call name [ argumentA, argumentB ]
                                         )
                                         argumentsB
                                 )
@@ -268,10 +268,7 @@ recordUpdate generator =
                                 |> List.filterMap (ofType targetType)
 
                         updateField ( field, tipe ) collected =
-                            generator.field
-                                |> withUnions unions
-                                |> withValues values
-                                |> for tipe
+                            fieldGenerator tipe unions values
                                 |> List.map (Tuple.pair field)
                                 |> List.append collected
 
@@ -283,8 +280,11 @@ recordUpdate generator =
                                 Just _ ->
                                     Just name
 
-                        toRecordUpdate initialRecord ( field, value ) =
-                            UpdateRecord initialRecord [ ( field, value ) ]
+                        toRecordUpdate initialRecord ( field, tipe ) =
+                            UpdateRecord initialRecord [ ( field, tipe ) ]
+
+                        (Generator fieldGenerator) =
+                            generator.field
                     in
                     initialRecords
                         |> List.concatMap
@@ -306,16 +306,16 @@ tuple generator =
                 Tuple (typeA :: typeB :: []) ->
                     let
                         toTuple exprA =
-                            generator.first
-                                |> withUnions unions
-                                |> withValues values
-                                |> for typeB
+                            firstGenerator typeB unions values
                                 |> List.map (CreateTuple exprA)
+
+                        (Generator firstGenerator) =
+                            generator.first
+
+                        (Generator secondGenerator) =
+                            generator.second
                     in
-                    generator.second
-                        |> withUnions unions
-                        |> withValues values
-                        |> for typeA
+                    secondGenerator typeA unions values
                         |> List.concatMap toTuple
 
                 _ ->
@@ -334,9 +334,9 @@ cases generator =
                 suggestCase union =
                     valuesOfUnion union
                         |> List.map
-                            (\( value, _ ) ->
+                            (\( name, _ ) ->
                                 List.map suggestBranch union.tags
-                                    |> Case (Call value [])
+                                    |> Case (Call name [])
                             )
 
                 valuesOfUnion union =

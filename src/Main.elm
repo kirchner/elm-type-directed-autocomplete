@@ -848,12 +848,12 @@ suggestHelp model knownValues unions targetType =
                     [ if model.suggestRecordUpdates then
                         Just <|
                             Suggest.recordUpdate
-                                { field = Suggest.knownValue }
+                                { field = Suggest.value }
 
                       else
                         Nothing
                     , if model.suggestExactMatches then
-                        Just Suggest.knownValue
+                        Just Suggest.value
 
                       else
                         Nothing
@@ -863,14 +863,14 @@ suggestHelp model knownValues unions targetType =
                                 { first =
                                     Suggest.all
                                         [ Suggest.recordUpdate
-                                            { field = Suggest.knownValue }
-                                        , Suggest.knownValue
+                                            { field = Suggest.value }
+                                        , Suggest.value
                                         ]
                                 , second =
                                     Suggest.all
                                         [ Suggest.recordUpdate
-                                            { field = Suggest.knownValue }
-                                        , Suggest.knownValue
+                                            { field = Suggest.value }
+                                        , Suggest.value
                                         ]
                                 }
 
@@ -879,31 +879,29 @@ suggestHelp model knownValues unions targetType =
                     , if model.suggestCases then
                         Just <|
                             Suggest.cases
-                                { matched = Suggest.knownValue
+                                { matched = Suggest.value
                                 , branch =
                                     \newValues ->
-                                        Suggest.all
-                                            [ Suggest.recordUpdate
-                                                { field = Suggest.knownValue }
-                                            , Suggest.knownValue
-                                            , Suggest.tuple
-                                                { first =
-                                                    Suggest.all
-                                                        [ Suggest.recordUpdate
-                                                            { field = Suggest.knownValue }
-                                                        , Suggest.knownValue
-                                                        ]
-                                                , second =
-                                                    Suggest.all
-                                                        [ Suggest.recordUpdate
-                                                            { field = Suggest.knownValue }
-                                                        , Suggest.knownValue
-                                                        ]
-                                                }
-                                            ]
-                                            |> Suggest.withUnions unions
-                                            |> Suggest.withValues
-                                                (Dict.union newValues knownValues)
+                                        Suggest.addValues newValues <|
+                                            Suggest.all
+                                                [ Suggest.recordUpdate
+                                                    { field = Suggest.value }
+                                                , Suggest.value
+                                                , Suggest.tuple
+                                                    { first =
+                                                        Suggest.all
+                                                            [ Suggest.recordUpdate
+                                                                { field = Suggest.value }
+                                                            , Suggest.value
+                                                            ]
+                                                    , second =
+                                                        Suggest.all
+                                                            [ Suggest.recordUpdate
+                                                                { field = Suggest.value }
+                                                            , Suggest.value
+                                                            ]
+                                                    }
+                                                ]
                                 }
 
                       else
@@ -911,15 +909,15 @@ suggestHelp model knownValues unions targetType =
                     , if model.suggestOnceEvaluated then
                         Just <|
                             Suggest.withArgument
-                                { first = Suggest.knownValue }
+                                { first = Suggest.value }
 
                       else
                         Nothing
                     , if model.suggestTwiceEvaluated then
                         Just <|
                             Suggest.withArguments
-                                { first = Suggest.knownValue
-                                , second = Suggest.knownValue
+                                { first = Suggest.value
+                                , second = Suggest.value
                                 }
 
                       else
@@ -927,8 +925,8 @@ suggestHelp model knownValues unions targetType =
                     ]
     in
     generator
-        |> Suggest.withUnions unions
-        |> Suggest.withValues knownValues
+        |> Suggest.addUnions unions
+        |> Suggest.addValues knownValues
         |> Suggest.for targetType
 
 
