@@ -4,14 +4,13 @@ module Suggest exposing
     , addUnions
     , addValues
     , all
+    , call
     , cases
     , exprToString
     , for
     , recordUpdate
     , tuple
     , value
-    , withArgument
-    , withArguments
     )
 
 import Dict exposing (Dict)
@@ -145,96 +144,106 @@ value =
                 |> List.map toCall
 
 
-withArgument : { first : Generator } -> Generator
-withArgument generator =
+call : { args : List Generator } -> Generator
+call generator =
     Generator <|
         \targetType unions values ->
-            case targetType of
-                Lambda from to ->
-                    let
-                        ofToType name tipe collected =
-                            Type.unifiable targetType to
-                                |> State.andThen suggestArgument
-                                |> State.finalValue Type.noSubstitutions
-                                |> List.map (toCall name)
-                                |> List.append collected
+            let
+                ofTargetType name tipe collected =
+                    case ofTargetTypeHelp [] generator.args tipe of
+                        Nothing ->
+                            collected
 
-                        suggestArgument isUnifiable =
-                            if isUnifiable then
-                                State.get
-                                    |> State.map
-                                        (\substitutions ->
-                                            allSpecializationsOf values
-                                                substitutions
-                                                from
-                                        )
+                        Just ( froms, to ) ->
+                            ( name, froms, to ) :: collected
 
-                            else
-                                State.state []
+                ofTargetTypeHelp froms args tipe =
+                    case ( args, tipe ) of
+                        ( [], _ ) ->
+                            Just ( froms, tipe )
 
-                        toCall name argument =
-                            Call name [ argument ]
-                    in
-                    Dict.foldl ofToType [] values
+                        ( firstArg :: restArgs, Lambda from to ) ->
+                            ofTargetTypeHelp
+                                (( from, firstArg ) :: froms)
+                                restArgs
+                                to
 
-                _ ->
-                    []
+                        _ ->
+                            Nothing
 
+                suggestArguments froms to =
+                    Type.unifiable targetType to
+                        |> State.andThen
+                            (\isUnifiable ->
+                                if isUnifiable then
+                                    suggestArgumentsHelp [] froms
 
-withArguments : { first : Generator, second : Generator } -> Generator
-withArguments generator =
-    Generator <|
-        \targetType unions values ->
-            case targetType of
-                Lambda fromA (Lambda fromB to) ->
-                    let
-                        suggestValue name tipe collected =
-                            Type.unifiable targetType to
-                                |> State.andThen (suggestArgumentFor fromA)
-                                |> State.andThen
-                                    (\namesA ->
-                                        State.get
-                                            |> State.map
-                                                (\substitutions ->
-                                                    allSpecializationsOf values
-                                                        substitutions
-                                                        fromB
-                                                )
-                                            |> State.map (Tuple.pair namesA)
+                                else
+                                    State.state []
+                            )
+                        |> State.finalValue Type.noSubstitutions
+
+                suggestArgumentsHelp revArguments froms =
+                    case froms of
+                        [] ->
+                            State.state revArguments
+
+                        ( firstFrom, _ ) :: restFroms ->
+                            State.get
+                                |> State.map
+                                    (\substitutions ->
+                                        allSpecializationsOf values
+                                            substitutions
+                                            firstFrom
                                     )
-                                |> State.finalValue Type.noSubstitutions
-                                |> toCalls name
-                                |> List.append collected
+                                |> State.andThen
+                                    (\firstArguments ->
+                                        suggestArgumentsHelp
+                                            (firstArguments :: revArguments)
+                                            restFroms
+                                    )
+            in
+            Dict.foldl ofTargetType [] values
+                |> List.concatMap
+                    (\( name, froms, to ) ->
+                        suggestArguments froms to
+                            |> combinations
+                            |> List.filterMap
+                                (\arguments ->
+                                    if
+                                        List.length arguments
+                                            == List.length generator.args
+                                    then
+                                        Just (Call name arguments)
 
-                        suggestArgumentFor from isUnifiable =
-                            if isUnifiable then
-                                State.get
-                                    |> State.map
-                                        (\substitutions ->
-                                            allSpecializationsOf values
-                                                substitutions
-                                                from
-                                        )
-
-                            else
-                                State.state []
-
-                        toCalls name ( argumentsA, argumentsB ) =
-                            List.map
-                                (\argumentA ->
-                                    List.map
-                                        (\argumentB ->
-                                            Call name [ argumentA, argumentB ]
-                                        )
-                                        argumentsB
+                                    else
+                                        Nothing
                                 )
-                                argumentsA
-                                |> List.concat
-                    in
-                    Dict.foldl suggestValue [] values
+                    )
 
-                _ ->
-                    []
+
+{-|
+
+    combinations [ [ 1, 2 ], [ 3 ], [ 4, 5 ] ]
+        == [ [ 1, 3, 4 ], [ 1, 3, 5 ], [ 2, 3, 4 ], [ 2, 3, 5 ] ]
+
+-}
+combinations : List (List a) -> List (List a)
+combinations lists =
+    case lists of
+        [] ->
+            [ [] ]
+
+        first :: rest ->
+            first
+                |> List.concatMap
+                    (\a ->
+                        combinations rest
+                            |> List.map
+                                (\combination ->
+                                    a :: combination
+                                )
+                    )
 
 
 allSpecializationsOf : Dict String Type -> Substitutions -> Type -> List Expr

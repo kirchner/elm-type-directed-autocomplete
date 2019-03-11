@@ -908,16 +908,20 @@ suggestHelp model knownValues unions targetType =
                         Nothing
                     , if model.suggestOnceEvaluated then
                         Just <|
-                            Suggest.withArgument
-                                { first = Suggest.value }
+                            Suggest.call
+                                { args =
+                                    [ Suggest.value ]
+                                }
 
                       else
                         Nothing
                     , if model.suggestTwiceEvaluated then
                         Just <|
-                            Suggest.withArguments
-                                { first = Suggest.value
-                                , second = Suggest.value
+                            Suggest.call
+                                { args =
+                                    [ Suggest.value
+                                    , Suggest.value
+                                    ]
                                 }
 
                       else
