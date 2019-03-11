@@ -28,7 +28,6 @@ import Element.Font as Font
 import Element.Input as Input
 import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
-import Expr exposing (Expr)
 import File exposing (File)
 import File.Select
 import Html exposing (Html)
@@ -38,6 +37,7 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
+import Suggest exposing (Expr)
 import Task
 import Type
 
@@ -560,7 +560,7 @@ viewExpr expr =
         , Element.spacing 8
         ]
         (List.map Element.text <|
-            String.split "\n" (Expr.toString expr)
+            String.split "\n" (Suggest.exprToString expr)
         )
 
 
@@ -841,77 +841,95 @@ suggestHelp model knownValues unions targetType =
                 [ ( "0", Type "Int" [] )
                 , ( "\"\"", Type "String" [] )
                 ]
-    in
-    List.concat <|
-        List.filterMap identity
-            [ if model.suggestRecordUpdates then
-                Just (Expr.suggestRecordUpdate knownValues targetType)
 
-              else
-                Nothing
-            , if model.suggestTuples then
-                Just
-                    (Expr.suggestCreateTuple
-                        (Expr.suggestRecordUpdate knownValues)
-                        knownValues
-                        targetType
-                    )
+        generator =
+            Suggest.all <|
+                List.filterMap identity
+                    [ if model.suggestRecordUpdates then
+                        Just <|
+                            Suggest.recordUpdate
+                                { field = Suggest.knownValue }
 
-              else
-                Nothing
-            , if model.suggestCases then
-                Just
-                    (Expr.suggestCreateCase
-                        (\newValues tipe ->
-                            let
-                                values =
-                                    Dict.union newValues knownValues
-                            in
-                            List.concat
-                                [ Expr.suggestRecordUpdate values tipe
-                                , Expr.suggestDirect values tipe
-                                , Expr.suggestCreateTuple
-                                    (\elementTipe ->
-                                        List.concat
-                                            [ Expr.suggestRecordUpdate values elementTipe
-                                            , Expr.suggestDirect values elementTipe
+                      else
+                        Nothing
+                    , if model.suggestExactMatches then
+                        Just Suggest.knownValue
+
+                      else
+                        Nothing
+                    , if model.suggestTuples then
+                        Just <|
+                            Suggest.tuple
+                                { first =
+                                    Suggest.all
+                                        [ Suggest.recordUpdate
+                                            { field = Suggest.knownValue }
+                                        , Suggest.knownValue
+                                        ]
+                                , second =
+                                    Suggest.all
+                                        [ Suggest.recordUpdate
+                                            { field = Suggest.knownValue }
+                                        , Suggest.knownValue
+                                        ]
+                                }
+
+                      else
+                        Nothing
+                    , if model.suggestCases then
+                        Just <|
+                            Suggest.cases
+                                { matched = Suggest.knownValue
+                                , branch =
+                                    \newValues ->
+                                        Suggest.all
+                                            [ Suggest.recordUpdate
+                                                { field = Suggest.knownValue }
+                                            , Suggest.knownValue
+                                            , Suggest.tuple
+                                                { first =
+                                                    Suggest.all
+                                                        [ Suggest.recordUpdate
+                                                            { field = Suggest.knownValue }
+                                                        , Suggest.knownValue
+                                                        ]
+                                                , second =
+                                                    Suggest.all
+                                                        [ Suggest.recordUpdate
+                                                            { field = Suggest.knownValue }
+                                                        , Suggest.knownValue
+                                                        ]
+                                                }
                                             ]
-                                    )
-                                    values
-                                    tipe
-                                ]
-                        )
-                        knownValues
-                        unions
-                        targetType
-                    )
+                                            |> Suggest.withUnions unions
+                                            |> Suggest.withValues
+                                                (Dict.union newValues knownValues)
+                                }
 
-              else
-                Nothing
-            , if model.suggestExactMatches then
-                Just (Expr.suggestDirect knownValues targetType)
+                      else
+                        Nothing
+                    , if model.suggestOnceEvaluated then
+                        Just <|
+                            Suggest.withArgument
+                                { first = Suggest.knownValue }
 
-              else
-                Nothing
-            , if model.suggestOnceEvaluated then
-                Just
-                    (Expr.suggestWithArgument
-                        (Dict.union usefulConstants knownValues)
-                        targetType
-                    )
+                      else
+                        Nothing
+                    , if model.suggestTwiceEvaluated then
+                        Just <|
+                            Suggest.withArguments
+                                { first = Suggest.knownValue
+                                , second = Suggest.knownValue
+                                }
 
-              else
-                Nothing
-            , if model.suggestTwiceEvaluated then
-                Just
-                    (Expr.suggestWithTwoArguments
-                        (Dict.union usefulConstants knownValues)
-                        targetType
-                    )
-
-              else
-                Nothing
-            ]
+                      else
+                        Nothing
+                    ]
+    in
+    generator
+        |> Suggest.withUnions unions
+        |> Suggest.withValues knownValues
+        |> Suggest.for targetType
 
 
 removeScope : Type -> Type
