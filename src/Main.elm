@@ -565,8 +565,7 @@ viewExpr expr =
 
 
 type Msg
-    = NoOp
-    | TargetTypeChanged String
+    = TargetTypeChanged String
     | CodeChanged String
       -- ALGORITHMS
     | SuggestRecordUpdatesChecked Bool
@@ -588,9 +587,6 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        NoOp ->
-            ( model, Cmd.none )
-
         TargetTypeChanged newTargetType ->
             ( { model | targetType = newTargetType }
             , Cmd.none

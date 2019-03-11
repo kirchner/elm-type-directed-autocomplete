@@ -3,7 +3,6 @@ module Type exposing
     , noSubstitutions
     , normalize
     , substitute
-    , toString
     , typeVariables
     , unifiable
     , unifier
@@ -33,51 +32,6 @@ import Elm.Type exposing (Type(..))
 import List.Extra as List
 import Set exposing (Set)
 import State exposing (State)
-
-
-toString : Type -> String
-toString type_ =
-    case type_ of
-        Var var ->
-            var
-
-        Type name subTypes ->
-            if List.isEmpty subTypes then
-                name
-
-            else
-                name ++ " " ++ String.join " " (List.map toString subTypes)
-
-        Lambda from to ->
-            toString from ++ " -> " ++ toString to
-
-        Tuple subTypes ->
-            if List.isEmpty subTypes then
-                "()"
-
-            else
-                "( "
-                    ++ String.join ", " (List.map toString subTypes)
-                    ++ " )"
-
-        Record values maybeVar ->
-            let
-                valueToString ( name, subType ) =
-                    name ++ " : " ++ toString subType
-            in
-            String.concat
-                [ "{ "
-                , case maybeVar of
-                    Nothing ->
-                        ""
-
-                    Just var ->
-                        var ++ " | "
-                , values
-                    |> List.map valueToString
-                    |> String.join ", "
-                , " }"
-                ]
 
 
 
