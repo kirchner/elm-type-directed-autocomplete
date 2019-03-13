@@ -16,7 +16,7 @@ module Suggest exposing
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
-import State
+import State exposing (State)
 import String.Extra as String
 import Type exposing (Substitutions)
 
@@ -89,8 +89,18 @@ indent text =
         |> String.join "\n"
 
 
+
+---- GENERATOR
+
+
 type Generator
-    = Generator (Type -> List Union -> Dict String Type -> List Expr)
+    = Generator
+        (Type
+         -> List Union
+         -> Dict String Type
+         -> Substitutions
+         -> List ( Expr, Substitutions )
+        )
 
 
 addUnions : List Union -> Generator -> Generator
@@ -109,16 +119,17 @@ addValues newValues (Generator generator) =
 
 for : Type -> Generator -> List Expr
 for targetType (Generator generator) =
-    generator targetType [] Dict.empty
+    generator targetType [] Dict.empty Type.noSubstitutions
+        |> List.map Tuple.first
 
 
 all : List Generator -> Generator
 all generators =
     Generator <|
-        \targetType unions values ->
+        \targetType unions values substitutions ->
             List.concatMap
                 (\(Generator generator) ->
-                    generator targetType unions values
+                    generator targetType unions values substitutions
                 )
                 generators
 
@@ -126,28 +137,29 @@ all generators =
 value : Generator
 value =
     Generator <|
-        \targetType unions values ->
+        \targetType unions values substitutions ->
             let
                 ofTargetType name tipe collected =
-                    case Type.unifier tipe targetType of
-                        Nothing ->
-                            collected
+                    Type.unifiable tipe targetType
+                        |> State.run substitutions
+                        |> collect name collected
 
-                        Just _ ->
-                            name :: collected
+                collect name collected ( isUnifiable, nextSubstitutions ) =
+                    if isUnifiable then
+                        ( Call name [], nextSubstitutions )
+                            :: collected
 
-                toCall name =
-                    Call name []
+                    else
+                        collected
             in
             values
                 |> Dict.foldl ofTargetType []
-                |> List.map toCall
 
 
 call : { args : List Generator } -> Generator
 call generator =
     Generator <|
-        \targetType unions values ->
+        \targetType unions values substitutions ->
             let
                 ofTargetType name tipe collected =
                     case ofTargetTypeHelp [] generator.args tipe of
@@ -160,7 +172,16 @@ call generator =
                 ofTargetTypeHelp froms args tipe =
                     case ( args, tipe ) of
                         ( [], _ ) ->
-                            Just ( froms, tipe )
+                            let
+                                ( isUnifiable, nextSubstitutions ) =
+                                    Type.unifiable tipe targetType
+                                        |> State.run substitutions
+                            in
+                            if isUnifiable then
+                                Just ( froms, nextSubstitutions )
+
+                            else
+                                Nothing
 
                         ( firstArg :: restArgs, Lambda from to ) ->
                             ofTargetTypeHelp
@@ -171,55 +192,206 @@ call generator =
                         _ ->
                             Nothing
 
-                suggestArguments froms to =
-                    Type.unifiable targetType to
-                        |> State.andThen
-                            (\isUnifiable ->
-                                if isUnifiable then
-                                    suggestArgumentsHelp [] froms
+                toCall ( name, froms, nextSubstitutions ) =
+                    suggestArguments froms nextSubstitutions
+                        |> List.filterMap
+                            (\( arguments, finalSubstitutions ) ->
+                                if
+                                    List.length arguments
+                                        == List.length generator.args
+                                then
+                                    Just ( Call name arguments, finalSubstitutions )
 
                                 else
-                                    State.state []
+                                    Nothing
                             )
-                        |> State.finalValue Type.noSubstitutions
 
-                suggestArgumentsHelp revArguments froms =
+                suggestArguments froms nextSubstitutions =
+                    suggestArgumentsHelp froms nextSubstitutions []
+
+                suggestArgumentsHelp froms nextSubstitutions revArguments =
                     case froms of
                         [] ->
-                            State.state revArguments
+                            [ ( [], Type.noSubstitutions ) ]
 
-                        ( firstFrom, _ ) :: restFroms ->
-                            State.get
-                                |> State.map
-                                    (\substitutions ->
-                                        allSpecializationsOf values
-                                            substitutions
-                                            firstFrom
-                                    )
-                                |> State.andThen
-                                    (\firstArguments ->
-                                        suggestArgumentsHelp
-                                            (firstArguments :: revArguments)
-                                            restFroms
+                        ( firstFrom, Generator fromGenerator ) :: restFroms ->
+                            fromGenerator firstFrom unions values nextSubstitutions
+                                |> List.concatMap
+                                    (\( firstArgumentExpr, nextNextSubstitutions ) ->
+                                        suggestArgumentsHelp restFroms
+                                            nextNextSubstitutions
+                                            (firstArgumentExpr :: revArguments)
+                                            |> List.map
+                                                (\( restArgumentExprs, finalSubstitutions ) ->
+                                                    ( firstArgumentExpr :: restArgumentExprs
+                                                    , finalSubstitutions
+                                                    )
+                                                )
                                     )
             in
-            Dict.foldl ofTargetType [] values
-                |> List.concatMap
-                    (\( name, froms, to ) ->
-                        suggestArguments froms to
-                            |> combinations
-                            |> List.filterMap
-                                (\arguments ->
-                                    if
-                                        List.length arguments
-                                            == List.length generator.args
-                                    then
-                                        Just (Call name arguments)
+            values
+                |> Dict.foldl ofTargetType []
+                |> List.concatMap toCall
 
-                                    else
-                                        Nothing
-                                )
+
+tuple : { first : Generator, second : Generator } -> Generator
+tuple generator =
+    Generator <|
+        \targetType unions values substitutions ->
+            case targetType of
+                Tuple (typeA :: typeB :: []) ->
+                    let
+                        (Generator firstGenerator) =
+                            generator.first
+
+                        (Generator secondGenerator) =
+                            generator.second
+
+                        toTuple ( exprA, nextSubstitutions ) =
+                            secondGenerator typeB unions values nextSubstitutions
+                                |> List.map (Tuple.mapFirst (CreateTuple exprA))
+                    in
+                    firstGenerator typeA unions values substitutions
+                        |> List.concatMap toTuple
+
+                _ ->
+                    []
+
+
+recordUpdate : { field : Generator } -> Generator
+recordUpdate generator =
+    Generator <|
+        \targetType unions values substitutions ->
+            case targetType of
+                Record fields var ->
+                    let
+                        (Generator fieldGenerator) =
+                            generator.field
+
+                        (Generator initialRecordGenerator) =
+                            value
+
+                        ofTargetType name tipe collected =
+                            Type.unifiable tipe targetType
+                                |> State.run substitutions
+                                |> collect name collected
+
+                        collect name collected ( isUnifiable, nextSubstitutions ) =
+                            if isUnifiable then
+                                ( name, nextSubstitutions ) :: collected
+
+                            else
+                                collected
+
+                        toRecordUpdate ( name, nextSubstitutions ) =
+                            fields
+                                |> List.foldl (updateField nextSubstitutions) []
+                                |> List.map
+                                    (\( field, ( tipe, finalSubstitutions ) ) ->
+                                        ( UpdateRecord name [ ( field, tipe ) ]
+                                        , finalSubstitutions
+                                        )
+                                    )
+
+                        updateField nextSubstitutions ( field, tipe ) collected =
+                            fieldGenerator tipe unions values nextSubstitutions
+                                |> List.map (Tuple.pair field)
+                                |> List.append collected
+                    in
+                    values
+                        |> Dict.foldl ofTargetType []
+                        |> List.concatMap toRecordUpdate
+
+                _ ->
+                    []
+
+
+cases :
+    { matched : Generator
+    , branch : Dict String Type -> Generator
+    }
+    -> Generator
+cases generator =
+    Generator <|
+        \targetType unions values substitutions ->
+            let
+                (Generator matchedGenerator) =
+                    generator.matched
+
+                matchedValues =
+                    unions
+                        |> List.concatMap suggestMatched
+                        |> List.concatMap suggestCase
+                        |> List.map (\expr -> ( expr, Type.noSubstitutions ))
+
+                suggestMatched union =
+                    matchedGenerator (Type union.name (List.map Var union.args))
+                        unions
+                        values
+                        Type.noSubstitutions
+                        |> List.map (Tuple.first >> Tuple.pair union.tags)
+
+                suggestCase ( tags, matched ) =
+                    tags
+                        |> List.map suggestBranch
+                        |> namedCombinations
+                        |> List.map (Case matched)
+
+                suggestBranch ( name, subTypes ) =
+                    let
+                        (Generator branchGenerator) =
+                            generator.branch (toNewValues subTypes)
+
+                        branch =
+                            if List.isEmpty subTypes then
+                                name
+
+                            else
+                                String.join " "
+                                    (name
+                                        :: List.map String.decapitalize
+                                            (List.map typeName subTypes)
+                                    )
+                    in
+                    ( branch
+                    , branchGenerator targetType unions values Type.noSubstitutions
+                        |> List.map Tuple.first
                     )
+
+                typeName tipe =
+                    case tipe of
+                        Type name _ ->
+                            name
+
+                        _ ->
+                            "a"
+
+                toNewValues types =
+                    types
+                        |> List.map toNewValue
+                        |> Dict.fromList
+
+                toNewValue tipe =
+                    ( String.decapitalize (typeName tipe)
+                    , tipe
+                    )
+            in
+            case targetType of
+                Type _ _ ->
+                    matchedValues
+
+                Tuple _ ->
+                    matchedValues
+
+                Record _ _ ->
+                    matchedValues
+
+                _ ->
+                    []
+
+
+
+---- HELPER
 
 
 {-|
@@ -246,163 +418,19 @@ combinations lists =
                     )
 
 
-allSpecializationsOf : Dict String Type -> Substitutions -> Type -> List Expr
-allSpecializationsOf knownValues substitutions targetType =
-    let
-        checkKnownValue name knownType names =
-            Type.unifiable knownType targetType
-                |> State.map
-                    (\isUnifiable ->
-                        if isUnifiable then
-                            Call name [] :: names
+namedCombinations : List ( String, List a ) -> List (List ( String, a ))
+namedCombinations lists =
+    case lists of
+        [] ->
+            [ [] ]
 
-                        else
-                            names
+        ( name, first ) :: rest ->
+            first
+                |> List.concatMap
+                    (\a ->
+                        namedCombinations rest
+                            |> List.map
+                                (\combination ->
+                                    ( name, a ) :: combination
+                                )
                     )
-                |> State.finalValue substitutions
-    in
-    Dict.foldl checkKnownValue [] knownValues
-
-
-recordUpdate : { field : Generator } -> Generator
-recordUpdate generator =
-    Generator <|
-        \targetType unions values ->
-            case targetType of
-                Record fields var ->
-                    let
-                        initialRecords =
-                            values
-                                |> Dict.toList
-                                |> List.filterMap (ofType targetType)
-
-                        updateField ( field, tipe ) collected =
-                            fieldGenerator tipe unions values
-                                |> List.map (Tuple.pair field)
-                                |> List.append collected
-
-                        ofType tipe ( name, otherType ) =
-                            case Type.unifier otherType tipe of
-                                Nothing ->
-                                    Nothing
-
-                                Just _ ->
-                                    Just name
-
-                        toRecordUpdate initialRecord ( field, tipe ) =
-                            UpdateRecord initialRecord [ ( field, tipe ) ]
-
-                        (Generator fieldGenerator) =
-                            generator.field
-                    in
-                    initialRecords
-                        |> List.concatMap
-                            (\initialRecord ->
-                                fields
-                                    |> List.foldl updateField []
-                                    |> List.map (toRecordUpdate initialRecord)
-                            )
-
-                _ ->
-                    []
-
-
-tuple : { first : Generator, second : Generator } -> Generator
-tuple generator =
-    Generator <|
-        \targetType unions values ->
-            case targetType of
-                Tuple (typeA :: typeB :: []) ->
-                    let
-                        toTuple exprA =
-                            firstGenerator typeB unions values
-                                |> List.map (CreateTuple exprA)
-
-                        (Generator firstGenerator) =
-                            generator.first
-
-                        (Generator secondGenerator) =
-                            generator.second
-                    in
-                    secondGenerator typeA unions values
-                        |> List.concatMap toTuple
-
-                _ ->
-                    []
-
-
-cases :
-    { matched : Generator
-    , branch : Dict String Type -> Generator
-    }
-    -> Generator
-cases generator =
-    Generator <|
-        \targetType unions values ->
-            let
-                suggestCase union =
-                    valuesOfUnion union
-                        |> List.map
-                            (\( name, _ ) ->
-                                List.map suggestBranch union.tags
-                                    |> Case (Call name [])
-                            )
-
-                valuesOfUnion union =
-                    List.filter (valueOfUnion union) (Dict.toList values)
-
-                valueOfUnion union ( _, tipe ) =
-                    case tipe of
-                        Type name _ ->
-                            union.name == name
-
-                        _ ->
-                            False
-
-                suggestBranch ( name, subTypes ) =
-                    ( if List.isEmpty subTypes then
-                        name
-
-                      else
-                        String.join " "
-                            (name
-                                :: List.map String.decapitalize
-                                    (List.map typeName subTypes)
-                            )
-                    , generator.branch (toNewValues subTypes)
-                        |> for targetType
-                        |> List.head
-                        |> Maybe.withDefault
-                            (Call "Debug.todo" [ Call "\"implement\"" [] ])
-                    )
-
-                typeName tipe =
-                    case tipe of
-                        Type name _ ->
-                            name
-
-                        _ ->
-                            "a"
-
-                toNewValues types =
-                    types
-                        |> List.map toNewValue
-                        |> Dict.fromList
-
-                toNewValue tipe =
-                    ( String.decapitalize (typeName tipe)
-                    , tipe
-                    )
-            in
-            case targetType of
-                Type _ _ ->
-                    List.concatMap suggestCase unions
-
-                Tuple _ ->
-                    List.concatMap suggestCase unions
-
-                Record _ _ ->
-                    List.concatMap suggestCase unions
-
-                _ ->
-                    []
