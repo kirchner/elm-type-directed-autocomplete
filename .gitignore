@@ -1,5 +1,6 @@
 node_modules/
 elm-stuff/
 .cache/
+dist/
 gh-pages/
 *.log
