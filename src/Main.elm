@@ -847,8 +847,7 @@ suggestHelp model knownValues unions targetType =
                 List.filterMap identity
                     [ if model.suggestRecordUpdates then
                         Just <|
-                            Suggest.recordUpdate
-                                { field = Suggest.value }
+                            Suggest.recordUpdate Suggest.value
 
                       else
                         Nothing
@@ -862,14 +861,12 @@ suggestHelp model knownValues unions targetType =
                             Suggest.tuple
                                 { first =
                                     Suggest.all
-                                        [ Suggest.recordUpdate
-                                            { field = Suggest.value }
+                                        [ Suggest.recordUpdate Suggest.value
                                         , Suggest.value
                                         ]
                                 , second =
                                     Suggest.all
-                                        [ Suggest.recordUpdate
-                                            { field = Suggest.value }
+                                        [ Suggest.recordUpdate Suggest.value
                                         , Suggest.value
                                         ]
                                 }
@@ -884,20 +881,19 @@ suggestHelp model knownValues unions targetType =
                                     \newValues ->
                                         Suggest.addValues newValues <|
                                             Suggest.all
-                                                [ Suggest.recordUpdate
-                                                    { field = Suggest.value }
+                                                [ Suggest.recordUpdate Suggest.value
                                                 , Suggest.value
                                                 , Suggest.tuple
                                                     { first =
                                                         Suggest.all
                                                             [ Suggest.recordUpdate
-                                                                { field = Suggest.value }
+                                                                Suggest.value
                                                             , Suggest.value
                                                             ]
                                                     , second =
                                                         Suggest.all
                                                             [ Suggest.recordUpdate
-                                                                { field = Suggest.value }
+                                                                Suggest.value
                                                             , Suggest.value
                                                             ]
                                                     }
@@ -908,21 +904,16 @@ suggestHelp model knownValues unions targetType =
                         Nothing
                     , if model.suggestOnceEvaluated then
                         Just <|
-                            Suggest.call
-                                { args =
-                                    [ Suggest.value ]
-                                }
+                            Suggest.call [ Suggest.value ]
 
                       else
                         Nothing
                     , if model.suggestTwiceEvaluated then
                         Just <|
                             Suggest.call
-                                { args =
-                                    [ Suggest.value
-                                    , Suggest.value
-                                    ]
-                                }
+                                [ Suggest.value
+                                , Suggest.value
+                                ]
 
                       else
                         Nothing

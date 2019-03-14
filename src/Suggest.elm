@@ -30,10 +30,27 @@ type Expr
 
 exprToString : Expr -> String
 exprToString expr =
+    exprToStringHelp False expr
+
+
+exprToStringHelp : Bool -> Expr -> String
+exprToStringHelp isArgument expr =
     case expr of
         Call name args ->
-            String.concat
-                [ String.join " " (name :: List.map exprToString args) ]
+            let
+                callString =
+                    String.concat
+                        [ String.join " " (name :: List.map (exprToStringHelp True) args) ]
+            in
+            if isArgument && List.length args >= 1 then
+                String.concat
+                    [ "("
+                    , callString
+                    , ")"
+                    ]
+
+            else
+                callString
 
         UpdateRecord name values ->
             if List.isEmpty values then
@@ -42,7 +59,7 @@ exprToString expr =
             else
                 let
                     valueToString ( fieldName, tipe ) =
-                        fieldName ++ " = " ++ exprToString tipe
+                        fieldName ++ " = " ++ exprToStringHelp False tipe
                 in
                 String.concat
                     [ "{ "
@@ -56,9 +73,9 @@ exprToString expr =
         CreateTuple exprA exprB ->
             String.concat
                 [ "( "
-                , exprToString exprA
+                , exprToStringHelp False exprA
                 , "\n, "
-                , exprToString exprB
+                , exprToStringHelp False exprB
                 , "\n)"
                 ]
 
@@ -68,12 +85,12 @@ exprToString expr =
                     String.concat
                         [ branch
                         , " ->\n"
-                        , indent (exprToString branchExpr)
+                        , indent (exprToStringHelp False branchExpr)
                         ]
             in
             String.concat
                 [ "case "
-                , exprToString matchedExpr
+                , exprToStringHelp False matchedExpr
                 , " of\n"
                 , indent <|
                     String.join "\n\n" <|
@@ -156,13 +173,13 @@ value =
                 |> Dict.foldl ofTargetType []
 
 
-call : { args : List Generator } -> Generator
-call generator =
+call : List Generator -> Generator
+call generators =
     Generator <|
         \targetType unions values substitutions ->
             let
                 ofTargetType name tipe collected =
-                    case ofTargetTypeHelp [] generator.args tipe of
+                    case ofTargetTypeHelp [] generators tipe of
                         Nothing ->
                             collected
 
@@ -198,9 +215,12 @@ call generator =
                             (\( arguments, finalSubstitutions ) ->
                                 if
                                     List.length arguments
-                                        == List.length generator.args
+                                        == List.length generators
                                 then
-                                    Just ( Call name arguments, finalSubstitutions )
+                                    Just
+                                        ( Call name (List.reverse arguments)
+                                        , finalSubstitutions
+                                        )
 
                                 else
                                     Nothing
@@ -258,7 +278,7 @@ tuple generator =
                     []
 
 
-recordUpdate : { field : Generator } -> Generator
+recordUpdate : Generator -> Generator
 recordUpdate generator =
     Generator <|
         \targetType unions values substitutions ->
@@ -266,7 +286,7 @@ recordUpdate generator =
                 Record fields var ->
                     let
                         (Generator fieldGenerator) =
-                            generator.field
+                            generator
 
                         (Generator initialRecordGenerator) =
                             value
@@ -392,30 +412,6 @@ cases generator =
 
 
 ---- HELPER
-
-
-{-|
-
-    combinations [ [ 1, 2 ], [ 3 ], [ 4, 5 ] ]
-        == [ [ 1, 3, 4 ], [ 1, 3, 5 ], [ 2, 3, 4 ], [ 2, 3, 5 ] ]
-
--}
-combinations : List (List a) -> List (List a)
-combinations lists =
-    case lists of
-        [] ->
-            [ [] ]
-
-        first :: rest ->
-            first
-                |> List.concatMap
-                    (\a ->
-                        combinations rest
-                            |> List.map
-                                (\combination ->
-                                    a :: combination
-                                )
-                    )
 
 
 namedCombinations : List ( String, List a ) -> List (List ( String, a ))

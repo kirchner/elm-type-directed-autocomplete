@@ -5,7 +5,6 @@ module Type exposing
     , substitute
     , typeVariables
     , unifiable
-    , unifier
     )
 
 {-
@@ -113,18 +112,6 @@ noSubstitutions =
     { bindTypeVariables = Dict.empty
     , bindRecordVariables = Dict.empty
     }
-
-
-{-| Return substitutions if both types can be unified.
--}
-unifier : Type -> Type -> Maybe Substitutions
-unifier typeA typeB =
-    case State.run noSubstitutions (unifiable typeA typeB) of
-        ( False, _ ) ->
-            Nothing
-
-        ( True, substitutions ) ->
-            Just substitutions
 
 
 unifiable : Type -> Type -> State Substitutions Bool
