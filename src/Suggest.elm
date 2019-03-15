@@ -6,9 +6,12 @@ module Suggest exposing
     , all
     , call
     , cases
+    , default
     , exprToString
+    , exprToText
     , for
     , recordUpdate
+    , takeValues
     , tuple
     , value
     )
@@ -28,139 +31,114 @@ type Expr
     | Case Expr (List ( String, Expr ))
 
 
-exprToString : Expr -> String
-exprToString expr =
-    exprToStringHelp False expr
-
-
-exprToStringHelp : Bool -> Expr -> String
-exprToStringHelp isArgument expr =
-    case expr of
-        Call name args ->
-            let
-                callString =
-                    String.concat
-                        [ String.join " " (name :: List.map (exprToStringHelp True) args) ]
-            in
-            if isArgument && List.length args >= 1 then
-                String.concat
-                    [ "("
-                    , callString
-                    , ")"
-                    ]
-
-            else
-                callString
-
-        UpdateRecord name values ->
-            if List.isEmpty values then
-                name
-
-            else
-                let
-                    valueToString ( fieldName, tipe ) =
-                        fieldName ++ " = " ++ exprToStringHelp False tipe
-                in
-                String.concat
-                    [ "{ "
-                    , name
-                    , " | "
-                    , String.join " , " <|
-                        List.map valueToString values
-                    , " }"
-                    ]
-
-        CreateTuple exprA exprB ->
-            String.concat
-                [ "( "
-                , exprToStringHelp False exprA
-                , ", "
-                , exprToStringHelp False exprB
-                , " )"
-                ]
-
-        Case matchedExpr branches ->
-            let
-                branchToString ( branch, branchExpr ) =
-                    String.concat
-                        [ branch
-                        , " ->\n"
-                        , indent (exprToStringHelp False branchExpr)
-                        ]
-            in
-            String.concat
-                [ "case "
-                , exprToStringHelp False matchedExpr
-                , " of\n"
-                , indent <|
-                    String.join "\n\n" <|
-                        List.map branchToString branches
-                ]
-
-
-indent : String -> String
-indent text =
-    text
-        |> String.lines
-        |> List.map
-            (\line ->
-                if line == "" then
-                    line
-
-                else
-                    "    " ++ line
-            )
-        |> String.join "\n"
-
-
 
 ---- GENERATOR
 
 
 type Generator
     = Generator
+        (List (Dict String Type) -> List (Dict String Type))
         (Type
          -> List Union
-         -> Dict String Type
+         -> List (Dict String Type)
          -> Substitutions
          -> List ( Expr, Substitutions )
         )
 
 
+default : Generator
+default =
+    all
+        [ recordUpdate value
+        , value
+        , tuple
+            { first =
+                all
+                    [ recordUpdate value
+                    , value
+                    , call [ value ]
+                    ]
+            , second =
+                all
+                    [ recordUpdate value
+                    , value
+                    , call [ value ]
+                    ]
+            }
+        , cases
+            { matched = value
+            , branch =
+                \newValues ->
+                    all
+                        [ recordUpdate <|
+                            all
+                                [ value
+                                    |> addValues newValues
+                                    |> takeValues 1
+                                , call
+                                    [ value
+                                        |> addValues newValues
+                                        |> takeValues 1
+                                    ]
+                                ]
+                        , value
+                        ]
+            }
+        , call [ value ]
+        , call [ value, value ]
+        ]
+
+
 addUnions : List Union -> Generator -> Generator
-addUnions newUnions (Generator generator) =
-    Generator <|
+addUnions newUnions (Generator transformValues generator) =
+    Generator transformValues <|
         \targetType unions values ->
             generator targetType (newUnions ++ unions) values
 
 
 addValues : Dict String Type -> Generator -> Generator
-addValues newValues (Generator generator) =
-    Generator <|
+addValues newValues (Generator transformValues generator) =
+    Generator ((::) newValues << transformValues) generator
+
+
+addValuesList : List (Dict String Type) -> Generator -> Generator
+addValuesList newValues (Generator transformValues generator) =
+    Generator transformValues <|
         \targetType unions values ->
-            generator targetType unions (Dict.union newValues values)
+            generator targetType unions (newValues ++ values)
+
+
+takeValues : Int -> Generator -> Generator
+takeValues distance (Generator transformValues generator) =
+    Generator (transformValues >> List.take distance) generator
 
 
 for : Type -> Generator -> List Expr
-for targetType (Generator generator) =
-    generator targetType [] Dict.empty Type.noSubstitutions
+for targetType generator =
+    generator
+        |> generate targetType Type.noSubstitutions
         |> List.map Tuple.first
+
+
+generate : Type -> Substitutions -> Generator -> List ( Expr, Substitutions )
+generate targetType substitutions (Generator transformValues generator) =
+    generator targetType [] (transformValues []) substitutions
 
 
 all : List Generator -> Generator
 all generators =
-    Generator <|
+    Generator identity <|
         \targetType unions values substitutions ->
             List.concatMap
-                (\(Generator generator) ->
-                    generator targetType unions values substitutions
+                (\(Generator transformValues generator) ->
+                    generator targetType unions (transformValues values) substitutions
                 )
                 generators
 
 
 value : Generator
 value =
-    Generator <|
+    Generator identity <|
         \targetType unions values substitutions ->
             let
                 ofTargetType name tipe collected =
@@ -177,12 +155,12 @@ value =
                         collected
             in
             values
-                |> Dict.foldl ofTargetType []
+                |> List.concatMap (Dict.foldl ofTargetType [])
 
 
 call : List Generator -> Generator
 call generators =
-    Generator <|
+    Generator identity <|
         \targetType unions values substitutions ->
             let
                 ofTargetType name tipe collected =
@@ -241,44 +219,57 @@ call generators =
                         [] ->
                             [ ( [], Type.noSubstitutions ) ]
 
-                        ( firstFrom, Generator fromGenerator ) :: restFroms ->
-                            fromGenerator firstFrom unions values nextSubstitutions
-                                |> List.concatMap
-                                    (\( firstArgumentExpr, nextNextSubstitutions ) ->
-                                        suggestArgumentsHelp restFroms
+                        ( firstFrom, Generator transform fromGenerator ) :: restFroms ->
+                            List.concatMap
+                                (\( firstArgumentExpr, nextNextSubstitutions ) ->
+                                    List.map
+                                        (\( restArgumentExprs, finalSubstitutions ) ->
+                                            ( firstArgumentExpr :: restArgumentExprs
+                                            , finalSubstitutions
+                                            )
+                                        )
+                                        (suggestArgumentsHelp restFroms
                                             nextNextSubstitutions
                                             (firstArgumentExpr :: revArguments)
-                                            |> List.map
-                                                (\( restArgumentExprs, finalSubstitutions ) ->
-                                                    ( firstArgumentExpr :: restArgumentExprs
-                                                    , finalSubstitutions
-                                                    )
-                                                )
-                                    )
+                                        )
+                                )
+                                (fromGenerator firstFrom
+                                    unions
+                                    (transform values)
+                                    nextSubstitutions
+                                )
             in
             values
-                |> Dict.foldl ofTargetType []
-                |> List.concatMap toCall
+                |> List.concatMap
+                    (Dict.foldl ofTargetType []
+                        >> List.concatMap toCall
+                    )
 
 
 tuple : { first : Generator, second : Generator } -> Generator
 tuple generator =
-    Generator <|
+    Generator identity <|
         \targetType unions values substitutions ->
             case targetType of
                 Tuple (typeA :: typeB :: []) ->
                     let
-                        (Generator firstGenerator) =
+                        (Generator firstTransform firstGenerator) =
                             generator.first
 
-                        (Generator secondGenerator) =
+                        (Generator secondTransform secondGenerator) =
                             generator.second
 
                         toTuple ( exprA, nextSubstitutions ) =
-                            secondGenerator typeB unions values nextSubstitutions
+                            secondGenerator typeB
+                                unions
+                                (secondTransform values)
+                                nextSubstitutions
                                 |> List.map (Tuple.mapFirst (CreateTuple exprA))
                     in
-                    firstGenerator typeA unions values substitutions
+                    firstGenerator typeA
+                        unions
+                        (firstTransform values)
+                        substitutions
                         |> List.concatMap toTuple
 
                 _ ->
@@ -286,18 +277,12 @@ tuple generator =
 
 
 recordUpdate : Generator -> Generator
-recordUpdate generator =
-    Generator <|
+recordUpdate (Generator transformValues fieldGenerator) =
+    Generator identity <|
         \targetType unions values substitutions ->
             case targetType of
                 Record fields var ->
                     let
-                        (Generator fieldGenerator) =
-                            generator
-
-                        (Generator initialRecordGenerator) =
-                            value
-
                         ofTargetType name tipe collected =
                             Type.unifiable tipe targetType
                                 |> State.run substitutions
@@ -321,13 +306,18 @@ recordUpdate generator =
                                     )
 
                         updateField nextSubstitutions ( field, tipe ) collected =
-                            fieldGenerator tipe unions values nextSubstitutions
+                            fieldGenerator tipe
+                                unions
+                                (transformValues values)
+                                nextSubstitutions
                                 |> List.map (Tuple.pair field)
                                 |> List.append collected
                     in
                     values
-                        |> Dict.foldl ofTargetType []
-                        |> List.concatMap toRecordUpdate
+                        |> List.concatMap
+                            (Dict.foldl ofTargetType []
+                                >> List.concatMap toRecordUpdate
+                            )
 
                 _ ->
                     []
@@ -339,12 +329,9 @@ cases :
     }
     -> Generator
 cases generator =
-    Generator <|
+    Generator identity <|
         \targetType unions values substitutions ->
             let
-                (Generator matchedGenerator) =
-                    generator.matched
-
                 matchedValues =
                     unions
                         |> List.concatMap suggestMatched
@@ -352,10 +339,11 @@ cases generator =
                         |> List.map (\expr -> ( expr, Type.noSubstitutions ))
 
                 suggestMatched union =
-                    matchedGenerator (Type union.name (List.map Var union.args))
-                        unions
-                        values
-                        Type.noSubstitutions
+                    generator.matched
+                        |> addUnions unions
+                        |> addValuesList values
+                        |> generate (Type union.name (List.map Var union.args))
+                            Type.noSubstitutions
                         |> List.map (Tuple.first >> Tuple.pair union.tags)
 
                 suggestCase ( tags, matched ) =
@@ -366,9 +354,6 @@ cases generator =
 
                 suggestBranch ( name, subTypes ) =
                     let
-                        (Generator branchGenerator) =
-                            generator.branch (toNewValues subTypes)
-
                         branch =
                             if List.isEmpty subTypes then
                                 name
@@ -376,9 +361,15 @@ cases generator =
                             else
                                 String.join " "
                                     (name :: List.map newValueFromType subTypes)
+
+                        (Generator transformValues branchGenerator) =
+                            generator.branch (toNewValues subTypes)
                     in
                     ( branch
-                    , branchGenerator targetType unions values Type.noSubstitutions
+                    , branchGenerator targetType
+                        unions
+                        (transformValues values)
+                        Type.noSubstitutions
                         |> List.map Tuple.first
                     )
 
@@ -434,3 +425,111 @@ namedCombinations lists =
                                     ( name, a ) :: combination
                                 )
                     )
+
+
+
+---- PRINT
+
+
+exprToText : Expr -> String
+exprToText expr =
+    exprToStringHelp True False expr
+
+
+exprToString : Expr -> String
+exprToString expr =
+    exprToStringHelp False False expr
+
+
+exprToStringHelp : Bool -> Bool -> Expr -> String
+exprToStringHelp addLinebreaks isArgument expr =
+    case expr of
+        Call name args ->
+            let
+                callString =
+                    String.concat
+                        [ String.join " "
+                            (name
+                                :: List.map (exprToStringHelp addLinebreaks True) args
+                            )
+                        ]
+            in
+            if isArgument && List.length args >= 1 then
+                String.concat
+                    [ "("
+                    , callString
+                    , ")"
+                    ]
+
+            else
+                callString
+
+        UpdateRecord name values ->
+            if List.isEmpty values then
+                name
+
+            else
+                let
+                    valueToString ( fieldName, tipe ) =
+                        fieldName ++ " = " ++ exprToStringHelp addLinebreaks False tipe
+                in
+                String.concat
+                    [ "{ "
+                    , name
+                    , " | "
+                    , String.join " , " <|
+                        List.map valueToString values
+                    , " }"
+                    ]
+
+        CreateTuple exprA exprB ->
+            if addLinebreaks then
+                String.concat
+                    [ "( "
+                    , exprToStringHelp addLinebreaks False exprA
+                    , "\n, "
+                    , exprToStringHelp addLinebreaks False exprB
+                    , "\n)"
+                    ]
+
+            else
+                String.concat
+                    [ "( "
+                    , exprToStringHelp addLinebreaks False exprA
+                    , ", "
+                    , exprToStringHelp addLinebreaks False exprB
+                    , " )"
+                    ]
+
+        Case matchedExpr branches ->
+            let
+                branchToString ( branch, branchExpr ) =
+                    String.concat
+                        [ branch
+                        , " ->\n"
+                        , indent (exprToStringHelp addLinebreaks False branchExpr)
+                        ]
+            in
+            String.concat
+                [ "case "
+                , exprToStringHelp addLinebreaks False matchedExpr
+                , " of\n"
+                , indent <|
+                    String.join "\n\n" <|
+                        List.map branchToString branches
+                ]
+
+
+indent : String -> String
+indent text =
+    text
+        |> String.lines
+        |> List.map
+            (\line ->
+                if line == "" then
+                    line
+
+                else
+                    "    " ++ line
+            )
+        |> String.join "\n"

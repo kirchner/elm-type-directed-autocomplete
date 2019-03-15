@@ -560,7 +560,7 @@ viewExpr expr =
         , Element.spacing 8
         ]
         (List.map Element.text <|
-            String.split "\n" (Suggest.exprToString expr)
+            String.split "\n" (Suggest.exprToText expr)
         )
 
 
@@ -863,11 +863,15 @@ suggestHelp model knownValues unions targetType =
                                     Suggest.all
                                         [ Suggest.recordUpdate Suggest.value
                                         , Suggest.value
+                                        , Suggest.call
+                                            [ Suggest.value ]
                                         ]
                                 , second =
                                     Suggest.all
                                         [ Suggest.recordUpdate Suggest.value
                                         , Suggest.value
+                                        , Suggest.call
+                                            [ Suggest.value ]
                                         ]
                                 }
 
@@ -879,25 +883,45 @@ suggestHelp model knownValues unions targetType =
                                 { matched = Suggest.value
                                 , branch =
                                     \newValues ->
-                                        Suggest.addValues newValues <|
-                                            Suggest.all
-                                                [ Suggest.recordUpdate Suggest.value
-                                                , Suggest.value
-                                                , Suggest.tuple
-                                                    { first =
-                                                        Suggest.all
-                                                            [ Suggest.recordUpdate
-                                                                Suggest.value
-                                                            , Suggest.value
+                                        Suggest.all
+                                            [ Suggest.recordUpdate <|
+                                                Suggest.all
+                                                    [ Suggest.value
+                                                        |> Suggest.addValues newValues
+                                                        |> Suggest.takeValues 1
+                                                    , Suggest.call
+                                                        [ Suggest.value
+                                                            |> Suggest.addValues newValues
+                                                            |> Suggest.takeValues 1
+                                                        ]
+                                                    ]
+                                            , Suggest.tuple
+                                                { first =
+                                                    Suggest.all
+                                                        [ Suggest.recordUpdate <|
+                                                            Suggest.all
+                                                                [ Suggest.value
+                                                                    |> Suggest.addValues newValues
+                                                                    |> Suggest.takeValues 1
+                                                                , Suggest.call
+                                                                    [ Suggest.value
+                                                                        |> Suggest.addValues newValues
+                                                                        |> Suggest.takeValues 1
+                                                                    ]
+                                                                ]
+                                                        , Suggest.value
+                                                        ]
+                                                , second =
+                                                    Suggest.all
+                                                        [ Suggest.value
+                                                        , Suggest.call
+                                                            [ Suggest.value
+                                                                |> Suggest.addValues newValues
                                                             ]
-                                                    , second =
-                                                        Suggest.all
-                                                            [ Suggest.recordUpdate
-                                                                Suggest.value
-                                                            , Suggest.value
-                                                            ]
-                                                    }
-                                                ]
+                                                        ]
+                                                }
+                                            , Suggest.value
+                                            ]
                                 }
 
                       else

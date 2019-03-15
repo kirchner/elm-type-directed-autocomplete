@@ -11,11 +11,13 @@ import Suggest
         ( Generator
         , addUnions
         , addValues
+        , all
         , call
         , cases
         , exprToString
         , for
         , recordUpdate
+        , takeValues
         , tuple
         , value
         )
@@ -25,34 +27,41 @@ import Test exposing (..)
 suite : Test
 suite =
     concat
-        [ valueTest
-        , callTest
-        , tupleTest
-        , recordUpdateTest
-        , casesTest
+        [ describe "generators"
+            [ valueTest
+            , callTest
+            , tupleTest
+            , recordUpdateTest
+            , casesTest
+            , allTest
+            ]
+        , takeValuesTest
         ]
 
 
 valueTest : Test
 valueTest =
-    testGenerator "value" value <|
+    testGenerator "value"
+        (value
+            |> addValues values
+        )
         [ ( int
           , [ "int" ]
           )
         , ( Lambda int int
-          , [ "Basics.identity"
-            , "Basics.negate"
+          , [ "Basics.negate"
+            , "Basics.identity"
             ]
           )
         , ( Lambda a a
-          , [ "Basics.identity"
+          , [ "String.reverse"
             , "Basics.negate"
-            , "String.reverse"
+            , "Basics.identity"
             ]
           )
         , ( Lambda a int
-          , [ "Basics.identity"
-            , "Basics.negate"
+          , [ "Basics.negate"
+            , "Basics.identity"
             ]
           )
         ]
@@ -62,10 +71,12 @@ callTest : Test
 callTest =
     describe "call"
         [ testGenerator "value"
-            (call [ value ])
+            (call [ value ]
+                |> addValues values
+            )
             [ ( int
-              , [ "Basics.identity int"
-                , "Basics.negate int"
+              , [ "Basics.negate int"
+                , "Basics.identity int"
                 ]
               )
             ]
@@ -74,6 +85,7 @@ callTest =
                 [ value
                 , value
                 ]
+                |> addValues values
             )
             [ ( int
               , [ "Basics.modBy int int" ]
@@ -89,10 +101,11 @@ callTest =
                 [ value
                 , call [ value ]
                 ]
+                |> addValues values
             )
             [ ( int
-              , [ "Basics.modBy int (Basics.identity int)"
-                , "Basics.modBy int (Basics.negate int)"
+              , [ "Basics.modBy int (Basics.negate int)"
+                , "Basics.modBy int (Basics.identity int)"
                 ]
               )
             ]
@@ -102,6 +115,7 @@ callTest =
                 , value
                 , value
                 ]
+                |> addValues values
             )
             [ ( string
               , [ "List.foldl String.append string strings" ]
@@ -118,6 +132,7 @@ tupleTest =
                 { first = value
                 , second = value
                 }
+                |> addValues values
             )
             [ ( Tuple [ int, int ]
               , [ "( int, int )" ]
@@ -128,10 +143,11 @@ tupleTest =
                 { first = value
                 , second = call [ value ]
                 }
+                |> addValues values
             )
             [ ( Tuple [ int, int ]
-              , [ "( int, Basics.identity int )"
-                , "( int, Basics.negate int )"
+              , [ "( int, Basics.negate int )"
+                , "( int, Basics.identity int )"
                 ]
               )
             ]
@@ -142,7 +158,9 @@ recordUpdateTest : Test
 recordUpdateTest =
     describe "recordUpdate"
         [ testGenerator "value"
-            (recordUpdate value)
+            (recordUpdate value
+                |> addValues values
+            )
             [ ( record
                     [ ( "int", int )
                     , ( "string", string )
@@ -166,18 +184,10 @@ casesTest =
                         value
                             |> addValues newValues
                 }
+                |> addValues values
             )
             [ ( int
               , [ """case msg of
-    NewInt newInt ->
-        int
-
-    NewFloat newFloat ->
-        int
-
-    NewString newString ->
-        int"""
-                , """case msg of
     NewInt newInt ->
         newInt
 
@@ -186,7 +196,243 @@ casesTest =
 
     NewString newString ->
         int"""
+                , """case msg of
+    NewInt newInt ->
+        int
+
+    NewFloat newFloat ->
+        int
+
+    NewString newString ->
+        int"""
                 ]
+              )
+            ]
+        ]
+
+
+allTest : Test
+allTest =
+    describe "all"
+        [ describe "add and take"
+            [ testGenerator "add one and take 1"
+                (value
+                    |> addValues (Dict.singleton "int" int)
+                    |> takeValues 1
+                )
+                [ ( int
+                  , [ "int" ]
+                  )
+                ]
+            , testGenerator "add two and take 1"
+                (value
+                    |> addValues (Dict.singleton "intA" int)
+                    |> addValues (Dict.singleton "intB" int)
+                    |> takeValues 1
+                )
+                [ ( int
+                  , [ "intB" ]
+                  )
+                ]
+            , testGenerator "add two, take 1 and add one"
+                (value
+                    |> addValues (Dict.singleton "intA" int)
+                    |> addValues (Dict.singleton "intB" int)
+                    |> takeValues 1
+                    |> addValues (Dict.singleton "intC" int)
+                )
+                [ ( int
+                  , [ "intC"
+                    , "intB"
+                    ]
+                  )
+                ]
+            ]
+        , testGenerator "nested three times"
+            (all
+                [ all
+                    [ value
+                        |> addValues (Dict.singleton "intC" int)
+                    ]
+                    |> addValues (Dict.singleton "intB" int)
+                ]
+                |> addValues (Dict.singleton "intA" int)
+            )
+            [ ( int
+              , [ "intC"
+                , "intB"
+                , "intA"
+                ]
+              )
+            ]
+        , describe "nested three times with takeValues 1"
+            [ testGenerator "innermost level"
+                (all
+                    [ all
+                        [ value
+                            |> addValues (Dict.singleton "intC" int)
+                            |> takeValues 1
+                        ]
+                        |> addValues (Dict.singleton "intB" int)
+                    ]
+                    |> addValues (Dict.singleton "intA" int)
+                )
+                [ ( int
+                  , [ "intC" ]
+                  )
+                ]
+            , testGenerator "middle level"
+                (all
+                    [ all
+                        [ value
+                            |> addValues (Dict.singleton "intC" int)
+                        ]
+                        |> addValues (Dict.singleton "intB" int)
+                        |> takeValues 1
+                    ]
+                    |> addValues (Dict.singleton "intA" int)
+                )
+                [ ( int
+                  , [ "intC"
+                    , "intB"
+                    ]
+                  )
+                ]
+            , testGenerator "outermost level"
+                (all
+                    [ all
+                        [ value
+                            |> addValues (Dict.singleton "intC" int)
+                        ]
+                        |> addValues (Dict.singleton "intB" int)
+                    ]
+                    |> addValues (Dict.singleton "intA" int)
+                    |> takeValues 1
+                )
+                [ ( int
+                  , [ "intC"
+                    , "intB"
+                    , "intA"
+                    ]
+                  )
+                ]
+            ]
+        , testGenerator "three times addValues"
+            (value
+                |> addValues (Dict.singleton "intA" int)
+                |> addValues (Dict.singleton "intB" int)
+                |> addValues (Dict.singleton "intC" int)
+            )
+            [ ( int
+              , [ "intC"
+                , "intB"
+                , "intA"
+                ]
+              )
+            ]
+        , testGenerator "three times addValues with takeValues 1"
+            (value
+                |> addValues (Dict.singleton "intA" int)
+                |> addValues (Dict.singleton "intB" int)
+                |> addValues (Dict.singleton "intC" int)
+                |> takeValues 1
+            )
+            [ ( int
+              , [ "intC" ]
+              )
+            ]
+        ]
+
+
+takeValuesTest : Test
+takeValuesTest =
+    describe "takeValues"
+        [ testGenerator "at 0"
+            (value
+                |> addValues values
+                |> takeValues 0
+            )
+            [ ( int
+              , []
+              )
+            ]
+        , testGenerator "at 1"
+            (value
+                |> addValues values
+                |> takeValues 1
+            )
+            [ ( int
+              , [ "int" ]
+              )
+            ]
+        , testGenerator "call value at 0"
+            (call
+                [ value
+                    |> addValues (Dict.singleton "newInt" int)
+                    |> takeValues 1
+                ]
+                |> addValues values
+            )
+            [ ( int
+              , [ "Basics.negate newInt"
+                , "Basics.identity newInt"
+                ]
+              )
+            ]
+        , testGenerator "cases"
+            (cases
+                { matched = value
+                , branch =
+                    \newValues ->
+                        all
+                            [ value
+                                |> addValues newValues
+                                |> takeValues 1
+                            , value
+                            ]
+                }
+                |> addValues values
+            )
+            [ ( int
+              , [ """case msg of
+    NewInt newInt ->
+        newInt
+
+    NewFloat newFloat ->
+        int
+
+    NewString newString ->
+        int"""
+                , """case msg of
+    NewInt newInt ->
+        int
+
+    NewFloat newFloat ->
+        int
+
+    NewString newString ->
+        int"""
+                ]
+              )
+            ]
+        , testGenerator "cases with recordUpdate"
+            (cases
+                { matched = value
+                , branch =
+                    \newValues ->
+                        recordUpdate
+                            (value
+                                |> addValues newValues
+                                |> takeValues 1
+                            )
+                }
+                |> addValues values
+            )
+            [ ( record
+                    [ ( "int", int )
+                    , ( "string", string )
+                    ]
+              , []
               )
             ]
         ]
@@ -289,12 +535,10 @@ testGenerator description generator tests =
             test (typeToString targetType) <|
                 \_ ->
                     generator
-                        |> addValues values
                         |> addUnions unions
                         |> for targetType
                         |> List.map exprToString
-                        |> Set.fromList
-                        |> Expect.equal (Set.fromList expectation)
+                        |> Expect.equal expectation
     in
     describe description <|
         List.map testHelp tests
