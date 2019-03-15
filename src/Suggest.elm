@@ -74,9 +74,9 @@ exprToStringHelp isArgument expr =
             String.concat
                 [ "( "
                 , exprToStringHelp False exprA
-                , "\n, "
+                , ", "
                 , exprToStringHelp False exprB
-                , "\n)"
+                , " )"
                 ]
 
         Case matchedExpr branches ->
@@ -102,7 +102,14 @@ indent : String -> String
 indent text =
     text
         |> String.lines
-        |> List.map (\line -> "    " ++ line)
+        |> List.map
+            (\line ->
+                if line == "" then
+                    line
+
+                else
+                    "    " ++ line
+            )
         |> String.join "\n"
 
 
@@ -368,23 +375,12 @@ cases generator =
 
                             else
                                 String.join " "
-                                    (name
-                                        :: List.map String.decapitalize
-                                            (List.map typeName subTypes)
-                                    )
+                                    (name :: List.map newValueFromType subTypes)
                     in
                     ( branch
                     , branchGenerator targetType unions values Type.noSubstitutions
                         |> List.map Tuple.first
                     )
-
-                typeName tipe =
-                    case tipe of
-                        Type name _ ->
-                            name
-
-                        _ ->
-                            "a"
 
                 toNewValues types =
                     types
@@ -392,9 +388,17 @@ cases generator =
                         |> Dict.fromList
 
                 toNewValue tipe =
-                    ( String.decapitalize (typeName tipe)
+                    ( newValueFromType tipe
                     , tipe
                     )
+
+                newValueFromType tipe =
+                    case tipe of
+                        Type name _ ->
+                            "new" ++ name
+
+                        _ ->
+                            "a"
             in
             case targetType of
                 Type _ _ ->
