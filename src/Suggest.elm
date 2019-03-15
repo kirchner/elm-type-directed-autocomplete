@@ -19,6 +19,7 @@ module Suggest exposing
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
+import Set
 import State exposing (State)
 import String.Extra as String
 import Type exposing (Substitutions)
@@ -147,9 +148,35 @@ value =
                         |> collect name collected
 
                 collect name collected ( isUnifiable, nextSubstitutions ) =
-                    if isUnifiable then
-                        ( Call name [], nextSubstitutions )
-                            :: collected
+                    let
+                        prevBoundVars =
+                            Dict.keys substitutions.bindTypeVariables
+                                |> Set.fromList
+
+                        nextBoundVars =
+                            Dict.keys nextSubstitutions.bindTypeVariables
+                                |> Set.fromList
+
+                        newBoundVars =
+                            Set.diff nextBoundVars prevBoundVars
+
+                        targetTypeVars =
+                            Type.typeVariables targetType
+
+                        newBoundVarsInTargetType =
+                            targetTypeVars
+                                |> Set.intersect newBoundVars
+                                |> Set.isEmpty
+                                |> not
+                    in
+                    if
+                        isUnifiable
+                            && (not newBoundVarsInTargetType
+                                    || Set.isEmpty targetTypeVars
+                                    || not (Set.isEmpty prevBoundVars)
+                               )
+                    then
+                        ( Call name [], nextSubstitutions ) :: collected
 
                     else
                         collected
@@ -178,8 +205,34 @@ call generators =
                                 ( isUnifiable, nextSubstitutions ) =
                                     Type.unifiable tipe targetType
                                         |> State.run substitutions
+
+                                prevBoundVars =
+                                    Dict.keys substitutions.bindTypeVariables
+                                        |> Set.fromList
+
+                                nextBoundVars =
+                                    Dict.keys nextSubstitutions.bindTypeVariables
+                                        |> Set.fromList
+
+                                newBoundVars =
+                                    Set.diff nextBoundVars prevBoundVars
+
+                                targetTypeVars =
+                                    Type.typeVariables targetType
+
+                                newBoundVarsInTargetType =
+                                    targetTypeVars
+                                        |> Set.intersect newBoundVars
+                                        |> Set.isEmpty
+                                        |> not
                             in
-                            if isUnifiable then
+                            if
+                                isUnifiable
+                                    && (not newBoundVarsInTargetType
+                                            || Set.isEmpty targetTypeVars
+                                            || not (Set.isEmpty prevBoundVars)
+                                       )
+                            then
                                 Just ( froms, nextSubstitutions )
 
                             else
@@ -195,13 +248,10 @@ call generators =
                             Nothing
 
                 toCall ( name, froms, nextSubstitutions ) =
-                    suggestArguments froms nextSubstitutions
+                    suggestArguments [] froms nextSubstitutions
                         |> List.filterMap
                             (\( arguments, finalSubstitutions ) ->
-                                if
-                                    List.length arguments
-                                        == List.length generators
-                                then
+                                if List.length arguments == List.length generators then
                                     Just
                                         ( Call name (List.reverse arguments)
                                         , finalSubstitutions
@@ -211,10 +261,7 @@ call generators =
                                     Nothing
                             )
 
-                suggestArguments froms nextSubstitutions =
-                    suggestArgumentsHelp froms nextSubstitutions []
-
-                suggestArgumentsHelp froms nextSubstitutions revArguments =
+                suggestArguments revArguments froms nextSubstitutions =
                     case froms of
                         [] ->
                             [ ( [], Type.noSubstitutions ) ]
@@ -228,9 +275,10 @@ call generators =
                                             , finalSubstitutions
                                             )
                                         )
-                                        (suggestArgumentsHelp restFroms
-                                            nextNextSubstitutions
+                                        (suggestArguments
                                             (firstArgumentExpr :: revArguments)
+                                            restFroms
+                                            nextNextSubstitutions
                                         )
                                 )
                                 (fromGenerator firstFrom

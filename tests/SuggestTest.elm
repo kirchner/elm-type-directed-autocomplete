@@ -54,15 +54,10 @@ valueTest =
             ]
           )
         , ( Lambda a a
-          , [ "String.reverse"
-            , "Basics.negate"
-            , "Basics.identity"
-            ]
+          , [ "Basics.identity" ]
           )
         , ( Lambda a int
-          , [ "Basics.negate"
-            , "Basics.identity"
-            ]
+          , []
           )
         ]
 
@@ -78,6 +73,9 @@ callTest =
               , [ "Basics.negate int"
                 , "Basics.identity int"
                 ]
+              )
+            , ( a
+              , []
               )
             ]
         , testGenerator "value value"
@@ -95,6 +93,9 @@ callTest =
                 , "List.map String.fromInt ints"
                 ]
               )
+            , ( a
+              , []
+              )
             ]
         , testGenerator "value (call value)"
             (call
@@ -108,6 +109,9 @@ callTest =
                 , "Basics.modBy int (Basics.identity int)"
                 ]
               )
+            , ( a
+              , []
+              )
             ]
         , testGenerator "value value value"
             (call
@@ -119,6 +123,9 @@ callTest =
             )
             [ ( string
               , [ "List.foldl String.append string strings" ]
+              )
+            , ( a
+              , []
               )
             ]
         ]
@@ -136,6 +143,15 @@ tupleTest =
             )
             [ ( Tuple [ int, int ]
               , [ "( int, int )" ]
+              )
+            , ( Tuple [ a, a ]
+              , []
+              )
+            , ( Tuple [ a, int ]
+              , []
+              )
+            , ( Tuple [ int, a ]
+              , []
               )
             ]
         , testGenerator "( value, call value )"
@@ -206,6 +222,9 @@ casesTest =
     NewString newString ->
         int"""
                 ]
+              )
+            , ( a
+              , []
               )
             ]
         ]
