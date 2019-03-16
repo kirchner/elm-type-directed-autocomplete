@@ -24,7 +24,7 @@ import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import State exposing (State)
 import Test exposing (..)
-import Type
+import Type exposing (noSubstitutions)
 
 
 suite : Test
@@ -33,6 +33,7 @@ suite =
         [ normalizeTest
         , unifierTest
         , unifiableTest
+        , isATest
         ]
 
 
@@ -507,6 +508,133 @@ unifiableTest =
                         , { bindTypeVariables = Dict.singleton "a" float
                           , bindRecordVariables = Dict.empty
                           }
+                        )
+        ]
+
+
+isATest : Test
+isATest =
+    let
+        a =
+            Var "a"
+
+        b =
+            Var "b"
+
+        c =
+            Var "c"
+
+        num =
+            Var "number"
+
+        comp =
+            Var "comparable"
+
+        compA =
+            Var "comparableA"
+
+        compB =
+            Var "comparableB"
+
+        int =
+            Type "Int" []
+
+        float =
+            Type "Float" []
+
+        string =
+            Type "String" []
+
+        list tipe =
+            Type "List" [ tipe ]
+
+        bind vars =
+            { noSubstitutions | bindTypeVariables = Dict.fromList vars }
+    in
+    describe "isA"
+        [ test "a is not Int" <|
+            \_ ->
+                a
+                    |> Type.isA int
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( False
+                        , bind []
+                        )
+        , test "Int is an a" <|
+            \_ ->
+                int
+                    |> Type.isA a
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( True
+                        , bind [ ( "a", int ) ]
+                        )
+        , test "List a is not a List Int" <|
+            \_ ->
+                list a
+                    |> Type.isA (list int)
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( False
+                        , bind []
+                        )
+        , test "List Int is a List a" <|
+            \_ ->
+                list int
+                    |> Type.isA (list a)
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( True
+                        , bind [ ( "a", int ) ]
+                        )
+        , test "a is a b" <|
+            \_ ->
+                a
+                    |> Type.isA b
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( True
+                        , bind [ ( "b", a ) ]
+                        )
+        , test "(a -> a) is not a (a -> Int)" <|
+            \_ ->
+                Lambda a a
+                    |> Type.isA (Lambda a int)
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( False
+                        , bind []
+                        )
+        , test "(a -> Int) is a (a -> a)" <|
+            \_ ->
+                Lambda a int
+                    |> Type.isA (Lambda a a)
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( True
+                        , bind [ ( "a", int ) ]
+                        )
+        , test "(a -> Int) is not a (b -> b)" <|
+            \_ ->
+                Lambda a int
+                    |> Type.isA (Lambda b b)
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( False
+                        , bind [ ( "b", a ) ]
+                        )
+        , test "(a -> Int) is a (b -> c)" <|
+            \_ ->
+                Lambda a int
+                    |> Type.isA (Lambda b c)
+                    |> State.run noSubstitutions
+                    |> Expect.equal
+                        ( True
+                        , bind
+                            [ ( "b", a )
+                            , ( "c", int )
+                            ]
                         )
         ]
 

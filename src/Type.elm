@@ -1,5 +1,6 @@
 module Type exposing
     ( Substitutions
+    , isA
     , noSubstitutions
     , normalize
     , substitute
@@ -96,6 +97,160 @@ normalize aliases tipe =
             Record
                 (List.map (Tuple.mapSecond (normalize aliases)) values)
                 maybeVar
+
+
+
+---- GENERALIZATION
+
+
+{-| Check if the second type is a (possibly more general) version of the first
+type. For example
+
+    <@ List String @>
+        |> isA <@ List a @>
+        |> State.run noSubstitutions
+
+will be evaluated to
+
+    ( True
+    , { noSubstitutions
+        | bindTypeVariables = Dict.singleton "a" <@ String @>
+      }
+    )
+
+But
+
+    <@ List a @>
+        |> isA <@ List String @>
+        |> State.finalValue noSubstitutions
+
+will be `False`.
+
+-}
+isA : Type -> Type -> State Substitutions Bool
+isA typeA typeB =
+    case ( typeA, typeB ) of
+        ( Var nameA, _ ) ->
+            bindTypeVariable nameA typeB
+
+        ( _, Var nameB ) ->
+            State.state False
+
+        ( Lambda fromA toA, Lambda fromB toB ) ->
+            isAMany [ fromA, toA ] [ fromB, toB ]
+
+        ( Tuple typesA, Tuple typesB ) ->
+            isAMany typesA typesB
+
+        ( Type nameA varsA, Type nameB varsB ) ->
+            if nameA == nameB then
+                isAMany varsA varsB
+
+            else
+                State.state False
+
+        ( Record fieldsA maybeVarA, Record fieldsB maybeVarB ) ->
+            case ( maybeVarA, maybeVarB ) of
+                ( Nothing, Nothing ) ->
+                    isAFields fieldsA fieldsB
+
+                ( Just nameA, Nothing ) ->
+                    let
+                        inFieldsA ( fieldNameB, _ ) =
+                            List.any (hasName fieldNameB) fieldsA
+
+                        hasName thisName ( otherName, _ ) =
+                            thisName == otherName
+
+                        bindRecordVariable substitutions =
+                            { substitutions
+                                | bindRecordVariables =
+                                    Dict.insert nameA
+                                        ( List.filter (not << inFieldsA) fieldsB, Nothing )
+                                        substitutions.bindRecordVariables
+                            }
+                    in
+                    State.modify bindRecordVariable
+                        |> State.andThen
+                            (\_ ->
+                                unifiableFields
+                                    fieldsA
+                                    (List.filter inFieldsA fieldsB)
+                            )
+
+                ( Nothing, Just nameB ) ->
+                    State.state False
+
+                ( Just nameA, Just nameB ) ->
+                    if nameA == nameB then
+                        isAFields fieldsA fieldsB
+
+                    else
+                        let
+                            bindRecordVariable substitutions =
+                                { substitutions
+                                    | bindRecordVariables =
+                                        Dict.insert nameB
+                                            ( [], Just nameA )
+                                            substitutions.bindRecordVariables
+                                }
+                        in
+                        State.modify bindRecordVariable
+                            |> State.andThen
+                                (\_ ->
+                                    isAFields fieldsA fieldsB
+                                )
+
+        _ ->
+            State.state False
+
+
+isAMany : List Type -> List Type -> State Substitutions Bool
+isAMany typesA typesB =
+    isAManyHelp
+        typesA
+        typesB
+
+
+isAManyHelp : List Type -> List Type -> State Substitutions Bool
+isAManyHelp typesA typesB =
+    case ( typesA, typesB ) of
+        ( firstA :: restA, firstB :: restB ) ->
+            State.map2 (&&)
+                (isA firstA firstB)
+                (isAManyHelp restA restB)
+
+        ( [], [] ) ->
+            State.state True
+
+        _ ->
+            State.state False
+
+
+isAFields : List ( String, Type ) -> List ( String, Type ) -> State Substitutions Bool
+isAFields fieldsA fieldsB =
+    isAFieldsHelp
+        (List.sortBy Tuple.first fieldsA)
+        (List.sortBy Tuple.first fieldsB)
+
+
+isAFieldsHelp : List ( String, Type ) -> List ( String, Type ) -> State Substitutions Bool
+isAFieldsHelp fieldsA fieldsB =
+    case ( fieldsA, fieldsB ) of
+        ( ( nameA, typeA ) :: restA, ( nameB, typeB ) :: restB ) ->
+            if nameA == nameB then
+                State.map2 (&&)
+                    (isA typeA typeB)
+                    (isAFieldsHelp restA restB)
+
+            else
+                State.state False
+
+        ( [], [] ) ->
+            State.state True
+
+        _ ->
+            State.state False
 
 
 

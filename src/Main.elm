@@ -100,8 +100,8 @@ init flags =
               , suggestTuples = True
               , suggestCases = True
               , suggestExactMatches = True
-              , suggestOnceEvaluated = False
-              , suggestTwiceEvaluated = False
+              , suggestOnceEvaluated = True
+              , suggestTwiceEvaluated = True
 
               -- PACKAGES
               , importPackagesHover = False
@@ -120,8 +120,8 @@ init flags =
               , suggestTuples = True
               , suggestCases = True
               , suggestExactMatches = True
-              , suggestOnceEvaluated = False
-              , suggestTwiceEvaluated = False
+              , suggestOnceEvaluated = True
+              , suggestTwiceEvaluated = True
 
               -- PACKAGES
               , importPackagesHover = False
@@ -847,12 +847,13 @@ suggestHelp model knownValues unions targetType =
                 List.filterMap identity
                     [ if model.suggestRecordUpdates then
                         Just <|
-                            Suggest.recordUpdate Suggest.value
+                            Suggest.recordUpdate <|
+                                Suggest.call []
 
                       else
                         Nothing
                     , if model.suggestExactMatches then
-                        Just Suggest.value
+                        Just (Suggest.call [])
 
                       else
                         Nothing
@@ -861,17 +862,17 @@ suggestHelp model knownValues unions targetType =
                             Suggest.tuple
                                 { first =
                                     Suggest.all
-                                        [ Suggest.recordUpdate Suggest.value
-                                        , Suggest.value
+                                        [ Suggest.recordUpdate (Suggest.call [])
+                                        , Suggest.call []
                                         , Suggest.call
-                                            [ Suggest.value ]
+                                            [ Suggest.argument ]
                                         ]
                                 , second =
                                     Suggest.all
-                                        [ Suggest.recordUpdate Suggest.value
-                                        , Suggest.value
+                                        [ Suggest.recordUpdate (Suggest.call [])
+                                        , Suggest.call []
                                         , Suggest.call
-                                            [ Suggest.value ]
+                                            [ Suggest.argument ]
                                         ]
                                 }
 
@@ -880,17 +881,17 @@ suggestHelp model knownValues unions targetType =
                     , if model.suggestCases then
                         Just <|
                             Suggest.cases
-                                { matched = Suggest.value
+                                { matched = Suggest.call []
                                 , branch =
                                     \newValues ->
                                         Suggest.all
                                             [ Suggest.recordUpdate <|
                                                 Suggest.all
-                                                    [ Suggest.value
+                                                    [ Suggest.call []
                                                         |> Suggest.addValues newValues
                                                         |> Suggest.takeValues 1
                                                     , Suggest.call
-                                                        [ Suggest.value
+                                                        [ Suggest.argument
                                                             |> Suggest.addValues newValues
                                                             |> Suggest.takeValues 1
                                                         ]
@@ -900,27 +901,27 @@ suggestHelp model knownValues unions targetType =
                                                     Suggest.all
                                                         [ Suggest.recordUpdate <|
                                                             Suggest.all
-                                                                [ Suggest.value
+                                                                [ Suggest.call []
                                                                     |> Suggest.addValues newValues
                                                                     |> Suggest.takeValues 1
                                                                 , Suggest.call
-                                                                    [ Suggest.value
+                                                                    [ Suggest.argument
                                                                         |> Suggest.addValues newValues
                                                                         |> Suggest.takeValues 1
                                                                     ]
                                                                 ]
-                                                        , Suggest.value
+                                                        , Suggest.call []
                                                         ]
                                                 , second =
                                                     Suggest.all
-                                                        [ Suggest.value
+                                                        [ Suggest.call []
                                                         , Suggest.call
-                                                            [ Suggest.value
+                                                            [ Suggest.argument
                                                                 |> Suggest.addValues newValues
                                                             ]
                                                         ]
                                                 }
-                                            , Suggest.value
+                                            , Suggest.call []
                                             ]
                                 }
 
@@ -928,15 +929,15 @@ suggestHelp model knownValues unions targetType =
                         Nothing
                     , if model.suggestOnceEvaluated then
                         Just <|
-                            Suggest.call [ Suggest.value ]
+                            Suggest.call [ Suggest.argument ]
 
                       else
                         Nothing
                     , if model.suggestTwiceEvaluated then
                         Just <|
                             Suggest.call
-                                [ Suggest.value
-                                , Suggest.value
+                                [ Suggest.argument
+                                , Suggest.argument
                                 ]
 
                       else

@@ -12,6 +12,7 @@ import Suggest
         , addUnions
         , addValues
         , all
+        , argument
         , call
         , cases
         , exprToString
@@ -19,7 +20,6 @@ import Suggest
         , recordUpdate
         , takeValues
         , tuple
-        , value
         )
 import Test exposing (..)
 
@@ -42,7 +42,7 @@ suite =
 valueTest : Test
 valueTest =
     testGenerator "value"
-        (value
+        (call []
             |> addValues values
         )
         [ ( int
@@ -66,7 +66,7 @@ callTest : Test
 callTest =
     describe "call"
         [ testGenerator "value"
-            (call [ value ]
+            (call [ argument ]
                 |> addValues values
             )
             [ ( int
@@ -78,10 +78,10 @@ callTest =
               , []
               )
             ]
-        , testGenerator "value value"
+        , testGenerator "argument argument"
             (call
-                [ value
-                , value
+                [ argument
+                , argument
                 ]
                 |> addValues values
             )
@@ -96,11 +96,14 @@ callTest =
             , ( a
               , []
               )
+            , ( list a
+              , []
+              )
             ]
         , testGenerator "value (call value)"
             (call
-                [ value
-                , call [ value ]
+                [ argument
+                , call [ argument ]
                 ]
                 |> addValues values
             )
@@ -115,9 +118,9 @@ callTest =
             ]
         , testGenerator "value value value"
             (call
-                [ value
-                , value
-                , value
+                [ argument
+                , argument
+                , argument
                 ]
                 |> addValues values
             )
@@ -136,8 +139,8 @@ tupleTest =
     describe "tuple"
         [ testGenerator "( value, value )"
             (tuple
-                { first = value
-                , second = value
+                { first = call []
+                , second = call []
                 }
                 |> addValues values
             )
@@ -156,8 +159,8 @@ tupleTest =
             ]
         , testGenerator "( value, call value )"
             (tuple
-                { first = value
-                , second = call [ value ]
+                { first = call []
+                , second = call [ argument ]
                 }
                 |> addValues values
             )
@@ -174,7 +177,7 @@ recordUpdateTest : Test
 recordUpdateTest =
     describe "recordUpdate"
         [ testGenerator "value"
-            (recordUpdate value
+            (recordUpdate (call [])
                 |> addValues values
             )
             [ ( record
@@ -194,10 +197,10 @@ casesTest =
     describe "cases"
         [ testGenerator "value branches"
             (cases
-                { matched = value
+                { matched = call []
                 , branch =
                     \newValues ->
-                        value
+                        call []
                             |> addValues newValues
                 }
                 |> addValues values
@@ -235,7 +238,7 @@ allTest =
     describe "all"
         [ describe "add and take"
             [ testGenerator "add one and take 1"
-                (value
+                (call []
                     |> addValues (Dict.singleton "int" int)
                     |> takeValues 1
                 )
@@ -244,7 +247,7 @@ allTest =
                   )
                 ]
             , testGenerator "add two and take 1"
-                (value
+                (call []
                     |> addValues (Dict.singleton "intA" int)
                     |> addValues (Dict.singleton "intB" int)
                     |> takeValues 1
@@ -254,7 +257,7 @@ allTest =
                   )
                 ]
             , testGenerator "add two, take 1 and add one"
-                (value
+                (call []
                     |> addValues (Dict.singleton "intA" int)
                     |> addValues (Dict.singleton "intB" int)
                     |> takeValues 1
@@ -270,7 +273,7 @@ allTest =
         , testGenerator "nested three times"
             (all
                 [ all
-                    [ value
+                    [ call []
                         |> addValues (Dict.singleton "intC" int)
                     ]
                     |> addValues (Dict.singleton "intB" int)
@@ -288,7 +291,7 @@ allTest =
             [ testGenerator "innermost level"
                 (all
                     [ all
-                        [ value
+                        [ call []
                             |> addValues (Dict.singleton "intC" int)
                             |> takeValues 1
                         ]
@@ -303,7 +306,7 @@ allTest =
             , testGenerator "middle level"
                 (all
                     [ all
-                        [ value
+                        [ call []
                             |> addValues (Dict.singleton "intC" int)
                         ]
                         |> addValues (Dict.singleton "intB" int)
@@ -320,7 +323,7 @@ allTest =
             , testGenerator "outermost level"
                 (all
                     [ all
-                        [ value
+                        [ call []
                             |> addValues (Dict.singleton "intC" int)
                         ]
                         |> addValues (Dict.singleton "intB" int)
@@ -337,7 +340,7 @@ allTest =
                 ]
             ]
         , testGenerator "three times addValues"
-            (value
+            (call []
                 |> addValues (Dict.singleton "intA" int)
                 |> addValues (Dict.singleton "intB" int)
                 |> addValues (Dict.singleton "intC" int)
@@ -350,7 +353,7 @@ allTest =
               )
             ]
         , testGenerator "three times addValues with takeValues 1"
-            (value
+            (call []
                 |> addValues (Dict.singleton "intA" int)
                 |> addValues (Dict.singleton "intB" int)
                 |> addValues (Dict.singleton "intC" int)
@@ -367,7 +370,7 @@ takeValuesTest : Test
 takeValuesTest =
     describe "takeValues"
         [ testGenerator "at 0"
-            (value
+            (call []
                 |> addValues values
                 |> takeValues 0
             )
@@ -376,7 +379,7 @@ takeValuesTest =
               )
             ]
         , testGenerator "at 1"
-            (value
+            (call []
                 |> addValues values
                 |> takeValues 1
             )
@@ -386,7 +389,7 @@ takeValuesTest =
             ]
         , testGenerator "call value at 0"
             (call
-                [ value
+                [ argument
                     |> addValues (Dict.singleton "newInt" int)
                     |> takeValues 1
                 ]
@@ -400,14 +403,14 @@ takeValuesTest =
             ]
         , testGenerator "cases"
             (cases
-                { matched = value
+                { matched = call []
                 , branch =
                     \newValues ->
                         all
-                            [ value
+                            [ call []
                                 |> addValues newValues
                                 |> takeValues 1
-                            , value
+                            , call []
                             ]
                 }
                 |> addValues values
@@ -436,11 +439,11 @@ takeValuesTest =
             ]
         , testGenerator "cases with recordUpdate"
             (cases
-                { matched = value
+                { matched = call []
                 , branch =
                     \newValues ->
                         recordUpdate
-                            (value
+                            (call []
                                 |> addValues newValues
                                 |> takeValues 1
                             )

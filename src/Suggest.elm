@@ -4,6 +4,7 @@ module Suggest exposing
     , addUnions
     , addValues
     , all
+    , argument
     , call
     , cases
     , default
@@ -13,7 +14,6 @@ module Suggest exposing
     , recordUpdate
     , takeValues
     , tuple
-    , value
     )
 
 import Dict exposing (Dict)
@@ -50,43 +50,43 @@ type Generator
 default : Generator
 default =
     all
-        [ recordUpdate value
-        , value
+        [ recordUpdate (call [])
+        , call []
         , tuple
             { first =
                 all
-                    [ recordUpdate value
-                    , value
-                    , call [ value ]
+                    [ recordUpdate (call [])
+                    , call []
+                    , call [ argument ]
                     ]
             , second =
                 all
-                    [ recordUpdate value
-                    , value
-                    , call [ value ]
+                    [ recordUpdate (call [])
+                    , call []
+                    , call [ argument ]
                     ]
             }
         , cases
-            { matched = value
+            { matched = call []
             , branch =
                 \newValues ->
                     all
                         [ recordUpdate <|
                             all
-                                [ value
+                                [ call []
                                     |> addValues newValues
                                     |> takeValues 1
                                 , call
-                                    [ value
+                                    [ argument
                                         |> addValues newValues
                                         |> takeValues 1
                                     ]
                                 ]
-                        , value
+                        , call []
                         ]
             }
-        , call [ value ]
-        , call [ value, value ]
+        , call [ argument ]
+        , call [ argument, argument ]
         ]
 
 
@@ -137,58 +137,10 @@ all generators =
                 generators
 
 
-value : Generator
-value =
-    Generator identity <|
-        \targetType unions values substitutions ->
-            let
-                ofTargetType name tipe collected =
-                    Type.unifiable tipe targetType
-                        |> State.run substitutions
-                        |> collect name collected
-
-                collect name collected ( isUnifiable, nextSubstitutions ) =
-                    let
-                        prevBoundVars =
-                            Dict.keys substitutions.bindTypeVariables
-                                |> Set.fromList
-
-                        nextBoundVars =
-                            Dict.keys nextSubstitutions.bindTypeVariables
-                                |> Set.fromList
-
-                        newBoundVars =
-                            Set.diff nextBoundVars prevBoundVars
-
-                        targetTypeVars =
-                            Type.typeVariables targetType
-
-                        newBoundVarsInTargetType =
-                            targetTypeVars
-                                |> Set.intersect newBoundVars
-                                |> Set.isEmpty
-                                |> not
-                    in
-                    if
-                        isUnifiable
-                            && (not newBoundVarsInTargetType
-                                    || Set.isEmpty targetTypeVars
-                                    || not (Set.isEmpty prevBoundVars)
-                               )
-                    then
-                        ( Call name [], nextSubstitutions ) :: collected
-
-                    else
-                        collected
-            in
-            values
-                |> List.concatMap (Dict.foldl ofTargetType [])
-
-
 call : List Generator -> Generator
 call generators =
     Generator identity <|
-        \targetType unions values substitutions ->
+        \targetType unions values _ ->
             let
                 ofTargetType name tipe collected =
                     case ofTargetTypeHelp [] generators tipe of
@@ -202,96 +154,106 @@ call generators =
                     case ( args, tipe ) of
                         ( [], _ ) ->
                             let
-                                ( isUnifiable, nextSubstitutions ) =
-                                    Type.unifiable tipe targetType
-                                        |> State.run substitutions
-
-                                prevBoundVars =
-                                    Dict.keys substitutions.bindTypeVariables
-                                        |> Set.fromList
-
-                                nextBoundVars =
-                                    Dict.keys nextSubstitutions.bindTypeVariables
-                                        |> Set.fromList
-
-                                newBoundVars =
-                                    Set.diff nextBoundVars prevBoundVars
-
-                                targetTypeVars =
-                                    Type.typeVariables targetType
-
-                                newBoundVarsInTargetType =
-                                    targetTypeVars
-                                        |> Set.intersect newBoundVars
-                                        |> Set.isEmpty
-                                        |> not
+                                ( isA, substitutions ) =
+                                    targetType
+                                        |> Type.isA tipe
+                                        |> State.run Type.noSubstitutions
                             in
-                            if
-                                isUnifiable
-                                    && (not newBoundVarsInTargetType
-                                            || Set.isEmpty targetTypeVars
-                                            || not (Set.isEmpty prevBoundVars)
-                                       )
-                            then
-                                Just ( froms, nextSubstitutions )
+                            if isA then
+                                Just ( froms, substitutions )
 
                             else
                                 Nothing
 
                         ( firstArg :: restArgs, Lambda from to ) ->
-                            ofTargetTypeHelp
-                                (( from, firstArg ) :: froms)
-                                restArgs
-                                to
+                            ofTargetTypeHelp (( from, firstArg ) :: froms) restArgs to
 
                         _ ->
                             Nothing
 
-                toCall ( name, froms, nextSubstitutions ) =
-                    suggestArguments [] froms nextSubstitutions
+                toCall ( name, froms, substitutions ) =
+                    suggestArguments froms substitutions
                         |> List.filterMap
                             (\( arguments, finalSubstitutions ) ->
                                 if List.length arguments == List.length generators then
                                     Just
                                         ( Call name (List.reverse arguments)
-                                        , finalSubstitutions
+                                        , Type.noSubstitutions
                                         )
 
                                 else
                                     Nothing
                             )
 
-                suggestArguments revArguments froms nextSubstitutions =
-                    case froms of
-                        [] ->
-                            [ ( [], Type.noSubstitutions ) ]
+                suggestArguments :
+                    List ( Type, Generator )
+                    -> Substitutions
+                    -> List ( List Expr, Substitutions )
+                suggestArguments froms substitutions =
+                    let
+                        boundTargetTypeVariables =
+                            Type.typeVariables targetType
+                                |> Set.intersect
+                                    (substitutions.bindTypeVariables
+                                        |> Dict.keys
+                                        |> Set.fromList
+                                    )
+                                |> Set.isEmpty
+                                |> not
+                    in
+                    if boundTargetTypeVariables then
+                        []
 
-                        ( firstFrom, Generator transform fromGenerator ) :: restFroms ->
-                            List.concatMap
-                                (\( firstArgumentExpr, nextNextSubstitutions ) ->
-                                    List.map
-                                        (\( restArgumentExprs, finalSubstitutions ) ->
-                                            ( firstArgumentExpr :: restArgumentExprs
-                                            , finalSubstitutions
-                                            )
-                                        )
-                                        (suggestArguments
-                                            (firstArgumentExpr :: revArguments)
-                                            restFroms
-                                            nextNextSubstitutions
-                                        )
-                                )
-                                (fromGenerator firstFrom
-                                    unions
-                                    (transform values)
-                                    nextSubstitutions
-                                )
+                    else
+                        case froms of
+                            [] ->
+                                [ ( [], substitutions ) ]
+
+                            ( firstFrom, Generator transform fromGenerator ) :: restFroms ->
+                                List.concatMap
+                                    (\( firstArgumentExpr, nextSubstitutions ) ->
+                                        suggestArguments restFroms nextSubstitutions
+                                            |> List.map
+                                                (\( restArgumentExprs, finalSubstitutions ) ->
+                                                    ( firstArgumentExpr :: restArgumentExprs
+                                                    , finalSubstitutions
+                                                    )
+                                                )
+                                    )
+                                    (fromGenerator
+                                        (Type.substitute substitutions firstFrom)
+                                        unions
+                                        (transform values)
+                                        substitutions
+                                    )
             in
             values
                 |> List.concatMap
                     (Dict.foldl ofTargetType []
                         >> List.concatMap toCall
                     )
+
+
+argument : Generator
+argument =
+    Generator identity <|
+        \targetType unions values substitutions ->
+            let
+                ofTargetType name tipe collected =
+                    tipe
+                        |> Type.isA targetType
+                        |> State.run substitutions
+                        |> collect name collected
+
+                collect name collected ( isA, nextSubstitutions ) =
+                    if isA then
+                        ( Call name [], nextSubstitutions ) :: collected
+
+                    else
+                        collected
+            in
+            values
+                |> List.concatMap (Dict.foldl ofTargetType [])
 
 
 tuple : { first : Generator, second : Generator } -> Generator
