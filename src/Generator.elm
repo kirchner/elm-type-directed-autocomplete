@@ -20,6 +20,24 @@ module Generator exposing
 
 -}
 
+{-
+
+   Copyright 2019 Fabian Kirchner
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+-}
+
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
@@ -29,19 +47,27 @@ import String.Extra as String
 import Type exposing (Substitutions)
 
 
-{-| -}
-type Expr
-    = Call String (List Expr)
-    | UpdateRecord String (List ( String, Expr ))
-    | CreateTuple Expr Expr
-    | Case Expr (List ( String, Expr ))
+{-| A `Generator` helps generate Elm expressions which satisfy some
+given type. For example, if you are looking for an Elm expression of the type
+`List String -> Int`, you could do the following:
 
+    exprs =
+        value
+            |> addValues values
+            |> for (Lambda (Type "List" [ Var "a" ]) (Type "Int" []))
+            |> exprToText
 
+    values =
+        Dict.fromList
+            [ ( "List.count"
+              , Lambda (Type "List" [ Var "a" ]) (Type "Int" [])
+              )
+            ]
 
----- GENERATOR
+Then `exprs == [ "List.count" ]`. There are generators for values, function
+calls, case expressions and tuples. You can also combine these generators.
 
-
-{-| -}
+-}
 type Generator
     = Generator
         (List (Dict String Type) -> List (Dict String Type))
@@ -66,7 +92,19 @@ type alias GenerateConfig =
     }
 
 
-{-| -}
+{-| Use `for` to generate `Expr`s from a `Generator`. You can turn these into
+Elm code using `exprToString` or `exprToText`.
+-}
+type Expr
+    = Call String (List Expr)
+    | UpdateRecord String (List ( String, Expr ))
+    | CreateTuple Expr Expr
+    | Case Expr (List ( String, Expr ))
+
+
+{-| An example `Generator` which is a combination of all the ones which are
+available. Take a look at its source code, to get an idea of what is possible.
+-}
 default : Generator
 default =
     all
@@ -110,7 +148,30 @@ default =
         ]
 
 
-{-| -}
+{-| If your `Generator` should potentially output case expression, you have to
+add known custom types to it. For example
+
+    generator =
+        cases
+            { matched = value
+            , branch =
+                \newValues ->
+                    value
+                        |> addValues newValues
+            }
+            |> addUnions
+                [ { name = "Msg"
+                  , comment = ""
+                  , args = []
+                  , tags =
+                        [ ( "Tick", [ Type "Posix" [] ] )
+                        , ( "NameChanged", [ Type "String" [] ] )
+                        , ( "ValueChanged", [ Type "Int" [] ] )
+                        ]
+                  }
+                ]
+
+-}
 addUnions : List Union -> Generator -> Generator
 addUnions newUnions (Generator transformValues generator) =
     Generator transformValues <|
@@ -118,19 +179,24 @@ addUnions newUnions (Generator transformValues generator) =
             generator { config | unions = newUnions ++ config.unions }
 
 
-{-| -}
+{-| Add known values. The ones which are added last, will
+be searched first. Also, `Generator`s like `all` or `cases` propagate their
+known values to their children.
+-}
 addValues : Dict String Type -> Generator -> Generator
 addValues newValues (Generator transformValues generator) =
     Generator ((::) newValues << transformValues) generator
 
 
-{-| -}
+{-| Drop known values which are further away then the provided value.
+-}
 takeValues : Int -> Generator -> Generator
 takeValues distance (Generator transformValues generator) =
     Generator (List.take distance << transformValues) generator
 
 
-{-| -}
+{-| Generate all possible expressions which are of a certain type.
+-}
 for : Type -> Generator -> List Expr
 for targetType (Generator transformValues generator) =
     List.map Tuple.first <|
@@ -152,7 +218,9 @@ value =
     call []
 
 
-{-| -}
+{-| Generate a function call, where the arguments are generated using the
+provided `Generators`.
+-}
 call : List Generator -> Generator
 call argumentGenerators =
     Generator identity <|
@@ -270,7 +338,8 @@ call argumentGenerators =
             List.foldr collectScope [] config.values
 
 
-{-| -}
+{-| Use all of the given `Generators`.
+-}
 all : List Generator -> Generator
 all generators =
     Generator identity <|
@@ -285,7 +354,8 @@ all generators =
                 generators
 
 
-{-| -}
+{-| Generate a tuple.
+-}
 tuple : { first : Generator, second : Generator } -> Generator
 tuple generator =
     Generator identity <|
@@ -526,11 +596,15 @@ instantiateHelp tipe =
 ---- PRINT
 
 
+{-| Turn an `Expr` into Elm code. This will use a lot of line breaks.
+-}
 exprToText : Expr -> String
 exprToText expr =
     exprToStringHelp True False expr
 
 
+{-| Turn an `Expr` into Elm code. This will use very few line breaks.
+-}
 exprToString : Expr -> String
 exprToString expr =
     exprToStringHelp False False expr
