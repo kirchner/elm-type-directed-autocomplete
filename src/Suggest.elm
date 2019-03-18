@@ -234,19 +234,19 @@ call argumentGenerators =
                                 targetTypeVarsBound =
                                     config.targetTypeVars
                                         |> Set.toList
-                                        |> List.any varBound
+                                        |> List.any (varBound newSubstitutions.bindTypeVariables)
 
-                                varBound varName =
-                                    case
-                                        Dict.get varName newSubstitutions.bindTypeVariables
-                                    of
+                                varBound uncheckedBoundTypeVars varName =
+                                    case Dict.get varName uncheckedBoundTypeVars of
                                         Nothing ->
                                             False
 
                                         Just varTipe ->
                                             case varTipe of
                                                 Var newVarName ->
-                                                    varBound newVarName
+                                                    varBound
+                                                        (Dict.remove varName uncheckedBoundTypeVars)
+                                                        newVarName
 
                                                 _ ->
                                                     True
