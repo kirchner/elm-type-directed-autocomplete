@@ -12,7 +12,6 @@ import Suggest
         , addUnions
         , addValues
         , all
-        , argument
         , call
         , cases
         , exprToString
@@ -20,6 +19,7 @@ import Suggest
         , recordUpdate
         , takeValues
         , tuple
+        , value
         )
 import Test exposing (..)
 
@@ -43,7 +43,8 @@ valueTest : Test
 valueTest =
     testGenerator "value"
         (call []
-            |> addValues values
+            |> addValues
+                (Dict.insert "Basics.identity" (Lambda a a) values)
         )
         [ ( int
           , [ "int" ]
@@ -66,8 +67,9 @@ callTest : Test
 callTest =
     describe "call"
         [ testGenerator "value"
-            (call [ argument ]
-                |> addValues values
+            (call [ value ]
+                |> addValues
+                    (Dict.insert "Basics.identity" (Lambda a a) values)
             )
             [ ( int
               , [ "Basics.negate int"
@@ -78,10 +80,10 @@ callTest =
               , []
               )
             ]
-        , testGenerator "argument argument"
+        , testGenerator "value value"
             (call
-                [ argument
-                , argument
+                [ value
+                , value
                 ]
                 |> addValues values
             )
@@ -102,10 +104,11 @@ callTest =
             ]
         , testGenerator "value (call value)"
             (call
-                [ argument
-                , call [ argument ]
+                [ value
+                , call [ value ]
                 ]
-                |> addValues values
+                |> addValues
+                    (Dict.insert "Basics.identity" (Lambda a a) values)
             )
             [ ( int
               , [ "Basics.modBy int (Basics.negate int)"
@@ -118,9 +121,9 @@ callTest =
             ]
         , testGenerator "value value value"
             (call
-                [ argument
-                , argument
-                , argument
+                [ value
+                , value
+                , value
                 ]
                 |> addValues values
             )
@@ -130,6 +133,42 @@ callTest =
             , ( a
               , []
               )
+            ]
+        , describe "call [ call [ value ] ]"
+            [ testGenerator "outer function more general"
+                (call
+                    [ call
+                        [ call [] ]
+                    ]
+                    |> addValues
+                        (Dict.fromList
+                            [ ( "f", Lambda (set a) (list a) )
+                            , ( "g", Lambda string (set string) )
+                            , ( "h", a )
+                            ]
+                        )
+                )
+                [ ( list string
+                  , [ "f (g h)" ]
+                  )
+                ]
+            , testGenerator "outer function more special"
+                (call
+                    [ call
+                        [ call [] ]
+                    ]
+                    |> addValues
+                        (Dict.fromList
+                            [ ( "f", Lambda (set string) (list string) )
+                            , ( "g", Lambda a (set a) )
+                            , ( "h", string )
+                            ]
+                        )
+                )
+                [ ( list string
+                  , [ "f (g h)" ]
+                  )
+                ]
             ]
         ]
 
@@ -160,9 +199,10 @@ tupleTest =
         , testGenerator "( value, call value )"
             (tuple
                 { first = call []
-                , second = call [ argument ]
+                , second = call [ value ]
                 }
-                |> addValues values
+                |> addValues
+                    (Dict.insert "Basics.identity" (Lambda a a) values)
             )
             [ ( Tuple [ int, int ]
               , [ "( int, Basics.negate int )"
@@ -389,16 +429,14 @@ takeValuesTest =
             ]
         , testGenerator "call value at 0"
             (call
-                [ argument
+                [ value
                     |> addValues (Dict.singleton "newInt" int)
                     |> takeValues 1
                 ]
                 |> addValues values
             )
             [ ( int
-              , [ "Basics.negate newInt"
-                , "Basics.identity newInt"
-                ]
+              , [ "Basics.negate newInt" ]
               )
             ]
         , testGenerator "cases"
@@ -442,19 +480,38 @@ takeValuesTest =
                 { matched = call []
                 , branch =
                     \newValues ->
-                        recordUpdate
-                            (call []
-                                |> addValues newValues
-                                |> takeValues 1
-                            )
+                        all
+                            [ recordUpdate
+                                (call []
+                                    |> addValues newValues
+                                    |> takeValues 1
+                                )
+                            , call []
+                            ]
                 }
-                |> addValues values
+                |> addValues (Dict.remove "int" values)
             )
             [ ( record
-                    [ ( "int", int )
-                    , ( "string", string )
-                    ]
-              , []
+                    [ ( "int", int ) ]
+              , [ """case msg of
+    NewInt newInt ->
+        { intRecord | int = newInt }
+
+    NewFloat newFloat ->
+        intRecord
+
+    NewString newString ->
+        intRecord"""
+                , """case msg of
+    NewInt newInt ->
+        intRecord
+
+    NewFloat newFloat ->
+        intRecord
+
+    NewString newString ->
+        intRecord"""
+                ]
               )
             ]
         ]
@@ -490,6 +547,11 @@ list tipe =
     Type "List" [ tipe ]
 
 
+set : Type -> Type
+set tipe =
+    Type "Set" [ tipe ]
+
+
 record : List ( String, Type ) -> Type
 record fields =
     Record fields Nothing
@@ -514,12 +576,15 @@ values =
                 , ( "string", string )
                 ]
           )
+        , ( "intRecord"
+          , record
+                [ ( "int", int ) ]
+          )
         , ( "msg", msg )
 
         -- FUNCTIONS WITH ONE ARGUMENT
         , ( "Basics.negate", Lambda int int )
         , ( "String.reverse", Lambda string string )
-        , ( "Basics.identity", Lambda a a )
         , ( "String.fromInt", Lambda int string )
 
         -- FUNCTIONS WITH TWO ARGUMENTS
