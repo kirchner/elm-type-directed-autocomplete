@@ -1,4 +1,4 @@
-module Suggest exposing
+module Generator exposing
     ( Generator, Expr
     , addUnions, addValues, takeValues, default, for
     , value, call

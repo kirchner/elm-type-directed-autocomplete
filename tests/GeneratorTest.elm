@@ -1,12 +1,11 @@
-module SuggestTest exposing (suite)
+module GeneratorTest exposing (suite)
 
 import Dict exposing (Dict)
 import Elm.Docs exposing (Union)
 import Elm.Type exposing (Type(..))
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
-import Set
-import Suggest
+import Generator
     exposing
         ( Generator
         , addUnions
@@ -21,6 +20,7 @@ import Suggest
         , tuple
         , value
         )
+import Set
 import Test exposing (..)
 
 

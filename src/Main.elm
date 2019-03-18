@@ -30,6 +30,21 @@ import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
 import File exposing (File)
 import File.Select
+import Generator
+    exposing
+        ( Expr
+        , addUnions
+        , addValues
+        , all
+        , call
+        , cases
+        , exprToText
+        , for
+        , recordUpdate
+        , takeValues
+        , tuple
+        , value
+        )
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -37,7 +52,6 @@ import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
-import Suggest exposing (Expr)
 import Task
 import Type
 
@@ -560,7 +574,7 @@ viewExpr expr =
         , Element.spacing 8
         ]
         (List.map Element.text <|
-            String.split "\n" (Suggest.exprToText expr)
+            String.split "\n" (exprToText expr)
         )
 
 
@@ -843,36 +857,35 @@ suggestHelp model knownValues unions targetType =
                 ]
 
         generator =
-            Suggest.all <|
+            all <|
                 List.filterMap identity
                     [ if model.suggestRecordUpdates then
                         Just <|
-                            Suggest.recordUpdate <|
-                                Suggest.call []
+                            recordUpdate value
 
                       else
                         Nothing
                     , if model.suggestExactMatches then
-                        Just (Suggest.call [])
+                        Just value
 
                       else
                         Nothing
                     , if model.suggestTuples then
                         Just <|
-                            Suggest.tuple
+                            tuple
                                 { first =
-                                    Suggest.all
-                                        [ Suggest.recordUpdate (Suggest.call [])
-                                        , Suggest.call []
-                                        , Suggest.call
-                                            [ Suggest.value ]
+                                    all
+                                        [ recordUpdate value
+                                        , call []
+                                        , call
+                                            [ value ]
                                         ]
                                 , second =
-                                    Suggest.all
-                                        [ Suggest.recordUpdate (Suggest.call [])
-                                        , Suggest.call []
-                                        , Suggest.call
-                                            [ Suggest.value ]
+                                    all
+                                        [ recordUpdate value
+                                        , call []
+                                        , call
+                                            [ value ]
                                         ]
                                 }
 
@@ -880,74 +893,69 @@ suggestHelp model knownValues unions targetType =
                         Nothing
                     , if model.suggestCases then
                         Just <|
-                            Suggest.cases
-                                { matched = Suggest.call []
+                            cases
+                                { matched = call []
                                 , branch =
                                     \newValues ->
-                                        Suggest.all
-                                            [ Suggest.recordUpdate <|
-                                                Suggest.all
-                                                    [ Suggest.call []
-                                                        |> Suggest.addValues newValues
-                                                        |> Suggest.takeValues 1
-                                                    , Suggest.call
-                                                        [ Suggest.value
-                                                            |> Suggest.addValues newValues
-                                                            |> Suggest.takeValues 1
+                                        all
+                                            [ recordUpdate <|
+                                                all
+                                                    [ value
+                                                        |> addValues newValues
+                                                        |> takeValues 1
+                                                    , call
+                                                        [ value
+                                                            |> addValues newValues
+                                                            |> takeValues 1
                                                         ]
                                                     ]
-                                            , Suggest.tuple
+                                            , tuple
                                                 { first =
-                                                    Suggest.all
-                                                        [ Suggest.recordUpdate <|
-                                                            Suggest.all
-                                                                [ Suggest.call []
-                                                                    |> Suggest.addValues newValues
-                                                                    |> Suggest.takeValues 1
-                                                                , Suggest.call
-                                                                    [ Suggest.value
-                                                                        |> Suggest.addValues newValues
-                                                                        |> Suggest.takeValues 1
+                                                    all
+                                                        [ recordUpdate <|
+                                                            all
+                                                                [ value
+                                                                    |> addValues newValues
+                                                                    |> takeValues 1
+                                                                , call
+                                                                    [ value
+                                                                        |> addValues newValues
+                                                                        |> takeValues 1
                                                                     ]
                                                                 ]
-                                                        , Suggest.call []
+                                                        , call []
                                                         ]
                                                 , second =
-                                                    Suggest.all
-                                                        [ Suggest.call []
-                                                        , Suggest.call
-                                                            [ Suggest.value
-                                                                |> Suggest.addValues newValues
+                                                    all
+                                                        [ call []
+                                                        , call
+                                                            [ value
+                                                                |> addValues newValues
                                                             ]
                                                         ]
                                                 }
-                                            , Suggest.call []
+                                            , call []
                                             ]
                                 }
 
                       else
                         Nothing
                     , if model.suggestOnceEvaluated then
-                        Just <|
-                            Suggest.call [ Suggest.value ]
+                        Just (call [ value ])
 
                       else
                         Nothing
                     , if model.suggestTwiceEvaluated then
-                        Just <|
-                            Suggest.call
-                                [ Suggest.value
-                                , Suggest.value
-                                ]
+                        Just (call [ value, value ])
 
                       else
                         Nothing
                     ]
     in
     generator
-        |> Suggest.addUnions unions
-        |> Suggest.addValues knownValues
-        |> Suggest.for targetType
+        |> addUnions unions
+        |> addValues knownValues
+        |> for targetType
 
 
 removeScope : Type -> Type
