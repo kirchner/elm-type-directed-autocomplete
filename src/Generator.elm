@@ -108,30 +108,30 @@ available. Take a look at its source code, to get an idea of what is possible.
 default : Generator
 default =
     all
-        [ recordUpdate (call [])
-        , call []
+        [ recordUpdate value
+        , value
         , tuple
             { first =
                 all
-                    [ recordUpdate (call [])
-                    , call []
+                    [ recordUpdate value
+                    , value
                     , call [ value ]
                     ]
             , second =
                 all
-                    [ recordUpdate (call [])
-                    , call []
+                    [ recordUpdate value
+                    , value
                     , call [ value ]
                     ]
             }
         , cases
-            { matched = call []
+            { matched = value
             , branch =
                 \newValues ->
                     all
                         [ recordUpdate <|
                             all
-                                [ call []
+                                [ value
                                     |> addValues newValues
                                     |> takeValues 1
                                 , call
@@ -140,7 +140,7 @@ default =
                                         |> takeValues 1
                                     ]
                                 ]
-                        , call []
+                        , value
                         ]
             }
         , call [ value ]
