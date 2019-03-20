@@ -33,6 +33,7 @@ import File.Select
 import Generator
     exposing
         ( Expr
+        , Generator
         , addUnions
         , addValues
         , all
@@ -784,6 +785,12 @@ suggest model targetType =
                                 Nothing
                     )
                 |> Dict.fromList
+                |> Dict.map
+                    (\_ tipe ->
+                        tipe
+                            |> removeScope
+                            |> Type.normalize localAliases
+                    )
 
         localAliases =
             declarations
@@ -819,11 +826,10 @@ suggest model targetType =
                                 Nothing
                     )
 
-        knownValues =
+        moduleValues =
             model.modules
                 |> List.map valuesFromModule
                 |> List.foldl Dict.union Dict.empty
-                |> Dict.union localValues
                 |> Dict.filter
                     (\name _ ->
                         not
@@ -844,122 +850,110 @@ suggest model targetType =
                     )
     in
     List.concat
-        [ suggestHelp model
-            knownValues
-            localUnions
-            (Type.normalize localAliases targetType)
+        [ generator model
+            |> addUnions localUnions
+            |> addValues moduleValues
+            |> addValues localValues
+            |> for (Type.normalize localAliases targetType)
         ]
 
 
-suggestHelp : Model -> Dict String Type -> List Union -> Type -> List Expr
-suggestHelp model knownValues unions targetType =
-    let
-        usefulConstants =
-            Dict.fromList
-                [ ( "0", Type "Int" [] )
-                , ( "\"\"", Type "String" [] )
-                ]
+generator : Model -> Generator
+generator model =
+    all <|
+        List.filterMap identity
+            [ if model.suggestRecordUpdates then
+                Just <|
+                    recordUpdate value
 
-        generator =
-            all <|
-                List.filterMap identity
-                    [ if model.suggestRecordUpdates then
-                        Just <|
-                            recordUpdate value
+              else
+                Nothing
+            , if model.suggestExactMatches then
+                Just value
 
-                      else
-                        Nothing
-                    , if model.suggestExactMatches then
-                        Just value
+              else
+                Nothing
+            , if model.suggestTuples then
+                Just <|
+                    tuple
+                        { first =
+                            all
+                                [ recordUpdate value
+                                , call []
+                                , call
+                                    [ value ]
+                                ]
+                        , second =
+                            all
+                                [ recordUpdate value
+                                , call []
+                                , call
+                                    [ value ]
+                                ]
+                        }
 
-                      else
-                        Nothing
-                    , if model.suggestTuples then
-                        Just <|
-                            tuple
-                                { first =
-                                    all
-                                        [ recordUpdate value
-                                        , call []
-                                        , call
-                                            [ value ]
-                                        ]
-                                , second =
-                                    all
-                                        [ recordUpdate value
-                                        , call []
-                                        , call
-                                            [ value ]
-                                        ]
-                                }
-
-                      else
-                        Nothing
-                    , if model.suggestCases then
-                        Just <|
-                            cases
-                                { matched = call []
-                                , branch =
-                                    \newValues ->
+              else
+                Nothing
+            , if model.suggestCases then
+                Just <|
+                    cases
+                        { matched = call []
+                        , branch =
+                            \newValues ->
+                                all
+                                    [ recordUpdate <|
                                         all
-                                            [ recordUpdate <|
-                                                all
-                                                    [ value
-                                                        |> addValues newValues
-                                                        |> takeValues 1
-                                                    , call
+                                            [ value
+                                                |> addValues newValues
+                                                |> takeValues 1
+                                            , call
+                                                [ value
+                                                    |> addValues newValues
+                                                    |> takeValues 1
+                                                ]
+                                            ]
+                                    , tuple
+                                        { first =
+                                            all
+                                                [ recordUpdate <|
+                                                    all
                                                         [ value
                                                             |> addValues newValues
                                                             |> takeValues 1
-                                                        ]
-                                                    ]
-                                            , tuple
-                                                { first =
-                                                    all
-                                                        [ recordUpdate <|
-                                                            all
-                                                                [ value
-                                                                    |> addValues newValues
-                                                                    |> takeValues 1
-                                                                , call
-                                                                    [ value
-                                                                        |> addValues newValues
-                                                                        |> takeValues 1
-                                                                    ]
-                                                                ]
-                                                        , call []
-                                                        ]
-                                                , second =
-                                                    all
-                                                        [ call []
                                                         , call
                                                             [ value
                                                                 |> addValues newValues
+                                                                |> takeValues 1
                                                             ]
                                                         ]
-                                                }
-                                            , call []
-                                            ]
-                                }
+                                                , call []
+                                                ]
+                                        , second =
+                                            all
+                                                [ call []
+                                                , call
+                                                    [ value
+                                                        |> addValues newValues
+                                                    ]
+                                                ]
+                                        }
+                                    , call []
+                                    ]
+                        }
 
-                      else
-                        Nothing
-                    , if model.suggestOnceEvaluated then
-                        Just (call [ value ])
+              else
+                Nothing
+            , if model.suggestOnceEvaluated then
+                Just (call [ value ])
 
-                      else
-                        Nothing
-                    , if model.suggestTwiceEvaluated then
-                        Just (call [ value, value ])
+              else
+                Nothing
+            , if model.suggestTwiceEvaluated then
+                Just (call [ value, value ])
 
-                      else
-                        Nothing
-                    ]
-    in
-    generator
-        |> addUnions unions
-        |> addValues knownValues
-        |> for targetType
+              else
+                Nothing
+            ]
 
 
 removeScope : Type -> Type
