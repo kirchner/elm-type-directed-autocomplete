@@ -3,7 +3,7 @@ module Generator exposing
     , addUnions, addValues, takeValues, default, for
     , value, call
     , tuple, cases
-    , recordUpdate, field
+    , recordUpdate, field, accessor
     , all
     , exprToString, exprToText
     )
@@ -15,7 +15,7 @@ module Generator exposing
 
 @docs value, call
 @docs tuple, cases
-@docs recordUpdate, field
+@docs recordUpdate, field, accessor
 @docs all
 
 @docs exprToString, exprToText
@@ -292,7 +292,7 @@ call argumentGenerators =
                                             Just ( arguments, substitutions )
 
                                         TypeBIsMoreGeneral ->
-                                            if targetTypeVarsBoundBy substitutions then
+                                            if targetTypeVarsBound substitutions then
                                                 Nothing
 
                                             else
@@ -301,25 +301,10 @@ call argumentGenerators =
                         _ ->
                             Nothing
 
-                targetTypeVarsBoundBy substitutions =
-                    config.targetTypeVars
-                        |> Set.toList
-                        |> List.any (varBoundBy substitutions.bindTypeVariables)
-
-                varBoundBy uncheckedBoundTypeVars varName =
-                    case Dict.get varName uncheckedBoundTypeVars of
-                        Nothing ->
-                            False
-
-                        Just varTipe ->
-                            case varTipe of
-                                Var newVarName ->
-                                    varBoundBy
-                                        (Dict.remove varName uncheckedBoundTypeVars)
-                                        newVarName
-
-                                _ ->
-                                    True
+                targetTypeVarsBound substitutions =
+                    targetTypeVarsBoundBy
+                        config.targetTypeVars
+                        substitutions.bindTypeVariables
 
                 collectArgumentExprs currentState substitutions arguments =
                     let
@@ -501,33 +486,73 @@ field =
                                     Just ( Call name [], ( substitutions, state ) )
 
                                 TypeBIsMoreGeneral ->
-                                    if targetTypeVarsBoundBy substitutions then
+                                    if targetTypeVarsBound substitutions then
                                         Nothing
 
                                     else
                                         Just ( Call name [], ( substitutions, state ) )
 
-                targetTypeVarsBoundBy substitutions =
-                    config.targetTypeVars
-                        |> Set.toList
-                        |> List.any (varBoundBy substitutions.bindTypeVariables)
-
-                varBoundBy uncheckedBoundTypeVars varName =
-                    case Dict.get varName uncheckedBoundTypeVars of
-                        Nothing ->
-                            False
-
-                        Just varTipe ->
-                            case varTipe of
-                                Var newVarName ->
-                                    varBoundBy
-                                        (Dict.remove varName uncheckedBoundTypeVars)
-                                        newVarName
-
-                                _ ->
-                                    True
+                targetTypeVarsBound substitutions =
+                    targetTypeVarsBoundBy
+                        config.targetTypeVars
+                        substitutions.bindTypeVariables
             in
             List.concatMap (Dict.foldl fieldsOfTargetType []) config.values
+
+
+{-| -}
+accessor : Generator
+accessor =
+    Generator identity <|
+        \config state targetType ->
+            case targetType of
+                Lambda (Record fields var) to ->
+                    let
+                        ofToType ( fieldName, tipe ) =
+                            case
+                                Type.unifiability
+                                    { typeA = tipe
+                                    , typeB = to
+                                    }
+                            of
+                                NotUnifiable ->
+                                    Nothing
+
+                                Unifiable comparability substitutions ->
+                                    let
+                                        name =
+                                            "." ++ fieldName
+                                    in
+                                    case comparability of
+                                        TypesAreEqual ->
+                                            Just ( Call name [], ( substitutions, state ) )
+
+                                        NotComparable ->
+                                            if config.isRoot then
+                                                Nothing
+
+                                            else
+                                                Just ( Call name [], ( substitutions, state ) )
+
+                                        TypeAIsMoreGeneral ->
+                                            Just ( Call name [], ( substitutions, state ) )
+
+                                        TypeBIsMoreGeneral ->
+                                            if targetTypeVarsBound substitutions then
+                                                Nothing
+
+                                            else
+                                                Just ( Call name [], ( substitutions, state ) )
+
+                        targetTypeVarsBound substitutions =
+                            targetTypeVarsBoundBy
+                                config.targetTypeVars
+                                substitutions.bindTypeVariables
+                    in
+                    List.filterMap ofToType fields
+
+                _ ->
+                    []
 
 
 {-| -}
@@ -650,6 +675,30 @@ cases generator =
 
 
 ------ HELPER
+
+
+targetTypeVarsBoundBy : Set String -> Dict String Type -> Bool
+targetTypeVarsBoundBy targetTypeVars bindTypeVariables =
+    targetTypeVars
+        |> Set.toList
+        |> List.any (varBoundBy bindTypeVariables)
+
+
+varBoundBy : Dict String Type -> String -> Bool
+varBoundBy uncheckedBoundTypeVars varName =
+    case Dict.get varName uncheckedBoundTypeVars of
+        Nothing ->
+            False
+
+        Just varTipe ->
+            case varTipe of
+                Var newVarName ->
+                    varBoundBy
+                        (Dict.remove varName uncheckedBoundTypeVars)
+                        newVarName
+
+                _ ->
+                    True
 
 
 instantiate : Int -> Type -> ( Type, Int )

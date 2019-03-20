@@ -34,6 +34,7 @@ import Generator
     exposing
         ( Expr
         , Generator
+        , accessor
         , addUnions
         , addValues
         , all
@@ -955,18 +956,21 @@ generator model =
                         [ all
                             [ field
                             , value
+                            , accessor
                             ]
                         ]
                     )
 
               else
                 Nothing
+            , Just accessor
             , if model.suggestTwiceEvaluated then
                 Just
                     (call
                         [ all
                             [ value
                             , field
+                            , accessor
                             ]
                         , all
                             [ field
