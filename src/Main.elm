@@ -158,13 +158,17 @@ init flags =
 defaultCode : String
 defaultCode =
     """type alias Model =
-  { count : Int }
-
-initialModel : Model
+  { time : Posix
+  , name : String
+  }
 
 type Msg
-  = Increment
-  | Decrement
+  = Tick Posix
+  | NameChanged String
+
+model : Model
+
+msg : Msg
 """
 
 
