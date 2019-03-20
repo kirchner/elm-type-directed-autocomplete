@@ -959,7 +959,6 @@ generator model =
                         [ all
                             [ field
                             , value
-                                |> takeValues 1
                             , accessor
                             , call
                                 [ value
@@ -977,7 +976,6 @@ generator model =
                     (call
                         [ all
                             [ value
-                                |> takeValues 1
                             , field
                             , accessor
                             , call
