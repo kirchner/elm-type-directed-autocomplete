@@ -2,7 +2,8 @@ module Generator exposing
     ( Generator, Expr
     , addUnions, addValues, takeValues, default, for
     , value, call
-    , tuple, recordUpdate, cases
+    , tuple, cases
+    , recordUpdate, field
     , all
     , exprToString, exprToText
     )
@@ -13,7 +14,8 @@ module Generator exposing
 @docs addUnions, addValues, takeValues, default, for
 
 @docs value, call
-@docs tuple, recordUpdate, cases
+@docs tuple, cases
+@docs recordUpdate, field
 @docs all
 
 @docs exprToString, exprToText
@@ -44,7 +46,7 @@ import Elm.Type exposing (Type(..))
 import Set exposing (Set)
 import State exposing (State)
 import String.Extra as String
-import Type exposing (Substitutions)
+import Type exposing (Comparability(..), Substitutions, Unifiability(..))
 
 
 {-| A `Generator` helps generate Elm expressions which satisfy some
@@ -271,25 +273,25 @@ call argumentGenerators =
                                     , typeB = targetType
                                     }
                             of
-                                Type.NotUnifiable ->
+                                NotUnifiable ->
                                     Nothing
 
-                                Type.Unifiable comparability substitutions ->
+                                Unifiable comparability substitutions ->
                                     case comparability of
-                                        Type.TypesAreEqual ->
+                                        TypesAreEqual ->
                                             Just ( arguments, substitutions )
 
-                                        Type.NotComparable ->
+                                        NotComparable ->
                                             if config.isRoot then
                                                 Nothing
 
                                             else
                                                 Just ( arguments, substitutions )
 
-                                        Type.TypeAIsMoreGeneral ->
+                                        TypeAIsMoreGeneral ->
                                             Just ( arguments, substitutions )
 
-                                        Type.TypeBIsMoreGeneral ->
+                                        TypeBIsMoreGeneral ->
                                             if targetTypeVarsBoundBy substitutions then
                                                 Nothing
 
@@ -432,18 +434,18 @@ recordUpdate (Generator transform generator) =
                             fields
                                 |> List.foldl (updateField nextState) []
                                 |> List.map
-                                    (\( field, ( tipe, finalState ) ) ->
-                                        ( UpdateRecord name [ ( field, tipe ) ]
+                                    (\( fieldName, ( tipe, finalState ) ) ->
+                                        ( UpdateRecord name [ ( fieldName, tipe ) ]
                                         , finalState
                                         )
                                     )
 
-                        updateField nextState ( field, tipe ) collected =
+                        updateField nextState ( fieldName, tipe ) collected =
                             generator
                                 { config | values = transform config.values }
                                 nextState
                                 tipe
-                                |> List.map (Tuple.pair field)
+                                |> List.map (Tuple.pair fieldName)
                                 |> List.append collected
                     in
                     List.concatMap
@@ -452,6 +454,80 @@ recordUpdate (Generator transform generator) =
 
                 _ ->
                     []
+
+
+{-| -}
+field : Generator
+field =
+    Generator identity <|
+        \config state targetType ->
+            let
+                fieldsOfTargetType name tipe collected =
+                    case tipe of
+                        Record fields _ ->
+                            List.filterMap (ofTargetType name) fields
+                                ++ collected
+
+                        _ ->
+                            collected
+
+                ofTargetType recordName ( fieldName, tipe ) =
+                    case
+                        Type.unifiability
+                            { typeA = tipe
+                            , typeB = targetType
+                            }
+                    of
+                        NotUnifiable ->
+                            Nothing
+
+                        Unifiable comparability substitutions ->
+                            let
+                                name =
+                                    recordName ++ "." ++ fieldName
+                            in
+                            case comparability of
+                                TypesAreEqual ->
+                                    Just ( Call name [], ( substitutions, state ) )
+
+                                NotComparable ->
+                                    if config.isRoot then
+                                        Nothing
+
+                                    else
+                                        Just ( Call name [], ( substitutions, state ) )
+
+                                TypeAIsMoreGeneral ->
+                                    Just ( Call name [], ( substitutions, state ) )
+
+                                TypeBIsMoreGeneral ->
+                                    if targetTypeVarsBoundBy substitutions then
+                                        Nothing
+
+                                    else
+                                        Just ( Call name [], ( substitutions, state ) )
+
+                targetTypeVarsBoundBy substitutions =
+                    config.targetTypeVars
+                        |> Set.toList
+                        |> List.any (varBoundBy substitutions.bindTypeVariables)
+
+                varBoundBy uncheckedBoundTypeVars varName =
+                    case Dict.get varName uncheckedBoundTypeVars of
+                        Nothing ->
+                            False
+
+                        Just varTipe ->
+                            case varTipe of
+                                Var newVarName ->
+                                    varBoundBy
+                                        (Dict.remove varName uncheckedBoundTypeVars)
+                                        newVarName
+
+                                _ ->
+                                    True
+            in
+            List.concatMap (Dict.foldl fieldsOfTargetType []) config.values
 
 
 {-| -}

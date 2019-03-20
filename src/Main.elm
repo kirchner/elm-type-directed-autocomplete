@@ -40,6 +40,7 @@ import Generator
         , call
         , cases
         , exprToText
+        , field
         , for
         , recordUpdate
         , takeValues
@@ -868,6 +869,7 @@ generator model =
 
               else
                 Nothing
+            , Just field
             , if model.suggestExactMatches then
                 Just value
 
@@ -881,14 +883,18 @@ generator model =
                                 [ recordUpdate value
                                 , call []
                                 , call
-                                    [ value ]
+                                    [ value
+                                    , field
+                                    ]
                                 ]
                         , second =
                             all
                                 [ recordUpdate value
                                 , call []
                                 , call
-                                    [ value ]
+                                    [ value
+                                    , field
+                                    ]
                                 ]
                         }
 
@@ -944,12 +950,30 @@ generator model =
               else
                 Nothing
             , if model.suggestOnceEvaluated then
-                Just (call [ value ])
+                Just
+                    (call
+                        [ all
+                            [ field
+                            , value
+                            ]
+                        ]
+                    )
 
               else
                 Nothing
             , if model.suggestTwiceEvaluated then
-                Just (call [ value, value ])
+                Just
+                    (call
+                        [ all
+                            [ value
+                            , field
+                            ]
+                        , all
+                            [ field
+                            , value
+                            ]
+                        ]
+                    )
 
               else
                 Nothing
