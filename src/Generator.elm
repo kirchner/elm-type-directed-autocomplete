@@ -74,14 +74,12 @@ type Generator
         (GenerateConfig
          -> GenerateState
          -> Type
-         -> List ( Expr, GenerateState )
+         -> List ( Expr, ( Substitutions, GenerateState ) )
         )
 
 
 type alias GenerateState =
-    { count : Int
-    , substitutions : Substitutions
-    }
+    { count : Int }
 
 
 type alias GenerateConfig =
@@ -206,9 +204,7 @@ for targetType (Generator transformValues generator) =
             , unions = []
             , values = transformValues []
             }
-            { count = 0
-            , substitutions = Type.noSubstitutions
-            }
+            { count = 0 }
             targetType
 
 
@@ -234,16 +230,11 @@ call argumentGenerators =
                         ( instantiatedType, newCount ) =
                             instantiate state.count tipe
                     in
-                    case
-                        collectArguments { state | count = newCount }
-                            tipe
-                            argumentGenerators
-                            []
-                    of
+                    case collectArguments instantiatedType argumentGenerators [] of
                         Nothing ->
                             calls
 
-                        Just ( arguments, nextState ) ->
+                        Just ( arguments, substitutions ) ->
                             List.filterMap
                                 (\( argumentExprs, finalState ) ->
                                     if
@@ -252,30 +243,107 @@ call argumentGenerators =
                                     then
                                         Just
                                             ( Call name (List.reverse argumentExprs)
-                                            , finalState
+                                            , ( substitutions
+                                              , finalState
+                                              )
                                             )
 
                                     else
                                         Nothing
                                 )
-                                (collectArgumentExprs nextState arguments)
+                                (collectArgumentExprs
+                                    { state | count = newCount }
+                                    substitutions
+                                    arguments
+                                )
                                 ++ calls
 
-                collectArgumentExprs currentState arguments =
-                    case arguments of
+                collectArguments tipe generators arguments =
+                    case ( tipe, generators ) of
+                        ( Lambda from to, generator :: rest ) ->
+                            collectArguments to rest <|
+                                (( from, generator ) :: arguments)
+
+                        ( _, [] ) ->
+                            case
+                                Type.unifiability
+                                    { typeA = tipe
+                                    , typeB = targetType
+                                    }
+                            of
+                                Type.NotUnifiable ->
+                                    Nothing
+
+                                Type.Unifiable comparability substitutions ->
+                                    case comparability of
+                                        Type.TypesAreEqual ->
+                                            Just ( arguments, substitutions )
+
+                                        Type.NotComparable ->
+                                            if config.isRoot then
+                                                Nothing
+
+                                            else
+                                                Just ( arguments, substitutions )
+
+                                        Type.TypeAIsMoreGeneral ->
+                                            Just ( arguments, substitutions )
+
+                                        Type.TypeBIsMoreGeneral ->
+                                            if targetTypeVarsBoundBy substitutions then
+                                                Nothing
+
+                                            else
+                                                Just ( arguments, substitutions )
+
+                        _ ->
+                            Nothing
+
+                targetTypeVarsBoundBy substitutions =
+                    config.targetTypeVars
+                        |> Set.toList
+                        |> List.any (varBoundBy substitutions.bindTypeVariables)
+
+                varBoundBy uncheckedBoundTypeVars varName =
+                    case Dict.get varName uncheckedBoundTypeVars of
+                        Nothing ->
+                            False
+
+                        Just varTipe ->
+                            case varTipe of
+                                Var newVarName ->
+                                    varBoundBy
+                                        (Dict.remove varName uncheckedBoundTypeVars)
+                                        newVarName
+
+                                _ ->
+                                    True
+
+                collectArgumentExprs currentState substitutions arguments =
+                    let
+                        substitutedArguments =
+                            List.map
+                                (Tuple.mapFirst (Type.substitute substitutions))
+                                arguments
+                    in
+                    case substitutedArguments of
                         [] ->
                             [ ( [], currentState ) ]
 
                         ( tipe, Generator transform generator ) :: rest ->
                             List.concatMap
-                                (\( argumentExpr, nextState ) ->
+                                (\( argumentExpr, ( nextSubstitutions, nextState ) ) ->
                                     List.map
                                         (\( restExprs, finalState ) ->
                                             ( argumentExpr :: restExprs
                                             , finalState
                                             )
                                         )
-                                        (collectArgumentExprs nextState rest)
+                                        (collectArgumentExprs
+                                            nextState
+                                            nextSubstitutions
+                                            rest
+                                        )
                                 )
                                 (generator
                                     { config
@@ -283,57 +351,8 @@ call argumentGenerators =
                                         , values = transform config.values
                                     }
                                     currentState
-                                    (Type.substitute currentState.substitutions tipe)
-                                )
-
-                collectArguments nextState tipe generators arguments =
-                    case ( tipe, generators ) of
-                        ( Lambda from to, generator :: rest ) ->
-                            collectArguments nextState to rest <|
-                                (( from, generator ) :: arguments)
-
-                        ( _, [] ) ->
-                            let
-                                ( isGood, newSubstitutions ) =
                                     tipe
-                                        |> Type.unifiable targetType
-                                        |> State.run state.substitutions
-
-                                targetTypeVarsBound =
-                                    config.targetTypeVars
-                                        |> Set.toList
-                                        |> List.any (varBound newSubstitutions.bindTypeVariables)
-
-                                varBound uncheckedBoundTypeVars varName =
-                                    case Dict.get varName uncheckedBoundTypeVars of
-                                        Nothing ->
-                                            False
-
-                                        Just varTipe ->
-                                            case varTipe of
-                                                Var newVarName ->
-                                                    varBound
-                                                        (Dict.remove varName uncheckedBoundTypeVars)
-                                                        newVarName
-
-                                                _ ->
-                                                    True
-                            in
-                            if isGood && not targetTypeVarsBound then
-                                Just
-                                    ( List.map
-                                        (Tuple.mapFirst
-                                            (Type.substitute newSubstitutions)
-                                        )
-                                        arguments
-                                    , { nextState | substitutions = newSubstitutions }
-                                    )
-
-                            else
-                                Nothing
-
-                        _ ->
-                            Nothing
+                                )
             in
             List.foldr collectScope [] config.values
 
@@ -369,7 +388,7 @@ tuple generator =
                         (Generator secondTransform secondGenerator) =
                             generator.second
 
-                        toTuple ( exprA, nextState ) =
+                        toTuple ( exprA, ( _, nextState ) ) =
                             List.map (Tuple.mapFirst (CreateTuple exprA)) <|
                                 secondGenerator
                                     { config | values = secondTransform config.values }
@@ -395,17 +414,19 @@ recordUpdate (Generator transform generator) =
                 Record fields var ->
                     let
                         ofTargetType name tipe collected =
-                            Type.unifiable tipe targetType
-                                |> State.run state.substitutions
+                            Type.unifiability
+                                { typeA = tipe
+                                , typeB = targetType
+                                }
                                 |> collect name collected
 
-                        collect name collected ( isUnifiable, nextSubstitutions ) =
-                            if isUnifiable then
-                                ( name, { state | substitutions = nextSubstitutions } )
-                                    :: collected
+                        collect name collected unifiability =
+                            case unifiability of
+                                Type.NotUnifiable ->
+                                    collected
 
-                            else
-                                collected
+                                Type.Unifiable _ _ ->
+                                    ( name, state ) :: collected
 
                         toRecordUpdate ( name, nextState ) =
                             fields
@@ -446,6 +467,10 @@ cases generator =
                     config.unions
                         |> List.concatMap suggestMatched
                         |> List.concatMap suggestCase
+                        |> List.map
+                            (\( expr, state_ ) ->
+                                ( expr, ( Type.noSubstitutions, state_ ) )
+                            )
 
                 suggestMatched union =
                     List.map (Tuple.pair union.tags) <|
@@ -454,7 +479,7 @@ cases generator =
                             state
                             (Type union.name (List.map Var union.args))
 
-                suggestCase ( tags, ( matched, nextState ) ) =
+                suggestCase ( tags, ( matched, ( _, nextState ) ) ) =
                     List.map (Tuple.mapFirst (Case matched))
                         (suggestBranches nextState tags)
 
@@ -477,7 +502,7 @@ cases generator =
                                     generator.branch (toNewValues subTypes)
                             in
                             List.concatMap
-                                (\( branchExpr, nextState ) ->
+                                (\( branchExpr, ( _, nextState ) ) ->
                                     List.map
                                         (\( branchExprs, finalState ) ->
                                             ( ( branch, branchExpr ) :: branchExprs
@@ -573,11 +598,26 @@ instantiateHelp tipe =
                                 |> List.indexedMap
                                     (\index name ->
                                         ( name
-                                        , Var
-                                            ("a"
-                                                ++ String.fromInt
-                                                    (index + count)
-                                            )
+                                        , if String.startsWith "comparable" name then
+                                            Var
+                                                ("comparableA"
+                                                    ++ String.fromInt
+                                                        (index + count)
+                                                )
+
+                                          else if String.startsWith "number" name then
+                                            Var
+                                                ("numberA"
+                                                    ++ String.fromInt
+                                                        (index + count)
+                                                )
+
+                                          else
+                                            Var
+                                                ("a"
+                                                    ++ String.fromInt
+                                                        (index + count)
+                                                )
                                         )
                                     )
                                 |> Dict.fromList

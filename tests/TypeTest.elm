@@ -24,16 +24,19 @@ import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import State exposing (State)
 import Test exposing (..)
-import Type exposing (noSubstitutions)
+import Type
+    exposing
+        ( Comparability(..)
+        , Unifiability(..)
+        , noSubstitutions
+        )
 
 
 suite : Test
 suite =
     concat
         [ normalizeTest
-        , unifierTest
-        , unifiableTest
-        , isATest
+        , unifiabilityTest
         ]
 
 
@@ -47,37 +50,25 @@ normalizeTest =
             , tipe = int
             }
 
-        a =
+        typeA =
             Type "A" []
-
-        int =
-            Type "Int" []
-
-        list tipe =
-            Type "List" [ tipe ]
-
-        varA =
-            Var "a"
-
-        varB =
-            Var "b"
     in
     describe "normalize"
         [ test "of [ type alias A = Int ] A" <|
             \_ ->
-                Type.normalize [ aliasA ] a
+                Type.normalize [ aliasA ] typeA
                     |> Expect.equal int
         , test "of [ type alias A = Int ] (A -> A)" <|
             \_ ->
-                Type.normalize [ aliasA ] (Lambda a a)
+                Type.normalize [ aliasA ] (Lambda typeA typeA)
                     |> Expect.equal (Lambda int int)
         , test "of [ type alias A = Int ] ( A, A )" <|
             \_ ->
-                Type.normalize [ aliasA ] (Tuple [ a, a ])
+                Type.normalize [ aliasA ] (Tuple [ typeA, typeA ])
                     |> Expect.equal (Tuple [ int, int ])
         , test "of [ type alias A = Int ] { field : A }" <|
             \_ ->
-                Type.normalize [ aliasA ] (Record [ ( "field", a ) ] Nothing)
+                Type.normalize [ aliasA ] (Record [ ( "field", typeA ) ] Nothing)
                     |> Expect.equal (Record [ ( "field", int ) ] Nothing)
         , test "of [ type alias A = List Int ] A" <|
             \_ ->
@@ -88,7 +79,7 @@ normalizeTest =
                       , tipe = list int
                       }
                     ]
-                    a
+                    typeA
                     |> Expect.equal (list int)
         , test "of [ type alias A a = List a ] (A Int)" <|
             \_ ->
@@ -96,7 +87,7 @@ normalizeTest =
                     [ { name = "A"
                       , comment = ""
                       , args = [ "a" ]
-                      , tipe = list varA
+                      , tipe = list a
                       }
                     ]
                     (Type "A" [ int ])
@@ -107,22 +98,22 @@ normalizeTest =
                     [ { name = "A"
                       , comment = ""
                       , args = [ "a" ]
-                      , tipe = list varA
+                      , tipe = list a
                       }
                     ]
-                    (Type "A" [ varA ])
-                    |> Expect.equal (list varA)
+                    (Type "A" [ a ])
+                    |> Expect.equal (list a)
         , test "of [ type alias A a = List a ] (A b)" <|
             \_ ->
                 Type.normalize
                     [ { name = "A"
                       , comment = ""
                       , args = [ "a" ]
-                      , tipe = list varB
+                      , tipe = list b
                       }
                     ]
-                    (Type "A" [ varA ])
-                    |> Expect.equal (list varB)
+                    (Type "A" [ a ])
+                    |> Expect.equal (list b)
         , test "of [ type alias A = { b : B }, type alias B = Int ] A" <|
             \_ ->
                 Type.normalize
@@ -146,501 +137,420 @@ normalizeTest =
         ]
 
 
-unifierTest : Test
-unifierTest =
-    let
-        varA =
-            Var "a"
-
-        varB =
-            Var "b"
-
-        varNumber =
-            Var "number"
-
-        varComparable =
-            Var "comparable"
-
-        varComparableA =
-            Var "comparableA"
-
-        varComparableB =
-            Var "comparableB"
-
-        int =
-            Type "Int" []
-
-        float =
-            Type "Float" []
-
-        string =
-            Type "String" []
-
-        list tipe =
-            Type "List" [ tipe ]
-    in
-    describe "unifier"
-        [ test "of a and Int" <|
+unifiabilityTest : Test
+unifiabilityTest =
+    describe "unifiability"
+        [ test "of a and b" <|
             \_ ->
-                Type.unifier varA int
+                Type.unifiability
+                    { typeA = a
+                    , typeB = b
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "a" int
-                            , bindRecordVariables = Dict.empty
-                            }
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions | bindTypeVariables = Dict.singleton "a" b }
                         )
-        , test "of Int and b" <|
+        , test "of a and Int" <|
             \_ ->
-                Type.unifier int (Var "b")
+                Type.unifiability
+                    { typeA = a
+                    , typeB = int
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "b" int
-                            , bindRecordVariables = Dict.empty
-                            }
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions | bindTypeVariables = Dict.singleton "a" int }
+                        )
+        , test "of Int and a" <|
+            \_ ->
+                Type.unifiability
+                    { typeA = int
+                    , typeB = a
+                    }
+                    |> Expect.equal
+                        (Unifiable
+                            TypeBIsMoreGeneral
+                            { noSubstitutions | bindTypeVariables = Dict.singleton "a" int }
+                        )
+        , test "of List a and List Int" <|
+            \_ ->
+                Type.unifiability
+                    { typeA = list a
+                    , typeB = list int
+                    }
+                    |> Expect.equal
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions | bindTypeVariables = Dict.singleton "a" int }
+                        )
+        , test "of List Int and List a" <|
+            \_ ->
+                Type.unifiability
+                    { typeA = list int
+                    , typeB = list a
+                    }
+                    |> Expect.equal
+                        (Unifiable
+                            TypeBIsMoreGeneral
+                            { noSubstitutions | bindTypeVariables = Dict.singleton "a" int }
                         )
         , test "of number and Int" <|
             \_ ->
-                Type.unifier varNumber int
+                Type.unifiability
+                    { typeA = num
+                    , typeB = int
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "number" int
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables = Dict.singleton "number" int
                             }
                         )
         , test "of number and Float" <|
             \_ ->
-                Type.unifier varNumber float
+                Type.unifiability
+                    { typeA = num
+                    , typeB = float
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "number" float
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables = Dict.singleton "number" float
                             }
                         )
         , test "of number and String" <|
             \_ ->
-                Type.unifier varNumber string
-                    |> Expect.equal Nothing
+                Type.unifiability
+                    { typeA = num
+                    , typeB = string
+                    }
+                    |> Expect.equal NotUnifiable
         , test "of comparable and String" <|
             \_ ->
-                Type.unifier varComparable string
+                Type.unifiability
+                    { typeA = comparable
+                    , typeB = string
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "comparable" string
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables = Dict.singleton "comparable" string
                             }
                         )
         , test "of comparable and List Int" <|
             \_ ->
-                Type.unifier varComparable (list int)
+                Type.unifiability
+                    { typeA = comparable
+                    , typeB = list int
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "comparable" (list int)
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.singleton "comparable" (list int)
                             }
                         )
         , test "of comparableA and List comparableB" <|
             \_ ->
-                Type.unifier varComparableA (list varComparableB)
+                Type.unifiability
+                    { typeA = comparableA
+                    , typeB = list comparableB
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables =
-                                Dict.singleton "comparableA" (list varComparableB)
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.singleton "comparableA" (list comparableB)
                             }
                         )
         , test "of comparable and List number" <|
             \_ ->
-                Type.unifier varComparable (list varNumber)
+                Type.unifiability
+                    { typeA = comparable
+                    , typeB = list num
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables =
-                                Dict.singleton "comparable" (list varNumber)
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.singleton "comparable" (list num)
                             }
                         )
-        , test "of a and b" <|
+        , test "of Result err Int and Result String a" <|
             \_ ->
-                Type.unifier varA varB
+                Type.unifiability
+                    { typeA = result err int
+                    , typeB = result string a
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "a" varB
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            NotComparable
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.fromList
+                                        [ ( "err", string )
+                                        , ( "a", int )
+                                        ]
                             }
                         )
+        , test "of Result String Int and Result String Int" <|
+            \_ ->
+                Type.unifiability
+                    { typeA = result string int
+                    , typeB = result string int
+                    }
+                    |> Expect.equal
+                        (Unifiable
+                            TypesAreEqual
+                            noSubstitutions
+                        )
+        , test "of String and Int" <|
+            \_ ->
+                Type.unifiability
+                    { typeA = string
+                    , typeB = int
+                    }
+                    |> Expect.equal NotUnifiable
         , test "of (a -> b) and (Int -> Int)" <|
             \_ ->
-                Type.unifier
-                    (Lambda varA varB)
-                    (Lambda int int)
+                Type.unifiability
+                    { typeA = Lambda a b
+                    , typeB = Lambda int int
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables =
-                                Dict.fromList
-                                    [ ( "a", int )
-                                    , ( "b", int )
-                                    ]
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.fromList
+                                        [ ( "a", int )
+                                        , ( "b", int )
+                                        ]
                             }
                         )
-        , test "of (Int -> Int) and (a -> b)" <|
+        , test "of (Int -> Int) and (a -> a)" <|
             \_ ->
-                Type.unifier
-                    (Lambda int int)
-                    (Lambda varA varB)
+                Type.unifiability
+                    { typeA = Lambda int int
+                    , typeB = Lambda a b
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables =
-                                Dict.fromList
-                                    [ ( "a", int )
-                                    , ( "b", int )
-                                    ]
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeBIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.fromList
+                                        [ ( "a", int )
+                                        , ( "b", int )
+                                        ]
                             }
                         )
         , test "of ( a, b ) and ( Int, Int )" <|
             \_ ->
-                Type.unifier
-                    (Tuple [ varA, varB ])
-                    (Tuple [ int, int ])
+                Type.unifiability
+                    { typeA = Tuple [ a, b ]
+                    , typeB = Tuple [ int, int ]
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables =
-                                Dict.fromList
-                                    [ ( "a", int )
-                                    , ( "b", int )
-                                    ]
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.fromList
+                                        [ ( "a", int )
+                                        , ( "b", int )
+                                        ]
                             }
                         )
-        , test "of ( Int, Int ) and ( a, b )" <|
+        , test "of ( Int, Int ) and ( a, a )" <|
             \_ ->
-                Type.unifier
-                    (Tuple [ int, int ])
-                    (Tuple [ varA, varB ])
+                Type.unifiability
+                    { typeA = Tuple [ int, int ]
+                    , typeB = Tuple [ a, b ]
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables =
-                                Dict.fromList
-                                    [ ( "a", int )
-                                    , ( "b", int )
-                                    ]
-                            , bindRecordVariables = Dict.empty
-                            }
-                        )
-        , test "of Int and Int" <|
-            \_ ->
-                Type.unifier int int
-                    |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable
+                            TypeBIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables =
+                                    Dict.fromList
+                                        [ ( "a", int )
+                                        , ( "b", int )
+                                        ]
                             }
                         )
         , test "of { field : Int } and { field : Int }" <|
             \_ ->
-                Type.unifier
-                    (Record [ ( "field", int ) ] Nothing)
-                    (Record [ ( "field", int ) ] Nothing)
+                Type.unifiability
+                    { typeA = Record [ ( "field", int ) ] Nothing
+                    , typeB = Record [ ( "field", int ) ] Nothing
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables = Dict.empty
-                            }
-                        )
+                        (Unifiable TypesAreEqual noSubstitutions)
         , test "of { field : a } and { field : Int }" <|
             \_ ->
-                Type.unifier
-                    (Record [ ( "field", varA ) ] Nothing)
-                    (Record [ ( "field", int ) ] Nothing)
+                Type.unifiability
+                    { typeA = Record [ ( "field", a ) ] Nothing
+                    , typeB = Record [ ( "field", int ) ] Nothing
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "a" int
-                            , bindRecordVariables = Dict.empty
-                            }
-                        )
-        , test "of { a | field : Int } and { field : Int }" <|
-            \_ ->
-                Type.unifier
-                    (Record [ ( "field", int ) ] (Just "a"))
-                    (Record [ ( "field", int ) ] Nothing)
-                    |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables = Dict.singleton "a" ( [], Nothing )
-                            }
-                        )
-        , test "of { a | fieldA : Int } and { fieldA : Int, fieldB : Int }" <|
-            \_ ->
-                Type.unifier
-                    (Record [ ( "fieldA", int ) ] (Just "a"))
-                    (Record
-                        [ ( "fieldA", int )
-                        , ( "fieldB", int )
-                        ]
-                        Nothing
-                    )
-                    |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables =
-                                Dict.singleton "a"
-                                    ( [ ( "fieldB", int ) ]
-                                    , Nothing
-                                    )
+                        (Unifiable TypeAIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables = Dict.singleton "a" int
                             }
                         )
         , test "of { field : Int } and { field : a }" <|
             \_ ->
-                Type.unifier
-                    (Record [ ( "field", int ) ] Nothing)
-                    (Record [ ( "field", varA ) ] Nothing)
+                Type.unifiability
+                    { typeA = Record [ ( "field", int ) ] Nothing
+                    , typeB = Record [ ( "field", a ) ] Nothing
+                    }
                     |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.singleton "a" int
-                            , bindRecordVariables = Dict.empty
+                        (Unifiable TypeBIsMoreGeneral
+                            { noSubstitutions
+                                | bindTypeVariables = Dict.singleton "a" int
                             }
                         )
-        , test "of { field : Int } and { a | field : Int }" <|
-            \_ ->
-                Type.unifier
-                    (Record [ ( "field", int ) ] Nothing)
-                    (Record [ ( "field", int ) ] (Just "a"))
-                    |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables = Dict.singleton "a" ( [], Nothing )
-                            }
-                        )
-        , test "of { fieldA : Int, fieldB : Int } and { a | fieldA : Int }" <|
-            \_ ->
-                Type.unifier
-                    (Record
-                        [ ( "fieldA", int )
-                        , ( "fieldB", int )
-                        ]
-                        Nothing
-                    )
-                    (Record [ ( "fieldA", int ) ] (Just "a"))
-                    |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables =
-                                Dict.singleton "a"
-                                    ( [ ( "fieldB", int ) ]
-                                    , Nothing
-                                    )
-                            }
-                        )
+
+        --, test "of { a | field : Int } and { field : Int }" <|
+        --    \_ ->
+        --        Type.unifiability
+        --            { typeA = Record [ ( "field", int ) ] (Just "a")
+        --            , typeB = Record [ ( "field", int ) ] Nothing
+        --            }
+        --            |> Expect.equal
+        --                (Unifiable TypeAIsMoreGeneral
+        --                    { noSubstitutions
+        --                        | bindRecordVariables =
+        --                            Dict.singleton "a" ( [], Nothing )
+        --                    }
+        --                )
+        --, test "of { a | fieldA : Int } and { fieldA : Int, fieldB : Int }" <|
+        --    \_ ->
+        --        Type.unifiability
+        --            { typeA = Record [ ( "fieldA", int ) ] (Just "a")
+        --            , typeB =
+        --                Record
+        --                    [ ( "fieldA", int )
+        --                    , ( "fieldB", int )
+        --                    ]
+        --                    Nothing
+        --            }
+        --            |> Expect.equal
+        --                (Unifiable TypeAIsMoreGeneral
+        --                    { noSubstitutions
+        --                        | bindRecordVariables =
+        --                            Dict.singleton "a"
+        --                                ( [ ( "fieldB", int ) ]
+        --                                , Nothing
+        --                                )
+        --                    }
+        --                )
+        --, test "of { field : Int } and { a | field : Int }" <|
+        --    \_ ->
+        --        Type.unifiability
+        --            { typeA = Record [ ( "field", int ) ] Nothing
+        --            , typeB = Record [ ( "field", int ) ] (Just "a")
+        --            }
+        --            |> Expect.equal
+        --                (Unifiable TypeBIsMoreGeneral
+        --                    { noSubstitutions
+        --                        | bindRecordVariables =
+        --                            Dict.singleton "a" ( [], Nothing )
+        --                    }
+        --                )
+        --, test "of { fieldA : Int, fieldB : Int } and { a | fieldB : Int }" <|
+        --    \_ ->
+        --        Type.unifiability
+        --            { typeA =
+        --                Record
+        --                    [ ( "fieldA", int )
+        --                    , ( "fieldB", int )
+        --                    ]
+        --                    Nothing
+        --            , typeB = Record [ ( "fieldA", int ) ] (Just "a")
+        --            }
+        --            |> Expect.equal
+        --                (Unifiable TypeBIsMoreGeneral
+        --                    { noSubstitutions
+        --                        | bindRecordVariables =
+        --                            Dict.singleton "a"
+        --                                ( [ ( "fieldB", int ) ]
+        --                                , Nothing
+        --                                )
+        --                    }
+        --                )
         , test "of { a | field : Int } and { a | field : Int }" <|
             \_ ->
-                Type.unifier
-                    (Record [ ( "field", int ) ] Nothing)
-                    (Record [ ( "field", int ) ] Nothing)
-                    |> Expect.equal
-                        (Just
-                            { bindTypeVariables = Dict.empty
-                            , bindRecordVariables = Dict.empty
-                            }
-                        )
-        ]
-
-
-unifiableTest : Test
-unifiableTest =
-    let
-        varA =
-            Var "a"
-
-        varB =
-            Var "b"
-
-        varNumber =
-            Var "number"
-
-        varComparable =
-            Var "comparable"
-
-        varComparableA =
-            Var "comparableA"
-
-        varComparableB =
-            Var "comparableB"
-
-        int =
-            Type "Int" []
-
-        float =
-            Type "Float" []
-
-        string =
-            Type "String" []
-
-        list tipe =
-            Type "List" [ tipe ]
-    in
-    describe "unifiable"
-        [ test "of (a -> Int) and (Int -> Int) with a = Int" <|
-            \_ ->
-                Type.unifiable
-                    (Lambda varA int)
-                    (Lambda int int)
-                    |> State.run
-                        { bindTypeVariables = Dict.singleton "a" int
-                        , bindRecordVariables = Dict.empty
-                        }
-                    |> Expect.equal
-                        ( True
-                        , { bindTypeVariables = Dict.singleton "a" int
-                          , bindRecordVariables = Dict.empty
-                          }
-                        )
-        , test "of (a -> Int) and (Int -> Int) with a = Float" <|
-            \_ ->
-                Type.unifiable
-                    (Lambda varA int)
-                    (Lambda int int)
-                    |> State.run
-                        { bindTypeVariables = Dict.singleton "a" float
-                        , bindRecordVariables = Dict.empty
-                        }
-                    |> Expect.equal
-                        ( False
-                        , { bindTypeVariables = Dict.singleton "a" float
-                          , bindRecordVariables = Dict.empty
-                          }
-                        )
-        ]
-
-
-isATest : Test
-isATest =
-    let
-        a =
-            Var "a"
-
-        b =
-            Var "b"
-
-        c =
-            Var "c"
-
-        num =
-            Var "number"
-
-        comp =
-            Var "comparable"
-
-        compA =
-            Var "comparableA"
-
-        compB =
-            Var "comparableB"
-
-        int =
-            Type "Int" []
-
-        float =
-            Type "Float" []
-
-        string =
-            Type "String" []
-
-        list tipe =
-            Type "List" [ tipe ]
-
-        bind vars =
-            { noSubstitutions | bindTypeVariables = Dict.fromList vars }
-    in
-    describe "isA"
-        [ test "a is not Int" <|
-            \_ ->
-                a
-                    |> Type.isA int
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( False
-                        , bind []
-                        )
-        , test "Int is an a" <|
-            \_ ->
-                int
-                    |> Type.isA a
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( True
-                        , bind [ ( "a", int ) ]
-                        )
-        , test "List a is not a List Int" <|
-            \_ ->
-                list a
-                    |> Type.isA (list int)
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( False
-                        , bind []
-                        )
-        , test "List Int is a List a" <|
-            \_ ->
-                list int
-                    |> Type.isA (list a)
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( True
-                        , bind [ ( "a", int ) ]
-                        )
-        , test "a is a b" <|
-            \_ ->
-                a
-                    |> Type.isA b
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( True
-                        , bind [ ( "b", a ) ]
-                        )
-        , test "(a -> a) is not a (a -> Int)" <|
-            \_ ->
-                Lambda a a
-                    |> Type.isA (Lambda a int)
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( False
-                        , bind []
-                        )
-        , test "(a -> Int) is a (a -> a)" <|
-            \_ ->
-                Lambda a int
-                    |> Type.isA (Lambda a a)
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( True
-                        , bind [ ( "a", int ) ]
-                        )
-        , test "(a -> Int) is not a (b -> b)" <|
-            \_ ->
-                Lambda a int
-                    |> Type.isA (Lambda b b)
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( False
-                        , bind [ ( "b", a ) ]
-                        )
-        , test "(a -> Int) is a (b -> c)" <|
-            \_ ->
-                Lambda a int
-                    |> Type.isA (Lambda b c)
-                    |> State.run noSubstitutions
-                    |> Expect.equal
-                        ( True
-                        , bind
-                            [ ( "b", a )
-                            , ( "c", int )
-                            ]
-                        )
+                Type.unifiability
+                    { typeA = Record [ ( "field", int ) ] (Just "a")
+                    , typeB = Record [ ( "field", int ) ] (Just "a")
+                    }
+                    |> Expect.equal (Unifiable TypesAreEqual noSubstitutions)
         ]
 
 
 
 ---- HELPER
+
+
+a =
+    Var "a"
+
+
+b =
+    Var "b"
+
+
+c =
+    Var "c"
+
+
+num =
+    Var "number"
+
+
+comparable =
+    Var "comparable"
+
+
+comparableA =
+    Var "comparableA"
+
+
+comparableB =
+    Var "comparableB"
+
+
+int =
+    Type "Int" []
+
+
+float =
+    Type "Float" []
+
+
+string =
+    Type "String" []
+
+
+list tipe =
+    Type "List" [ tipe ]
+
+
+result error a_ =
+    Type "Result" [ error, a_ ]
+
+
+err =
+    Var "err"
 
 
 generalize : Type -> State Int Type
@@ -725,9 +635,9 @@ customTypeFuzzer : Fuzzer Type
 customTypeFuzzer =
     Fuzz.intRange 1 3
         |> Fuzz.map
-            (\int ->
-                Type ("Custom" ++ String.fromInt int)
-                    (List.repeat int (Type "Int" []))
+            (\int_ ->
+                Type ("Custom" ++ String.fromInt int_)
+                    (List.repeat int_ (Type "Int" []))
             )
 
 
@@ -735,6 +645,6 @@ varFuzzer : Fuzzer Type
 varFuzzer =
     Fuzz.intRange 1 10
         |> Fuzz.map
-            (\int ->
-                Var ("a" ++ String.fromInt int)
+            (\int_ ->
+                Var ("a" ++ String.fromInt int_)
             )

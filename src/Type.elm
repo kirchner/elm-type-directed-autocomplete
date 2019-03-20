@@ -1,12 +1,12 @@
 module Type exposing
-    ( Substitutions
-    , isA
+    ( Comparability(..)
+    , Substitutions
+    , Unifiability(..)
     , noSubstitutions
     , normalize
     , substitute
     , typeVariables
-    , unifiable
-    , unifier
+    , unifiability
     )
 
 {-
@@ -100,160 +100,6 @@ normalize aliases tipe =
 
 
 
----- GENERALIZATION
-
-
-{-| Check if the second type is a (possibly more general) version of the first
-type. For example
-
-    <@ List String @>
-        |> isA <@ List a @>
-        |> State.run noSubstitutions
-
-will be evaluated to
-
-    ( True
-    , { noSubstitutions
-        | bindTypeVariables = Dict.singleton "a" <@ String @>
-      }
-    )
-
-But
-
-    <@ List a @>
-        |> isA <@ List String @>
-        |> State.finalValue noSubstitutions
-
-will be `False`.
-
--}
-isA : Type -> Type -> State Substitutions Bool
-isA typeA typeB =
-    case ( typeA, typeB ) of
-        ( Var nameA, _ ) ->
-            bindTypeVariable nameA typeB
-
-        ( _, Var nameB ) ->
-            State.state False
-
-        ( Lambda fromA toA, Lambda fromB toB ) ->
-            isAMany [ fromA, toA ] [ fromB, toB ]
-
-        ( Tuple typesA, Tuple typesB ) ->
-            isAMany typesA typesB
-
-        ( Type nameA varsA, Type nameB varsB ) ->
-            if nameA == nameB then
-                isAMany varsA varsB
-
-            else
-                State.state False
-
-        ( Record fieldsA maybeVarA, Record fieldsB maybeVarB ) ->
-            case ( maybeVarA, maybeVarB ) of
-                ( Nothing, Nothing ) ->
-                    isAFields fieldsA fieldsB
-
-                ( Just nameA, Nothing ) ->
-                    let
-                        inFieldsA ( fieldNameB, _ ) =
-                            List.any (hasName fieldNameB) fieldsA
-
-                        hasName thisName ( otherName, _ ) =
-                            thisName == otherName
-
-                        bindRecordVariable substitutions =
-                            { substitutions
-                                | bindRecordVariables =
-                                    Dict.insert nameA
-                                        ( List.filter (not << inFieldsA) fieldsB, Nothing )
-                                        substitutions.bindRecordVariables
-                            }
-                    in
-                    State.modify bindRecordVariable
-                        |> State.andThen
-                            (\_ ->
-                                unifiableFields
-                                    fieldsA
-                                    (List.filter inFieldsA fieldsB)
-                            )
-
-                ( Nothing, Just nameB ) ->
-                    State.state False
-
-                ( Just nameA, Just nameB ) ->
-                    if nameA == nameB then
-                        isAFields fieldsA fieldsB
-
-                    else
-                        let
-                            bindRecordVariable substitutions =
-                                { substitutions
-                                    | bindRecordVariables =
-                                        Dict.insert nameB
-                                            ( [], Just nameA )
-                                            substitutions.bindRecordVariables
-                                }
-                        in
-                        State.modify bindRecordVariable
-                            |> State.andThen
-                                (\_ ->
-                                    isAFields fieldsA fieldsB
-                                )
-
-        _ ->
-            State.state False
-
-
-isAMany : List Type -> List Type -> State Substitutions Bool
-isAMany typesA typesB =
-    isAManyHelp
-        typesA
-        typesB
-
-
-isAManyHelp : List Type -> List Type -> State Substitutions Bool
-isAManyHelp typesA typesB =
-    case ( typesA, typesB ) of
-        ( firstA :: restA, firstB :: restB ) ->
-            State.map2 (&&)
-                (isA firstA firstB)
-                (isAManyHelp restA restB)
-
-        ( [], [] ) ->
-            State.state True
-
-        _ ->
-            State.state False
-
-
-isAFields : List ( String, Type ) -> List ( String, Type ) -> State Substitutions Bool
-isAFields fieldsA fieldsB =
-    isAFieldsHelp
-        (List.sortBy Tuple.first fieldsA)
-        (List.sortBy Tuple.first fieldsB)
-
-
-isAFieldsHelp : List ( String, Type ) -> List ( String, Type ) -> State Substitutions Bool
-isAFieldsHelp fieldsA fieldsB =
-    case ( fieldsA, fieldsB ) of
-        ( ( nameA, typeA ) :: restA, ( nameB, typeB ) :: restB ) ->
-            if nameA == nameB then
-                State.map2 (&&)
-                    (isA typeA typeB)
-                    (isAFieldsHelp restA restB)
-
-            else
-                State.state False
-
-        ( [], [] ) ->
-            State.state True
-
-        _ ->
-            State.state False
-
-
-
 ---- UNIFICATION
 
 
@@ -270,44 +116,80 @@ noSubstitutions =
     }
 
 
-{-| Return substitutions if both types can be unified.
--}
-unifier : Type -> Type -> Maybe Substitutions
-unifier typeA typeB =
-    case State.run noSubstitutions (unifiable typeA typeB) of
-        ( False, _ ) ->
-            Nothing
-
-        ( True, substitutions ) ->
-            Just substitutions
+type Unifiability
+    = NotUnifiable
+    | Unifiable Comparability Substitutions
 
 
-unifiable : Type -> Type -> State Substitutions Bool
-unifiable typeA typeB =
+type Comparability
+    = NotComparable
+    | TypesAreEqual
+    | TypeAIsMoreGeneral
+    | TypeBIsMoreGeneral
+
+
+unifiability : { typeA : Type, typeB : Type } -> Unifiability
+unifiability { typeA, typeB } =
+    let
+        ( internalUnifiability, substitutions ) =
+            State.run noSubstitutions <|
+                unifiabilityHelp typeA typeB
+    in
+    case internalUnifiability of
+        INotUnifiable ->
+            NotUnifiable
+
+        IUnifiable comparability ->
+            Unifiable comparability substitutions
+
+
+type IUnifiability
+    = INotUnifiable
+    | IUnifiable Comparability
+
+
+unifiabilityHelp : Type -> Type -> State Substitutions IUnifiability
+unifiabilityHelp typeA typeB =
     case ( typeA, typeB ) of
         ( Var nameA, _ ) ->
             bindTypeVariable nameA typeB
+                |> State.map
+                    (\isUnifiable ->
+                        if isUnifiable then
+                            IUnifiable TypeAIsMoreGeneral
+
+                        else
+                            INotUnifiable
+                    )
 
         ( _, Var nameB ) ->
             bindTypeVariable nameB typeA
+                |> State.map
+                    (\isUnifiable ->
+                        if isUnifiable then
+                            IUnifiable TypeBIsMoreGeneral
+
+                        else
+                            INotUnifiable
+                    )
 
         ( Lambda fromA toA, Lambda fromB toB ) ->
-            unifiableMany [ fromA, toA ] [ fromB, toB ]
+            unifiabilityMany [ fromA, toA ] [ fromB, toB ]
 
         ( Tuple typesA, Tuple typesB ) ->
-            unifiableMany typesA typesB
+            unifiabilityMany typesA typesB
 
         ( Type nameA varsA, Type nameB varsB ) ->
             if nameA == nameB then
-                unifiableMany varsA varsB
+                unifiabilityMany varsA varsB
 
             else
-                State.state False
+                State.state INotUnifiable
 
         ( Record fieldsA maybeVarA, Record fieldsB maybeVarB ) ->
             case ( maybeVarA, maybeVarB ) of
                 ( Nothing, Nothing ) ->
-                    unifiableFields fieldsA fieldsB
+                    unifiabilityFields fieldsA fieldsB
 
                 ( Just nameA, Nothing ) ->
                     let
@@ -328,7 +210,7 @@ unifiable typeA typeB =
                     State.modify bindRecordVariable
                         |> State.andThen
                             (\_ ->
-                                unifiableFields
+                                unifiabilityFields
                                     fieldsA
                                     (List.filter inFieldsA fieldsB)
                             )
@@ -352,14 +234,14 @@ unifiable typeA typeB =
                     State.modify bindRecordVariable
                         |> State.andThen
                             (\_ ->
-                                unifiableFields
+                                unifiabilityFields
                                     (List.filter inFieldsB fieldsA)
                                     fieldsB
                             )
 
                 ( Just nameA, Just nameB ) ->
                     if nameA == nameB then
-                        unifiableFields fieldsA fieldsB
+                        unifiabilityFields fieldsA fieldsB
 
                     else
                         let
@@ -374,62 +256,85 @@ unifiable typeA typeB =
                         State.modify bindRecordVariable
                             |> State.andThen
                                 (\_ ->
-                                    unifiableFields fieldsA fieldsB
+                                    unifiabilityFields fieldsA fieldsB
                                 )
 
         _ ->
-            State.state False
+            State.state INotUnifiable
 
 
-unifiableMany : List Type -> List Type -> State Substitutions Bool
-unifiableMany typesA typesB =
-    unifiableManyHelp
-        typesA
-        typesB
-
-
-unifiableManyHelp : List Type -> List Type -> State Substitutions Bool
-unifiableManyHelp typesA typesB =
+unifiabilityMany : List Type -> List Type -> State Substitutions IUnifiability
+unifiabilityMany typesA typesB =
     case ( typesA, typesB ) of
         ( firstA :: restA, firstB :: restB ) ->
-            State.map2 (&&)
-                (unifiable firstA firstB)
-                (unifiableManyHelp restA restB)
+            State.map2 mergeUnifiability
+                (unifiabilityHelp firstA firstB)
+                (unifiabilityMany restA restB)
 
         ( [], [] ) ->
-            State.state True
+            State.state
+                (IUnifiable TypesAreEqual)
 
         _ ->
-            State.state False
+            State.state INotUnifiable
 
 
-unifiableFields : List ( String, Type ) -> List ( String, Type ) -> State Substitutions Bool
-unifiableFields fieldsA fieldsB =
-    unifiableFieldsHelp
+mergeUnifiability firstUnifiability secondUnifiability =
+    case ( firstUnifiability, secondUnifiability ) of
+        ( INotUnifiable, _ ) ->
+            INotUnifiable
+
+        ( _, INotUnifiable ) ->
+            INotUnifiable
+
+        ( IUnifiable TypesAreEqual, IUnifiable TypesAreEqual ) ->
+            firstUnifiability
+
+        ( IUnifiable _, IUnifiable TypesAreEqual ) ->
+            firstUnifiability
+
+        ( IUnifiable TypesAreEqual, IUnifiable _ ) ->
+            secondUnifiability
+
+        ( IUnifiable firstComparability, IUnifiable secondComparability ) ->
+            if firstComparability == secondComparability then
+                firstUnifiability
+
+            else
+                IUnifiable NotComparable
+
+
+unifiabilityFields :
+    List ( String, Type )
+    -> List ( String, Type )
+    -> State Substitutions IUnifiability
+unifiabilityFields fieldsA fieldsB =
+    unifiabilityFieldsHelp
         (List.sortBy Tuple.first fieldsA)
         (List.sortBy Tuple.first fieldsB)
 
 
-unifiableFieldsHelp :
+unifiabilityFieldsHelp :
     List ( String, Type )
     -> List ( String, Type )
-    -> State Substitutions Bool
-unifiableFieldsHelp fieldsA fieldsB =
+    -> State Substitutions IUnifiability
+unifiabilityFieldsHelp fieldsA fieldsB =
     case ( fieldsA, fieldsB ) of
         ( ( nameA, typeA ) :: restA, ( nameB, typeB ) :: restB ) ->
             if nameA == nameB then
-                State.map2 (&&)
-                    (unifiable typeA typeB)
-                    (unifiableFieldsHelp restA restB)
+                State.map2 mergeUnifiability
+                    (unifiabilityHelp typeA typeB)
+                    (unifiabilityFieldsHelp restA restB)
 
             else
-                State.state False
+                State.state INotUnifiable
 
         ( [], [] ) ->
-            State.state True
+            State.state
+                (IUnifiable TypesAreEqual)
 
         _ ->
-            State.state False
+            State.state INotUnifiable
 
 
 bindTypeVariable : String -> Type -> State Substitutions Bool
