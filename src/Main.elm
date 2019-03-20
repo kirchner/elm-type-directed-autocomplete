@@ -42,6 +42,7 @@ import Generator
         , cases
         , exprToText
         , field
+        , first
         , for
         , recordUpdate
         , takeValues
@@ -908,22 +909,25 @@ generator model =
                         , branch =
                             \newValues ->
                                 all
-                                    [ recordUpdate <|
-                                        all
-                                            [ value
-                                                |> addValues newValues
-                                                |> takeValues 1
-                                            , call
+                                    [ first
+                                        [ recordUpdate <|
+                                            first
                                                 [ value
                                                     |> addValues newValues
                                                     |> takeValues 1
+                                                , call
+                                                    [ value
+                                                        |> addValues newValues
+                                                        |> takeValues 1
+                                                    ]
                                                 ]
-                                            ]
+                                        , value
+                                        ]
                                     , tuple
                                         { first =
-                                            all
+                                            first
                                                 [ recordUpdate <|
-                                                    all
+                                                    first
                                                         [ value
                                                             |> addValues newValues
                                                             |> takeValues 1
@@ -936,7 +940,7 @@ generator model =
                                                 , call []
                                                 ]
                                         , second =
-                                            all
+                                            first
                                                 [ call []
                                                 , call
                                                     [ value
@@ -944,7 +948,6 @@ generator model =
                                                     ]
                                                 ]
                                         }
-                                    , call []
                                     ]
                         }
 
@@ -956,7 +959,12 @@ generator model =
                         [ all
                             [ field
                             , value
+                                |> takeValues 1
                             , accessor
+                            , call
+                                [ value
+                                    |> takeValues 1
+                                ]
                             ]
                         ]
                     )
@@ -969,12 +977,18 @@ generator model =
                     (call
                         [ all
                             [ value
+                                |> takeValues 1
                             , field
                             , accessor
+                            , call
+                                [ value
+                                    |> takeValues 1
+                                ]
                             ]
                         , all
                             [ field
                             , value
+                                |> takeValues 1
                             ]
                         ]
                     )

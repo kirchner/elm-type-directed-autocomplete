@@ -4,7 +4,7 @@ module Generator exposing
     , value, call
     , tuple, cases
     , recordUpdate, field, accessor
-    , all
+    , all, first
     , exprToString, exprToText
     )
 
@@ -16,7 +16,7 @@ module Generator exposing
 @docs value, call
 @docs tuple, cases
 @docs recordUpdate, field, accessor
-@docs all
+@docs all, first
 
 @docs exprToString, exprToText
 
@@ -358,6 +358,39 @@ all generators =
                         targetType
                 )
                 generators
+
+
+{-| -}
+first : List Generator -> Generator
+first generators =
+    Generator identity <|
+        \config state targetType ->
+            firstHelp config state targetType generators
+
+
+firstHelp :
+    GenerateConfig
+    -> GenerateState
+    -> Type
+    -> List Generator
+    -> List ( Expr, ( Substitutions, GenerateState ) )
+firstHelp config state targetType generators =
+    case generators of
+        [] ->
+            []
+
+        (Generator transform generator) :: rest ->
+            case
+                generator
+                    { config | values = transform config.values }
+                    state
+                    targetType
+            of
+                [] ->
+                    firstHelp config state targetType rest
+
+                result :: _ ->
+                    [ result ]
 
 
 {-| Generate a tuple.
