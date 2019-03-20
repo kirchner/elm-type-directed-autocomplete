@@ -1,6 +1,6 @@
 module Main exposing (main)
 
-import Benchmark exposing (Benchmark, benchmark, describe)
+import Benchmark exposing (Benchmark, benchmark, compare, describe)
 import Benchmark.Runner exposing (BenchmarkProgram, program)
 import Dict exposing (Dict)
 import Elm.Docs
@@ -19,7 +19,51 @@ import Json.Decode as Decode
 
 main : BenchmarkProgram
 main =
-    program suite
+    program comparison
+
+
+comparison : Benchmark
+comparison =
+    describe "for"
+        [ describe "core modules and some constants"
+            [ compare "Int"
+                "call [ all [ value, call [ value ] ], value ]"
+                (\_ ->
+                    innerAllGenerator
+                        |> for int
+                )
+                "all [ call [ value, value ], call [ call [ value ], value ] ]"
+                (\_ ->
+                    outerAllGenerator
+                        |> for int
+                )
+            ]
+        ]
+
+
+innerAllGenerator : Generator
+innerAllGenerator =
+    call
+        [ all
+            [ value
+            , call [ value ]
+            ]
+        , value
+        ]
+
+
+outerAllGenerator : Generator
+outerAllGenerator =
+    all
+        [ call
+            [ value
+            , value
+            ]
+        , call
+            [ call [ value ]
+            , value
+            ]
+        ]
 
 
 suite : Benchmark

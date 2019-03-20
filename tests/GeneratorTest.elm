@@ -52,6 +52,7 @@ suite =
             , recordUpdateTest
             , casesTest
             , allTest
+            , equivalenceTest
             ]
         , takeValuesTest
         ]
@@ -421,6 +422,55 @@ allTest =
               , [ "intC" ]
               )
             ]
+        ]
+
+
+equivalenceTest : Test
+equivalenceTest =
+    let
+        generatorA =
+            call
+                [ all
+                    [ value
+                    , call [ value ]
+                    ]
+                , value
+                ]
+                |> addValues values
+
+        generatorB =
+            all
+                [ call
+                    [ value
+                    , value
+                    ]
+                , call
+                    [ call [ value ]
+                    , value
+                    ]
+                ]
+                |> addValues values
+    in
+    describe
+        ("call [ all [ value, call [ value ] ], value ] "
+            ++ "== all [ call [ value, value ], call [ call [ value ], value ] ]"
+        )
+        [ test "Int" <|
+            \_ ->
+                for int generatorA
+                    |> List.map exprToString
+                    |> Expect.equal
+                        (for int generatorB
+                            |> List.map exprToString
+                        )
+        , test "List Int" <|
+            \_ ->
+                for (list int) generatorA
+                    |> List.map exprToString
+                    |> Expect.equal
+                        (for (list int) generatorB
+                            |> List.map exprToString
+                        )
         ]
 
 
