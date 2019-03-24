@@ -33,6 +33,7 @@ import Generator
         , cases
         , exprToString
         , for
+        , record
         , recordUpdate
         , takeValues
         , tuple
@@ -49,6 +50,7 @@ suite =
             [ valueTest
             , callTest
             , tupleTest
+            , recordTest
             , recordUpdateTest
             , casesTest
             , allTest
@@ -232,6 +234,35 @@ tupleTest =
         ]
 
 
+recordTest : Test
+recordTest =
+    describe "record"
+        [ testGenerator "value"
+            (record value
+                |> addValues
+                    (Dict.fromList
+                        [ ( "int", int )
+                        , ( "float", float )
+                        , ( "listInt", list int )
+                        ]
+                    )
+            )
+            [ ( Record
+                    [ ( "int", int )
+                    , ( "float", float )
+                    , ( "listInt", list int )
+                    ]
+                    Nothing
+              , [ """{ int = int
+, float = float
+, listInt = listInt
+}"""
+                ]
+              )
+            ]
+        ]
+
+
 recordUpdateTest : Test
 recordUpdateTest =
     describe "recordUpdate"
@@ -239,10 +270,11 @@ recordUpdateTest =
             (recordUpdate (call [])
                 |> addValues values
             )
-            [ ( record
+            [ ( Record
                     [ ( "int", int )
                     , ( "string", string )
                     ]
+                    Nothing
               , [ "{ record | int = int }"
                 , "{ record | string = string }"
                 ]
@@ -559,8 +591,9 @@ takeValuesTest =
                 }
                 |> addValues (Dict.remove "int" values)
             )
-            [ ( record
+            [ ( Record
                     [ ( "int", int ) ]
+                    Nothing
               , [ """case msg of
     NewInt newInt ->
         { intRecord | int = newInt }
@@ -620,11 +653,6 @@ set tipe =
     Type "Set" [ tipe ]
 
 
-record : List ( String, Type ) -> Type
-record fields =
-    Record fields Nothing
-
-
 msg : Type
 msg =
     Type "Msg" []
@@ -639,14 +667,16 @@ values =
         , ( "string", string )
         , ( "strings", list string )
         , ( "record"
-          , record
+          , Record
                 [ ( "int", int )
                 , ( "string", string )
                 ]
+                Nothing
           )
         , ( "intRecord"
-          , record
+          , Record
                 [ ( "int", int ) ]
+                Nothing
           )
         , ( "msg", msg )
 

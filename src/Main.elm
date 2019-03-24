@@ -44,6 +44,7 @@ import Generator
         , field
         , first
         , for
+        , record
         , recordUpdate
         , takeValues
         , tuple
@@ -871,6 +872,7 @@ generator model =
 
               else
                 Nothing
+            , Just (record value)
             , Just field
             , if model.suggestExactMatches then
                 Just value

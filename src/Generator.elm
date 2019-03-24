@@ -3,7 +3,7 @@ module Generator exposing
     , addUnions, addValues, takeValues, default, for
     , value, call
     , tuple, cases
-    , recordUpdate, field, accessor
+    , record, recordUpdate, field, accessor
     , all, first
     , exprToString, exprToText
     )
@@ -15,7 +15,7 @@ module Generator exposing
 
 @docs value, call
 @docs tuple, cases
-@docs recordUpdate, field, accessor
+@docs record, recordUpdate, field, accessor
 @docs all, first
 
 @docs exprToString, exprToText
@@ -88,6 +88,7 @@ type alias GenerateConfig =
     { targetTypeVars : Set String
     , isRoot : Bool
     , unions : List Union
+    , aliases : List Alias
     , values : List (Dict String Type)
     }
 
@@ -97,6 +98,7 @@ Elm code using `exprToString` or `exprToText`.
 -}
 type Expr
     = Call String (List Expr)
+    | CreateRecord (List ( String, Expr ))
     | UpdateRecord String (List ( String, Expr ))
     | CreateTuple Expr Expr
     | Case Expr (List ( String, Expr ))
@@ -204,6 +206,7 @@ for targetType (Generator transformValues generator) =
             { targetTypeVars = Type.typeVariables targetType
             , isRoot = True
             , unions = []
+            , aliases = []
             , values = transformValues []
             }
             { count = 0 }
@@ -420,6 +423,50 @@ tuple generator =
                             { config | values = firstTransform config.values }
                             state
                             typeA
+
+                _ ->
+                    []
+
+
+{-| -}
+record : Generator -> Generator
+record (Generator transform generator) =
+    Generator identity <|
+        \config state targetType ->
+            case targetType of
+                Record fields var ->
+                    let
+                        collectFields substitutions currentState remainingFields =
+                            case remainingFields of
+                                [] ->
+                                    [ ( [], ( substitutions, currentState ) ) ]
+
+                                ( fieldName, fieldType ) :: rest ->
+                                    List.concatMap
+                                        (\( fieldExpr, ( nextSubstitutions, nextState ) ) ->
+                                            List.map
+                                                (\( restExprs, finalState ) ->
+                                                    ( ( fieldName, fieldExpr ) :: restExprs
+                                                    , finalState
+                                                    )
+                                                )
+                                                (collectFields
+                                                    nextSubstitutions
+                                                    nextState
+                                                    rest
+                                                )
+                                        )
+                                        (generator
+                                            { config
+                                                | isRoot = False
+                                                , values = transform config.values
+                                            }
+                                            currentState
+                                            fieldType
+                                        )
+                    in
+                    collectFields Type.noSubstitutions state fields
+                        |> List.map (Tuple.mapFirst CreateRecord)
 
                 _ ->
                     []
@@ -830,6 +877,18 @@ exprToStringHelp addLinebreaks isArgument expr =
 
             else
                 callString
+
+        CreateRecord values ->
+            let
+                valueToString ( fieldName, tipe ) =
+                    fieldName ++ " = " ++ exprToStringHelp addLinebreaks False tipe
+            in
+            String.concat
+                [ "{ "
+                , String.join "\n, " <|
+                    List.map valueToString values
+                , "\n}"
+                ]
 
         UpdateRecord name values ->
             if List.isEmpty values then
