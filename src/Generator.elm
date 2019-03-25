@@ -4,7 +4,8 @@ module Generator exposing
     , value, call
     , tuple, cases
     , record, recordUpdate, field, accessor
-    , all, first
+    , all
+    , first, firstN
     , exprToString, exprToText
     )
 
@@ -16,7 +17,8 @@ module Generator exposing
 @docs value, call
 @docs tuple, cases
 @docs record, recordUpdate, field, accessor
-@docs all, first
+@docs all
+@docs first, firstN
 
 @docs exprToString, exprToText
 
@@ -40,6 +42,7 @@ module Generator exposing
 
 -}
 
+import Combine exposing (combineWith)
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias, Module, Union)
 import Elm.Type exposing (Type(..))
@@ -87,6 +90,7 @@ type alias GenerateState =
 type alias GenerateConfig =
     { targetTypeVars : Set String
     , isRoot : Bool
+    , limit : Maybe Int
     , unions : List Union
     , aliases : List Alias
     , values : List (Dict String Type)
@@ -205,6 +209,7 @@ for targetType (Generator transformValues generator) =
         generator
             { targetTypeVars = Type.typeVariables targetType
             , isRoot = True
+            , limit = Nothing
             , unions = []
             , aliases = []
             , values = transformValues []
@@ -248,17 +253,16 @@ call argumentGenerators =
                                     then
                                         Just
                                             ( Call name (List.reverse argumentExprs)
-                                            , ( substitutions
-                                              , finalState
-                                              )
+                                            , finalState
                                             )
 
                                     else
                                         Nothing
                                 )
                                 (collectArgumentExprs
-                                    { state | count = newCount }
-                                    substitutions
+                                    ( substitutions
+                                    , { state | count = newCount }
+                                    )
                                     arguments
                                 )
                                 ++ calls
@@ -309,40 +313,30 @@ call argumentGenerators =
                         config.targetTypeVars
                         substitutions.bindTypeVariables
 
-                collectArgumentExprs currentState substitutions arguments =
-                    let
-                        substitutedArguments =
+                collectArgumentExprs =
+                    combineWith Nothing <|
+                        \( substitutions, nextState ) ( tipe, Generator transform generator ) ->
                             List.map
-                                (Tuple.mapFirst (Type.substitute substitutions))
-                                arguments
-                    in
-                    case substitutedArguments of
-                        [] ->
-                            [ ( [], currentState ) ]
-
-                        ( tipe, Generator transform generator ) :: rest ->
-                            List.concatMap
-                                (\( argumentExpr, ( nextSubstitutions, nextState ) ) ->
-                                    List.map
-                                        (\( restExprs, finalState ) ->
-                                            ( argumentExpr :: restExprs
-                                            , finalState
-                                            )
-                                        )
-                                        (collectArgumentExprs
-                                            nextState
-                                            nextSubstitutions
-                                            rest
-                                        )
+                                (Tuple.mapSecond <|
+                                    Tuple.mapFirst <|
+                                        joinSubstitutions substitutions
                                 )
                                 (generator
                                     { config
                                         | isRoot = False
                                         , values = transform config.values
                                     }
-                                    currentState
-                                    tipe
+                                    nextState
+                                    (Type.substitute substitutions tipe)
                                 )
+
+                joinSubstitutions subA subB =
+                    { subA
+                        | bindTypeVariables =
+                            Dict.union
+                                subA.bindTypeVariables
+                                subB.bindTypeVariables
+                    }
             in
             List.foldr collectScope [] config.values
 
@@ -364,36 +358,17 @@ all generators =
 
 
 {-| -}
-first : List Generator -> Generator
-first generators =
-    Generator identity <|
-        \config state targetType ->
-            firstHelp config state targetType generators
+first : Generator -> Generator
+first =
+    firstN 1
 
 
-firstHelp :
-    GenerateConfig
-    -> GenerateState
-    -> Type
-    -> List Generator
-    -> List ( Expr, ( Substitutions, GenerateState ) )
-firstHelp config state targetType generators =
-    case generators of
-        [] ->
-            []
-
-        (Generator transform generator) :: rest ->
-            case
-                generator
-                    { config | values = transform config.values }
-                    state
-                    targetType
-            of
-                [] ->
-                    firstHelp config state targetType rest
-
-                result :: _ ->
-                    [ result ]
+{-| -}
+firstN : Int -> Generator -> Generator
+firstN newLimit (Generator transform generator) =
+    Generator transform <|
+        \config ->
+            generator { config | limit = Just newLimit }
 
 
 {-| Generate a tuple.

@@ -911,9 +911,9 @@ generator model =
                         , branch =
                             \newValues ->
                                 all
-                                    [ first
+                                    [ all
                                         [ recordUpdate <|
-                                            first
+                                            all
                                                 [ value
                                                     |> addValues newValues
                                                     |> takeValues 1
@@ -927,9 +927,9 @@ generator model =
                                         ]
                                     , tuple
                                         { first =
-                                            first
+                                            all
                                                 [ recordUpdate <|
-                                                    first
+                                                    all
                                                         [ value
                                                             |> addValues newValues
                                                             |> takeValues 1
@@ -942,7 +942,7 @@ generator model =
                                                 , call []
                                                 ]
                                         , second =
-                                            first
+                                            all
                                                 [ call []
                                                 , call
                                                     [ value
