@@ -79,12 +79,14 @@ type Generator
         (GenerateConfig
          -> GenerateState
          -> Type
-         -> List ( Expr, ( Substitutions, GenerateState ) )
+         -> List ( Expr, GenerateState )
         )
 
 
 type alias GenerateState =
-    { count : Int }
+    { count : Int
+    , substitutions : Substitutions
+    }
 
 
 type alias GenerateConfig =
@@ -214,7 +216,9 @@ for targetType (Generator transformValues generator) =
             , aliases = []
             , values = transformValues []
             }
-            { count = 0 }
+            { count = 0
+            , substitutions = Type.noSubstitutions
+            }
             targetType
 
 
@@ -260,8 +264,8 @@ call argumentGenerators =
                                         Nothing
                                 )
                                 (collectArgumentExprs
-                                    ( substitutions
-                                    , { state | count = newCount }
+                                    (addSubstitutions substitutions
+                                        { state | count = newCount }
                                     )
                                     arguments
                                 )
@@ -315,20 +319,14 @@ call argumentGenerators =
 
                 collectArgumentExprs =
                     combineWith Nothing <|
-                        \( substitutions, nextState ) ( tipe, Generator transform generator ) ->
-                            List.map
-                                (Tuple.mapSecond <|
-                                    Tuple.mapFirst <|
-                                        joinSubstitutions substitutions
-                                )
-                                (generator
-                                    { config
-                                        | isRoot = False
-                                        , values = transform config.values
-                                    }
-                                    nextState
-                                    (Type.substitute substitutions tipe)
-                                )
+                        \currentState ( tipe, Generator transform generator ) ->
+                            generator
+                                { config
+                                    | isRoot = False
+                                    , values = transform config.values
+                                }
+                                currentState
+                                (Type.substitute currentState.substitutions tipe)
 
                 joinSubstitutions subA subB =
                     { subA
@@ -386,7 +384,7 @@ tuple generator =
                         (Generator secondTransform secondGenerator) =
                             generator.second
 
-                        toTuple ( exprA, ( _, nextState ) ) =
+                        toTuple ( exprA, nextState ) =
                             List.map (Tuple.mapFirst (CreateTuple exprA)) <|
                                 secondGenerator
                                     { config | values = secondTransform config.values }
@@ -411,25 +409,21 @@ record (Generator transform generator) =
             case targetType of
                 Record fields var ->
                     let
-                        collectFields substitutions currentState remainingFields =
+                        collectFields currentState remainingFields =
                             case remainingFields of
                                 [] ->
-                                    [ ( [], ( substitutions, currentState ) ) ]
+                                    [ ( [], currentState ) ]
 
                                 ( fieldName, fieldType ) :: rest ->
                                     List.concatMap
-                                        (\( fieldExpr, ( nextSubstitutions, nextState ) ) ->
+                                        (\( fieldExpr, nextState ) ->
                                             List.map
                                                 (\( restExprs, finalState ) ->
                                                     ( ( fieldName, fieldExpr ) :: restExprs
                                                     , finalState
                                                     )
                                                 )
-                                                (collectFields
-                                                    nextSubstitutions
-                                                    nextState
-                                                    rest
-                                                )
+                                                (collectFields nextState rest)
                                         )
                                         (generator
                                             { config
@@ -440,7 +434,7 @@ record (Generator transform generator) =
                                             fieldType
                                         )
                     in
-                    collectFields Type.noSubstitutions state fields
+                    collectFields state fields
                         |> List.map (Tuple.mapFirst CreateRecord)
 
                 _ ->
@@ -528,24 +522,36 @@ field =
                             in
                             case comparability of
                                 TypesAreEqual ->
-                                    Just ( Call name [], ( substitutions, state ) )
+                                    Just
+                                        ( Call name []
+                                        , addSubstitutions substitutions state
+                                        )
 
                                 NotComparable ->
                                     if config.isRoot then
                                         Nothing
 
                                     else
-                                        Just ( Call name [], ( substitutions, state ) )
+                                        Just
+                                            ( Call name []
+                                            , addSubstitutions substitutions state
+                                            )
 
                                 TypeAIsMoreGeneral ->
-                                    Just ( Call name [], ( substitutions, state ) )
+                                    Just
+                                        ( Call name []
+                                        , addSubstitutions substitutions state
+                                        )
 
                                 TypeBIsMoreGeneral ->
                                     if targetTypeVarsBound substitutions then
                                         Nothing
 
                                     else
-                                        Just ( Call name [], ( substitutions, state ) )
+                                        Just
+                                            ( Call name []
+                                            , addSubstitutions substitutions state
+                                            )
 
                 targetTypeVarsBound substitutions =
                     targetTypeVarsBoundBy
@@ -580,24 +586,36 @@ accessor =
                                     in
                                     case comparability of
                                         TypesAreEqual ->
-                                            Just ( Call name [], ( substitutions, state ) )
+                                            Just
+                                                ( Call name []
+                                                , addSubstitutions substitutions state
+                                                )
 
                                         NotComparable ->
                                             if config.isRoot then
                                                 Nothing
 
                                             else
-                                                Just ( Call name [], ( substitutions, state ) )
+                                                Just
+                                                    ( Call name []
+                                                    , addSubstitutions substitutions state
+                                                    )
 
                                         TypeAIsMoreGeneral ->
-                                            Just ( Call name [], ( substitutions, state ) )
+                                            Just
+                                                ( Call name []
+                                                , addSubstitutions substitutions state
+                                                )
 
                                         TypeBIsMoreGeneral ->
                                             if targetTypeVarsBound substitutions then
                                                 Nothing
 
                                             else
-                                                Just ( Call name [], ( substitutions, state ) )
+                                                Just
+                                                    ( Call name []
+                                                    , addSubstitutions substitutions state
+                                                    )
 
                         targetTypeVarsBound substitutions =
                             targetTypeVarsBoundBy
@@ -623,10 +641,6 @@ cases generator =
                     config.unions
                         |> List.concatMap suggestMatched
                         |> List.concatMap suggestCase
-                        |> List.map
-                            (\( expr, state_ ) ->
-                                ( expr, ( Type.noSubstitutions, state_ ) )
-                            )
 
                 suggestMatched union =
                     List.map (Tuple.pair union.tags) <|
@@ -635,7 +649,7 @@ cases generator =
                             state
                             (Type union.name (List.map Var union.args))
 
-                suggestCase ( tags, ( matched, ( _, nextState ) ) ) =
+                suggestCase ( tags, ( matched, nextState ) ) =
                     List.map (Tuple.mapFirst (Case matched))
                         (suggestBranches nextState tags)
 
@@ -658,7 +672,7 @@ cases generator =
                                     generator.branch (toNewValues subTypes)
                             in
                             List.concatMap
-                                (\( branchExpr, ( _, nextState ) ) ->
+                                (\( branchExpr, nextState ) ->
                                     List.map
                                         (\( branchExprs, finalState ) ->
                                             ( ( branch, branchExpr ) :: branchExprs
@@ -730,6 +744,25 @@ cases generator =
 
 
 ------ HELPER
+
+
+addSubstitutions : Substitutions -> GenerateState -> GenerateState
+addSubstitutions newSubstitutions state =
+    let
+        add substitutions =
+            { bindTypeVariables =
+                Dict.union
+                    newSubstitutions.bindTypeVariables
+                    substitutions.bindTypeVariables
+            , bindRecordVariables =
+                Dict.union
+                    newSubstitutions.bindRecordVariables
+                    substitutions.bindRecordVariables
+            }
+    in
+    { state
+        | substitutions = add state.substitutions
+    }
 
 
 targetTypeVarsBoundBy : Set String -> Dict String Type -> Bool
