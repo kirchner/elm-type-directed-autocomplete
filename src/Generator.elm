@@ -249,8 +249,8 @@ call argumentGenerators =
                             calls
 
                         Just ( arguments, substitutions ) ->
-                            List.filterMap
-                                (\( argumentExprs, finalState ) ->
+                            let
+                                hasEnoughArguments ( argumentExprs, finalState ) =
                                     if
                                         List.length argumentExprs
                                             == List.length argumentGenerators
@@ -262,14 +262,15 @@ call argumentGenerators =
 
                                     else
                                         Nothing
-                                )
-                                (collectArgumentExprs
-                                    (addSubstitutions substitutions
-                                        { state | count = newCount }
-                                    )
-                                    arguments
-                                )
-                                ++ calls
+                            in
+                            List.append calls <|
+                                List.filterMap hasEnoughArguments <|
+                                    combineWith Nothing
+                                        generateArgument
+                                        (addSubstitutions substitutions
+                                            { state | count = newCount }
+                                        )
+                                        arguments
 
                 collectArguments tipe generators arguments =
                     case ( tipe, generators ) of
@@ -317,26 +318,16 @@ call argumentGenerators =
                         config.targetTypeVars
                         substitutions.bindTypeVariables
 
-                collectArgumentExprs =
-                    combineWith Nothing <|
-                        \currentState ( tipe, Generator transform generator ) ->
-                            generator
-                                { config
-                                    | isRoot = False
-                                    , values = transform config.values
-                                }
-                                currentState
-                                (Type.substitute currentState.substitutions tipe)
-
-                joinSubstitutions subA subB =
-                    { subA
-                        | bindTypeVariables =
-                            Dict.union
-                                subA.bindTypeVariables
-                                subB.bindTypeVariables
-                    }
+                generateArgument currentState ( tipe, Generator transform generator ) =
+                    generator
+                        { config
+                            | isRoot = False
+                            , values = transform config.values
+                        }
+                        currentState
+                        (Type.substitute currentState.substitutions tipe)
             in
-            List.foldr collectScope [] config.values
+            List.foldl collectScope [] config.values
 
 
 {-| Use all of the given `Generators`.
@@ -345,14 +336,14 @@ all : List Generator -> Generator
 all generators =
     Generator identity <|
         \config state targetType ->
-            List.concatMap
-                (\(Generator transform generator) ->
+            let
+                generateExprs (Generator transform generator) =
                     generator
                         { config | values = transform config.values }
                         state
                         targetType
-                )
-                generators
+            in
+            List.concatMap generateExprs generators
 
 
 {-| -}
@@ -409,32 +400,23 @@ record (Generator transform generator) =
             case targetType of
                 Record fields var ->
                     let
-                        collectFields currentState remainingFields =
-                            case remainingFields of
-                                [] ->
-                                    [ ( [], currentState ) ]
-
-                                ( fieldName, fieldType ) :: rest ->
-                                    List.concatMap
-                                        (\( fieldExpr, nextState ) ->
-                                            List.map
-                                                (\( restExprs, finalState ) ->
-                                                    ( ( fieldName, fieldExpr ) :: restExprs
-                                                    , finalState
-                                                    )
-                                                )
-                                                (collectFields nextState rest)
-                                        )
-                                        (generator
-                                            { config
-                                                | isRoot = False
-                                                , values = transform config.values
-                                            }
-                                            currentState
-                                            fieldType
-                                        )
+                        generateField currentState ( fieldName, fieldType ) =
+                            List.map
+                                (Tuple.mapFirst (Tuple.pair fieldName))
+                                (generator
+                                    { config
+                                        | isRoot = False
+                                        , values = transform config.values
+                                    }
+                                    currentState
+                                    (Type.substitute
+                                        currentState.substitutions
+                                        fieldType
+                                    )
+                                )
                     in
-                    collectFields state fields
+                    fields
+                        |> combineWith Nothing generateField state
                         |> List.map (Tuple.mapFirst CreateRecord)
 
                 _ ->
@@ -651,46 +633,9 @@ cases generator =
 
                 suggestCase ( tags, ( matched, nextState ) ) =
                     List.map (Tuple.mapFirst (Case matched))
-                        (suggestBranches nextState tags)
+                        (combineWith Nothing generateBranch nextState tags)
 
-                suggestBranches currentState tags =
-                    case tags of
-                        [] ->
-                            [ ( [], currentState ) ]
-
-                        ( name, subTypes ) :: restTags ->
-                            let
-                                branch =
-                                    if List.isEmpty subTypes then
-                                        name
-
-                                    else
-                                        String.join " "
-                                            (name :: List.map newValueFromType subTypes)
-
-                                (Generator transformValues branchGenerator) =
-                                    generator.branch (toNewValues subTypes)
-                            in
-                            List.concatMap
-                                (\( branchExpr, nextState ) ->
-                                    List.map
-                                        (\( branchExprs, finalState ) ->
-                                            ( ( branch, branchExpr ) :: branchExprs
-                                            , finalState
-                                            )
-                                        )
-                                        (suggestBranches nextState restTags)
-                                )
-                                (branchGenerator
-                                    { config
-                                        | isRoot = False
-                                        , values = transformValues config.values
-                                    }
-                                    currentState
-                                    targetType
-                                )
-
-                suggestBranch nextState ( name, subTypes ) =
+                generateBranch currentState ( name, subTypes ) =
                     let
                         branch =
                             if List.isEmpty subTypes then
@@ -703,12 +648,16 @@ cases generator =
                         (Generator transformValues branchGenerator) =
                             generator.branch (toNewValues subTypes)
                     in
-                    ( branch
-                    , branchGenerator
-                        { config | values = transformValues config.values }
-                        nextState
-                        targetType
-                    )
+                    List.map
+                        (Tuple.mapFirst (Tuple.pair branch))
+                        (branchGenerator
+                            { config
+                                | isRoot = False
+                                , values = transformValues config.values
+                            }
+                            currentState
+                            targetType
+                        )
 
                 toNewValues types =
                     types

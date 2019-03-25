@@ -71,8 +71,8 @@ valueTest =
           , [ "int" ]
           )
         , ( Lambda int int
-          , [ "Basics.negate"
-            , "Basics.identity"
+          , [ "Basics.identity"
+            , "Basics.negate"
             ]
           )
         , ( Lambda a a
@@ -93,8 +93,8 @@ callTest =
                     (Dict.insert "Basics.identity" (Lambda a a) values)
             )
             [ ( int
-              , [ "Basics.negate int"
-                , "Basics.identity int"
+              , [ "Basics.identity int"
+                , "Basics.negate int"
                 ]
               )
             , ( a
@@ -112,8 +112,8 @@ callTest =
               , [ "Basics.modBy int int" ]
               )
             , ( list string
-              , [ "List.map String.reverse strings"
-                , "List.map String.fromInt ints"
+              , [ "List.map String.fromInt ints"
+                , "List.map String.reverse strings"
                 ]
               )
             , ( a
@@ -132,8 +132,8 @@ callTest =
                     (Dict.insert "Basics.identity" (Lambda a a) values)
             )
             [ ( int
-              , [ "Basics.modBy int (Basics.negate int)"
-                , "Basics.modBy int (Basics.identity int)"
+              , [ "Basics.modBy int (Basics.identity int)"
+                , "Basics.modBy int (Basics.negate int)"
                 ]
               )
             , ( a
@@ -226,8 +226,8 @@ tupleTest =
                     (Dict.insert "Basics.identity" (Lambda a a) values)
             )
             [ ( Tuple [ int, int ]
-              , [ "( int, Basics.negate int )"
-                , "( int, Basics.identity int )"
+              , [ "( int, Basics.identity int )"
+                , "( int, Basics.negate int )"
                 ]
               )
             ]
