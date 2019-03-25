@@ -249,28 +249,23 @@ call argumentGenerators =
                             calls
 
                         Just ( arguments, substitutions ) ->
-                            let
-                                hasEnoughArguments ( argumentExprs, finalState ) =
-                                    if
-                                        List.length argumentExprs
-                                            == List.length argumentGenerators
-                                    then
-                                        Just
-                                            ( Call name (List.reverse argumentExprs)
-                                            , finalState
-                                            )
+                            arguments
+                                |> combineWith Nothing
+                                    generateArgument
+                                    (addSubstitutions substitutions
+                                        { state | count = newCount }
+                                    )
+                                |> List.map (Tuple.mapFirst (Call name << List.reverse))
+                                |> List.append calls
 
-                                    else
-                                        Nothing
-                            in
-                            List.append calls <|
-                                List.filterMap hasEnoughArguments <|
-                                    combineWith Nothing
-                                        generateArgument
-                                        (addSubstitutions substitutions
-                                            { state | count = newCount }
-                                        )
-                                        arguments
+                generateArgument currentState ( tipe, Generator transform generator ) =
+                    generator
+                        { config
+                            | isRoot = False
+                            , values = transform config.values
+                        }
+                        currentState
+                        (Type.substitute currentState.substitutions tipe)
 
                 collectArguments tipe generators arguments =
                     case ( tipe, generators ) of
@@ -317,15 +312,6 @@ call argumentGenerators =
                     targetTypeVarsBoundBy
                         config.targetTypeVars
                         substitutions.bindTypeVariables
-
-                generateArgument currentState ( tipe, Generator transform generator ) =
-                    generator
-                        { config
-                            | isRoot = False
-                            , values = transform config.values
-                        }
-                        currentState
-                        (Type.substitute currentState.substitutions tipe)
             in
             List.foldl collectScope [] config.values
 

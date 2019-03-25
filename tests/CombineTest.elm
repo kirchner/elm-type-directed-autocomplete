@@ -108,6 +108,12 @@ combineTest =
                 , [ 7 ]
                 ]
               )
+            , ( [ [ 1, 2 ]
+                , []
+                , [ 3, 4 ]
+                ]
+              , []
+              )
             ]
 
         inputToString input =
@@ -129,17 +135,28 @@ combineTest =
     describe "combine" <|
         List.map
             (\( input, output ) ->
-                describe ("with input == " ++ inputToString input)
-                    (List.range 0 (List.length output)
-                        |> List.map
-                            (\limit ->
-                                test ("with limit == " ++ String.fromInt limit) <|
-                                    \_ ->
-                                        input
-                                            |> combine (Just limit)
-                                            |> Expect.equal
-                                                (List.take limit output)
-                            )
-                    )
+                let
+                    maxLength =
+                        List.foldl (*) 1 (List.map List.length input)
+                in
+                concat
+                    [ describe ("with input == " ++ inputToString input)
+                        (List.range 0 maxLength
+                            |> List.map
+                                (\limit ->
+                                    test ("with limit == " ++ String.fromInt limit) <|
+                                        \_ ->
+                                            input
+                                                |> combine (Just limit)
+                                                |> Expect.equal
+                                                    (List.take limit output)
+                                )
+                        )
+                    , test ("with input == " ++ inputToString input ++ " and no limit") <|
+                        \_ ->
+                            input
+                                |> combine Nothing
+                                |> Expect.equal output
+                    ]
             )
             data
