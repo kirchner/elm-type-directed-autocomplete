@@ -265,17 +265,8 @@ call argumentGenerators =
                             |> BranchedState.combine generateArgument
                             |> BranchedState.map (Call name << List.reverse)
 
-                    generateArgument ( tipe, Generator { transform, generate } ) =
-                        BranchedState.get
-                            |> BranchedState.andThen
-                                (\{ substitutions } ->
-                                    generate
-                                        { config
-                                            | isRoot = False
-                                            , values = transform config.values
-                                        }
-                                        (Type.substitute substitutions tipe)
-                                )
+                    generateArgument ( tipe, generator ) =
+                        run generator { config | isRoot = False } tipe
 
                     collectArgumentsHelp tipe generators arguments =
                         case ( tipe, generators ) of
@@ -336,10 +327,8 @@ all generators =
         , generate =
             \config targetType ->
                 let
-                    generateExprs (Generator { transform, generate }) =
-                        generate
-                            { config | values = transform config.values }
-                            targetType
+                    generateExprs generator =
+                        run generator config targetType
                 in
                 BranchedState.traverse generateExprs generators
         }
@@ -373,25 +362,12 @@ tuple generator =
                 case targetType of
                     Tuple (typeA :: typeB :: []) ->
                         let
-                            (Generator stuffFirst) =
-                                generator.first
-
-                            (Generator stuffSecond) =
-                                generator.second
-
                             toTuple exprA =
-                                BranchedState.map (CreateTuple exprA) <|
-                                    stuffSecond.generate
-                                        { config
-                                            | values =
-                                                stuffSecond.transform config.values
-                                        }
-                                        typeB
+                                run generator.second config typeB
+                                    |> BranchedState.map (CreateTuple exprA)
                         in
-                        BranchedState.andThen toTuple <|
-                            stuffFirst.generate
-                                { config | values = stuffFirst.transform config.values }
-                                typeA
+                        run generator.first config typeA
+                            |> BranchedState.andThen toTuple
 
                     _ ->
                         BranchedState.state []
@@ -400,7 +376,7 @@ tuple generator =
 
 {-| -}
 record : Generator -> Generator
-record (Generator stuff) =
+record generator =
     Generator
         { transform = identity
         , generate =
@@ -409,18 +385,7 @@ record (Generator stuff) =
                     Record fields var ->
                         let
                             generateField ( fieldName, fieldType ) =
-                                BranchedState.get
-                                    |> BranchedState.andThen
-                                        (\{ substitutions } ->
-                                            stuff.generate
-                                                { config
-                                                    | isRoot = False
-                                                    , values = stuff.transform config.values
-                                                }
-                                                (Type.substitute substitutions
-                                                    fieldType
-                                                )
-                                        )
+                                run generator { config | isRoot = False } fieldType
                                     |> BranchedState.map (Tuple.pair fieldName)
                         in
                         fields
@@ -434,7 +399,7 @@ record (Generator stuff) =
 
 {-| -}
 recordUpdate : Generator -> Generator
-recordUpdate (Generator stuff) =
+recordUpdate generator =
     Generator
         { transform = identity
         , generate =
@@ -464,10 +429,8 @@ recordUpdate (Generator stuff) =
                                         (UpdateRecord name << List.singleton)
 
                             updateField ( fieldName, tipe ) =
-                                BranchedState.map (Tuple.pair fieldName) <|
-                                    stuff.generate
-                                        { config | values = stuff.transform config.values }
-                                        tipe
+                                run generator config tipe
+                                    |> BranchedState.map (Tuple.pair fieldName)
                         in
                         BranchedState.traverse
                             (Dict.foldl ofTargetType []
@@ -647,16 +610,9 @@ cases generator =
                             |> BranchedState.map (Case matched)
 
                     generateBranch ( name, subTypes ) =
-                        let
-                            (Generator stuffBranch) =
-                                generator.branch (toNewValues subTypes)
-                        in
                         BranchedState.map (Tuple.pair (branch name subTypes)) <|
-                            stuffBranch.generate
-                                { config
-                                    | isRoot = False
-                                    , values = stuffBranch.transform config.values
-                                }
+                            run (generator.branch (toNewValues subTypes))
+                                { config | isRoot = False }
                                 targetType
 
                     branch name subTypes =
@@ -702,6 +658,18 @@ cases generator =
 
 
 ------ HELPER
+
+
+run : Generator -> GeneratorConfig -> Type -> BranchedState GeneratorState Expr
+run (Generator { transform, generate }) config tipe =
+    let
+        runHelp { substitutions } =
+            generate
+                { config | values = transform config.values }
+                (Type.substitute substitutions tipe)
+    in
+    BranchedState.get
+        |> BranchedState.andThen runHelp
 
 
 addSubstitutions : Substitutions -> BranchedState GeneratorState ()
