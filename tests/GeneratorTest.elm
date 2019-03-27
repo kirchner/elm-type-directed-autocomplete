@@ -54,9 +54,11 @@ suite =
             , recordUpdateTest
             , casesTest
             , allTest
-            , equivalenceTest
+
+            --, equivalenceTest
             ]
-        , takeValuesTest
+
+        --, takeValuesTest
         ]
 
 
@@ -457,165 +459,170 @@ allTest =
         ]
 
 
-equivalenceTest : Test
-equivalenceTest =
-    let
-        generatorA =
-            call
-                [ all
-                    [ value
-                    , call [ value ]
-                    ]
-                , value
-                ]
-                |> addValues values
 
-        generatorB =
-            all
-                [ call
-                    [ value
-                    , value
-                    ]
-                , call
-                    [ call [ value ]
-                    , value
-                    ]
-                ]
-                |> addValues values
-    in
-    describe
-        ("call [ all [ value, call [ value ] ], value ] "
-            ++ "== all [ call [ value, value ], call [ call [ value ], value ] ]"
-        )
-        [ test "Int" <|
-            \_ ->
-                for int generatorA
-                    |> List.map exprToString
-                    |> Expect.equal
-                        (for int generatorB
-                            |> List.map exprToString
-                        )
-        , test "List Int" <|
-            \_ ->
-                for (list int) generatorA
-                    |> List.map exprToString
-                    |> Expect.equal
-                        (for (list int) generatorB
-                            |> List.map exprToString
-                        )
-        ]
+{-
+   equivalenceTest : Test
+   equivalenceTest =
+       let
+           generatorA =
+               call
+                   [ all
+                       [ value
+                       , call [ value ]
+                       ]
+                   , value
+                   ]
+                   |> addValues values
 
+           generatorB =
+               all
+                   [ call
+                       [ value
+                       , value
+                       ]
+                   , call
+                       [ call [ value ]
+                       , value
+                       ]
+                   ]
+                   |> addValues values
+       in
+       describe
+           ("call [ all [ value, call [ value ] ], value ] "
+               ++ "== all [ call [ value, value ], call [ call [ value ], value ] ]"
+           )
+           [ test "Int" <|
+               \_ ->
+                   for int generatorA
+                       |> List.map exprToString
+                       |> Expect.equal
+                           (for int generatorB
+                               |> List.map exprToString
+                           )
+           , test "List Int" <|
+               \_ ->
+                   for (list int) generatorA
+                       |> List.map exprToString
+                       |> Expect.equal
+                           (for (list int) generatorB
+                               |> List.map exprToString
+                           )
+           ]
 
-takeValuesTest : Test
-takeValuesTest =
-    describe "takeValues"
-        [ testGenerator "at 0"
-            (call []
-                |> addValues values
-                |> takeValues 0
-            )
-            [ ( int
-              , []
-              )
-            ]
-        , testGenerator "at 1"
-            (call []
-                |> addValues values
-                |> takeValues 1
-            )
-            [ ( int
-              , [ "int" ]
-              )
-            ]
-        , testGenerator "call value at 0"
-            (call
-                [ value
-                    |> addValues (Dict.singleton "newInt" int)
-                    |> takeValues 1
-                ]
-                |> addValues values
-            )
-            [ ( int
-              , [ "Basics.negate newInt" ]
-              )
-            ]
-        , testGenerator "cases"
-            (cases
-                { matched = call []
-                , branch =
-                    \newValues ->
-                        all
-                            [ call []
-                                |> addValues newValues
-                                |> takeValues 1
-                            , call []
-                            ]
-                }
-                |> addValues values
-            )
-            [ ( int
-              , [ """case msg of
-    NewInt newInt ->
-        newInt
+-}
+{-
 
-    NewFloat newFloat ->
-        int
+   takeValuesTest : Test
+   takeValuesTest =
+       describe "takeValues"
+           [ testGenerator "at 0"
+               (call []
+                   |> addValues values
+                   |> takeValues 0
+               )
+               [ ( int
+                 , []
+                 )
+               ]
+           , testGenerator "at 1"
+               (call []
+                   |> addValues values
+                   |> takeValues 1
+               )
+               [ ( int
+                 , [ "int" ]
+                 )
+               ]
+           , testGenerator "call value at 0"
+               (call
+                   [ value
+                       |> addValues (Dict.singleton "newInt" int)
+                       |> takeValues 1
+                   ]
+                   |> addValues values
+               )
+               [ ( int
+                 , [ "Basics.negate newInt" ]
+                 )
+               ]
+           , testGenerator "cases"
+               (cases
+                   { matched = call []
+                   , branch =
+                       \newValues ->
+                           all
+                               [ call []
+                                   |> addValues newValues
+                                   |> takeValues 1
+                               , call []
+                               ]
+                   }
+                   |> addValues values
+               )
+               [ ( int
+                 , [ """case msg of
+       NewInt newInt ->
+           newInt
 
-    NewString newString ->
-        int"""
-                , """case msg of
-    NewInt newInt ->
-        int
+       NewFloat newFloat ->
+           int
 
-    NewFloat newFloat ->
-        int
+       NewString newString ->
+           int"""
+                   , """case msg of
+       NewInt newInt ->
+           int
 
-    NewString newString ->
-        int"""
-                ]
-              )
-            ]
-        , testGenerator "cases with recordUpdate"
-            (cases
-                { matched = call []
-                , branch =
-                    \newValues ->
-                        all
-                            [ recordUpdate
-                                (call []
-                                    |> addValues newValues
-                                    |> takeValues 1
-                                )
-                            , call []
-                            ]
-                }
-                |> addValues (Dict.remove "int" values)
-            )
-            [ ( Record
-                    [ ( "int", int ) ]
-                    Nothing
-              , [ """case msg of
-    NewInt newInt ->
-        { intRecord | int = newInt }
+       NewFloat newFloat ->
+           int
 
-    NewFloat newFloat ->
-        intRecord
+       NewString newString ->
+           int"""
+                   ]
+                 )
+               ]
+           , testGenerator "cases with recordUpdate"
+               (cases
+                   { matched = call []
+                   , branch =
+                       \newValues ->
+                           all
+                               [ recordUpdate
+                                   (call []
+                                       |> addValues newValues
+                                       |> takeValues 1
+                                   )
+                               , call []
+                               ]
+                   }
+                   |> addValues (Dict.remove "int" values)
+               )
+               [ ( Record
+                       [ ( "int", int ) ]
+                       Nothing
+                 , [ """case msg of
+       NewInt newInt ->
+           { intRecord | int = newInt }
 
-    NewString newString ->
-        intRecord"""
-                , """case msg of
-    NewInt newInt ->
-        intRecord
+       NewFloat newFloat ->
+           intRecord
 
-    NewFloat newFloat ->
-        intRecord
+       NewString newString ->
+           intRecord"""
+                   , """case msg of
+       NewInt newInt ->
+           intRecord
 
-    NewString newString ->
-        intRecord"""
-                ]
-              )
-            ]
-        ]
+       NewFloat newFloat ->
+           intRecord
+
+       NewString newString ->
+           intRecord"""
+                   ]
+                 )
+               ]
+           ]
+-}
 
 
 int : Type

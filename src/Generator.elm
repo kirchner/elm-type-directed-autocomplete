@@ -76,12 +76,9 @@ calls, case expressions and tuples. You can also combine these generators.
 -}
 type Generator
     = Generator
-        (List (Dict String Type) -> List (Dict String Type))
-        (GeneratorConfig
-         -> GeneratorState
-         -> Type
-         -> List ( Expr, GeneratorState )
-        )
+        { transform : List (Dict String Type) -> List (Dict String Type)
+        , generate : GeneratorConfig -> Type -> BranchedState GeneratorState Expr
+        }
 
 
 type alias GeneratorState =
@@ -182,10 +179,13 @@ add known custom types to it. For example
 
 -}
 addUnions : List Union -> Generator -> Generator
-addUnions newUnions (Generator transformValues generator) =
-    Generator transformValues <|
-        \config ->
-            generator { config | unions = newUnions ++ config.unions }
+addUnions newUnions (Generator stuff) =
+    Generator
+        { stuff
+            | generate =
+                \config ->
+                    stuff.generate { config | unions = newUnions ++ config.unions }
+        }
 
 
 {-| Add known values. The ones which are added last, will
@@ -193,34 +193,35 @@ be searched first. Also, `Generator`s like `all` or `cases` propagate their
 known values to their children.
 -}
 addValues : Dict String Type -> Generator -> Generator
-addValues newValues (Generator transformValues generator) =
-    Generator ((::) newValues << transformValues) generator
+addValues newValues (Generator stuff) =
+    Generator { stuff | transform = (::) newValues << stuff.transform }
 
 
 {-| Drop known values which are further away then the provided value.
 -}
 takeValues : Int -> Generator -> Generator
-takeValues distance (Generator transformValues generator) =
-    Generator (List.take distance << transformValues) generator
+takeValues distance (Generator stuff) =
+    Generator { stuff | transform = List.take distance << stuff.transform }
 
 
 {-| Generate all possible expressions which are of a certain type.
 -}
 for : Type -> Generator -> List Expr
-for targetType (Generator transformValues generator) =
-    List.map Tuple.first <|
-        generator
+for targetType (Generator stuff) =
+    BranchedState.finalValues
+        { count = 0
+        , substitutions = Type.noSubstitutions
+        }
+        (stuff.generate
             { targetTypeVars = Type.typeVariables targetType
             , isRoot = True
             , limit = Nothing
             , unions = []
             , aliases = []
-            , values = transformValues []
-            }
-            { count = 0
-            , substitutions = Type.noSubstitutions
+            , values = stuff.transform []
             }
             targetType
+        )
 
 
 {-| -}
@@ -234,99 +235,114 @@ provided `Generators`.
 -}
 call : List Generator -> Generator
 call argumentGenerators =
-    Generator identity <|
-        \config state targetType ->
-            let
-                collectScope valuesInScope calls =
-                    Dict.foldl collectValue calls valuesInScope
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                let
+                    collectScope valuesInScope =
+                        valuesInScope
+                            |> Dict.toList
+                            |> BranchedState.traverse collectValue
 
-                collectValue name tipe calls =
-                    let
-                        ( instantiatedType, newCount ) =
-                            instantiate state.count tipe
-                    in
-                    case collectArguments instantiatedType argumentGenerators [] of
-                        Nothing ->
-                            calls
+                    collectValue ( name, tipe ) =
+                        instantiate tipe
+                            |> BranchedState.andThen (collectArguments name)
+                            |> BranchedState.join
 
-                        Just ( arguments, substitutions ) ->
-                            addSubstitutions substitutions { state | count = newCount }
-                                |> combineWith Nothing generateArgument arguments
-                                |> List.map (Tuple.mapFirst (Call name << List.reverse))
-                                |> List.append calls
+                    collectArguments name instantiatedType =
+                        case collectArgumentsHelp instantiatedType argumentGenerators [] of
+                            Nothing ->
+                                BranchedState.state []
 
-                generateArgument ( tipe, Generator transform generator ) currentState =
-                    generator
-                        { config
-                            | isRoot = False
-                            , values = transform config.values
-                        }
-                        currentState
-                        (Type.substitute currentState.substitutions tipe)
+                            Just ( arguments, substitutions ) ->
+                                addSubstitutions substitutions
+                                    |> BranchedState.map
+                                        (\_ -> generateCall name arguments)
 
-                collectArguments tipe generators arguments =
-                    case ( tipe, generators ) of
-                        ( Lambda from to, generator :: rest ) ->
-                            collectArguments to rest <|
-                                (( from, generator ) :: arguments)
+                    generateCall name arguments =
+                        arguments
+                            |> BranchedState.combine generateArgument
+                            |> BranchedState.map (Call name << List.reverse)
 
-                        ( _, [] ) ->
-                            case
-                                Type.unifiability
-                                    { typeA = tipe
-                                    , typeB = targetType
-                                    }
-                            of
-                                NotUnifiable ->
-                                    Nothing
+                    generateArgument ( tipe, Generator { transform, generate } ) =
+                        BranchedState.get
+                            |> BranchedState.andThen
+                                (\{ substitutions } ->
+                                    generate
+                                        { config
+                                            | isRoot = False
+                                            , values = transform config.values
+                                        }
+                                        (Type.substitute substitutions tipe)
+                                )
 
-                                Unifiable comparability substitutions ->
-                                    case comparability of
-                                        TypesAreEqual ->
-                                            Just ( arguments, substitutions )
+                    collectArgumentsHelp tipe generators arguments =
+                        case ( tipe, generators ) of
+                            ( Lambda from to, generator :: rest ) ->
+                                collectArgumentsHelp to rest <|
+                                    (( from, generator ) :: arguments)
 
-                                        NotComparable ->
-                                            if config.isRoot then
-                                                Nothing
+                            ( _, [] ) ->
+                                case
+                                    Type.unifiability
+                                        { typeA = tipe
+                                        , typeB = targetType
+                                        }
+                                of
+                                    NotUnifiable ->
+                                        Nothing
 
-                                            else
+                                    Unifiable comparability substitutions ->
+                                        case comparability of
+                                            TypesAreEqual ->
                                                 Just ( arguments, substitutions )
 
-                                        TypeAIsMoreGeneral ->
-                                            Just ( arguments, substitutions )
+                                            NotComparable ->
+                                                if config.isRoot then
+                                                    Nothing
 
-                                        TypeBIsMoreGeneral ->
-                                            if targetTypeVarsBound substitutions then
-                                                Nothing
+                                                else
+                                                    Just ( arguments, substitutions )
 
-                                            else
+                                            TypeAIsMoreGeneral ->
                                                 Just ( arguments, substitutions )
 
-                        _ ->
-                            Nothing
+                                            TypeBIsMoreGeneral ->
+                                                if targetTypeVarsBound substitutions then
+                                                    Nothing
 
-                targetTypeVarsBound substitutions =
-                    targetTypeVarsBoundBy
-                        config.targetTypeVars
-                        substitutions.bindTypeVariables
-            in
-            List.foldl collectScope [] config.values
+                                                else
+                                                    Just ( arguments, substitutions )
+
+                            _ ->
+                                Nothing
+
+                    targetTypeVarsBound substitutions =
+                        targetTypeVarsBoundBy
+                            config.targetTypeVars
+                            substitutions.bindTypeVariables
+                in
+                BranchedState.traverse collectScope config.values
+        }
 
 
 {-| Use all of the given `Generators`.
 -}
 all : List Generator -> Generator
 all generators =
-    Generator identity <|
-        \config state targetType ->
-            let
-                generateExprs (Generator transform generator) =
-                    generator
-                        { config | values = transform config.values }
-                        state
-                        targetType
-            in
-            List.concatMap generateExprs generators
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                let
+                    generateExprs (Generator { transform, generate }) =
+                        generate
+                            { config | values = transform config.values }
+                            targetType
+                in
+                BranchedState.traverse generateExprs generators
+        }
 
 
 {-| -}
@@ -337,349 +353,359 @@ first =
 
 {-| -}
 firstN : Int -> Generator -> Generator
-firstN newLimit (Generator transform generator) =
-    Generator transform <|
-        \config ->
-            generator { config | limit = Just newLimit }
+firstN newLimit (Generator stuff) =
+    Generator
+        { stuff
+            | generate =
+                \config ->
+                    stuff.generate { config | limit = Just newLimit }
+        }
 
 
 {-| Generate a tuple.
 -}
 tuple : { first : Generator, second : Generator } -> Generator
 tuple generator =
-    Generator identity <|
-        \config state targetType ->
-            case targetType of
-                Tuple (typeA :: typeB :: []) ->
-                    let
-                        (Generator firstTransform firstGenerator) =
-                            generator.first
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                case targetType of
+                    Tuple (typeA :: typeB :: []) ->
+                        let
+                            (Generator stuffFirst) =
+                                generator.first
 
-                        (Generator secondTransform secondGenerator) =
-                            generator.second
+                            (Generator stuffSecond) =
+                                generator.second
 
-                        toTuple ( exprA, nextState ) =
-                            List.map (Tuple.mapFirst (CreateTuple exprA)) <|
-                                secondGenerator
-                                    { config | values = secondTransform config.values }
-                                    nextState
-                                    typeB
-                    in
-                    List.concatMap toTuple <|
-                        firstGenerator
-                            { config | values = firstTransform config.values }
-                            state
-                            typeA
+                            toTuple exprA =
+                                BranchedState.map (CreateTuple exprA) <|
+                                    stuffSecond.generate
+                                        { config
+                                            | values =
+                                                stuffSecond.transform config.values
+                                        }
+                                        typeB
+                        in
+                        BranchedState.andThen toTuple <|
+                            stuffFirst.generate
+                                { config | values = stuffFirst.transform config.values }
+                                typeA
 
-                _ ->
-                    []
+                    _ ->
+                        BranchedState.state []
+        }
 
 
 {-| -}
 record : Generator -> Generator
-record (Generator transform generator) =
-    Generator identity <|
-        \config state targetType ->
-            case targetType of
-                Record fields var ->
-                    let
-                        generateField ( fieldName, fieldType ) currentState =
-                            List.map
-                                (Tuple.mapFirst (Tuple.pair fieldName))
-                                (generator
-                                    { config
-                                        | isRoot = False
-                                        , values = transform config.values
-                                    }
-                                    currentState
-                                    (Type.substitute
-                                        currentState.substitutions
-                                        fieldType
-                                    )
-                                )
-                    in
-                    state
-                        |> combineWith Nothing generateField fields
-                        |> List.map (Tuple.mapFirst CreateRecord)
+record (Generator stuff) =
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                case targetType of
+                    Record fields var ->
+                        let
+                            generateField ( fieldName, fieldType ) =
+                                BranchedState.get
+                                    |> BranchedState.andThen
+                                        (\{ substitutions } ->
+                                            stuff.generate
+                                                { config
+                                                    | isRoot = False
+                                                    , values = stuff.transform config.values
+                                                }
+                                                (Type.substitute substitutions
+                                                    fieldType
+                                                )
+                                        )
+                                    |> BranchedState.map (Tuple.pair fieldName)
+                        in
+                        fields
+                            |> BranchedState.combine generateField
+                            |> BranchedState.map CreateRecord
 
-                _ ->
-                    []
+                    _ ->
+                        BranchedState.state []
+        }
 
 
 {-| -}
 recordUpdate : Generator -> Generator
-recordUpdate (Generator transform generator) =
-    Generator identity <|
-        \config state targetType ->
-            case targetType of
-                Record fields var ->
-                    let
-                        ofTargetType name tipe collected =
-                            Type.unifiability
-                                { typeA = tipe
-                                , typeB = targetType
-                                }
-                                |> collect name collected
+recordUpdate (Generator stuff) =
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                case targetType of
+                    Record fields var ->
+                        let
+                            ofTargetType name tipe collected =
+                                collect name collected <|
+                                    Type.unifiability
+                                        { typeA = tipe
+                                        , typeB = targetType
+                                        }
 
-                        collect name collected unifiability =
-                            case unifiability of
-                                Type.NotUnifiable ->
-                                    collected
+                            collect name collected unifiability =
+                                case unifiability of
+                                    Type.NotUnifiable ->
+                                        collected
 
-                                Type.Unifiable _ _ ->
-                                    ( name, state ) :: collected
+                                    Type.Unifiable _ _ ->
+                                        name :: collected
 
-                        toRecordUpdate ( name, nextState ) =
-                            fields
-                                |> List.foldl (updateField nextState) []
-                                |> List.map
-                                    (\( fieldName, ( tipe, finalState ) ) ->
-                                        ( UpdateRecord name [ ( fieldName, tipe ) ]
-                                        , finalState
-                                        )
-                                    )
+                            toRecordUpdate name =
+                                fields
+                                    |> BranchedState.traverse updateField
+                                    |> BranchedState.map
+                                        (UpdateRecord name << List.singleton)
 
-                        updateField nextState ( fieldName, tipe ) collected =
-                            generator
-                                { config | values = transform config.values }
-                                nextState
-                                tipe
-                                |> List.map (Tuple.pair fieldName)
-                                |> List.append collected
-                    in
-                    List.concatMap
-                        (Dict.foldl ofTargetType [] >> List.concatMap toRecordUpdate)
-                        config.values
+                            updateField ( fieldName, tipe ) =
+                                BranchedState.map (Tuple.pair fieldName) <|
+                                    stuff.generate
+                                        { config | values = stuff.transform config.values }
+                                        tipe
+                        in
+                        BranchedState.traverse
+                            (Dict.foldl ofTargetType []
+                                >> BranchedState.traverse toRecordUpdate
+                            )
+                            config.values
 
-                _ ->
-                    []
+                    _ ->
+                        BranchedState.state []
+        }
 
 
 {-| -}
 field : Generator
 field =
-    Generator identity <|
-        \config state targetType ->
-            let
-                fieldsOfTargetType name tipe collected =
-                    case tipe of
-                        Record fields _ ->
-                            List.filterMap (ofTargetType name) fields
-                                ++ collected
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                let
+                    fieldsOfTargetType ( name, tipe ) =
+                        case tipe of
+                            Record fields _ ->
+                                BranchedState.traverse (ofTargetType name) fields
 
-                        _ ->
-                            collected
+                            _ ->
+                                BranchedState.state []
 
-                ofTargetType recordName ( fieldName, tipe ) =
-                    case
-                        Type.unifiability
-                            { typeA = tipe
-                            , typeB = targetType
-                            }
-                    of
-                        NotUnifiable ->
-                            Nothing
+                    ofTargetType recordName ( fieldName, tipe ) =
+                        case
+                            Type.unifiability
+                                { typeA = tipe
+                                , typeB = targetType
+                                }
+                        of
+                            NotUnifiable ->
+                                BranchedState.state []
 
-                        Unifiable comparability substitutions ->
-                            let
-                                name =
-                                    recordName ++ "." ++ fieldName
-                            in
-                            case comparability of
-                                TypesAreEqual ->
-                                    Just
-                                        ( Call name []
-                                        , addSubstitutions substitutions state
-                                        )
+                            Unifiable comparability substitutions ->
+                                let
+                                    name =
+                                        recordName ++ "." ++ fieldName
+                                in
+                                case comparability of
+                                    TypesAreEqual ->
+                                        addSubstitutions substitutions
+                                            |> BranchedState.map
+                                                (\_ -> Call name [])
 
-                                NotComparable ->
-                                    if config.isRoot then
-                                        Nothing
+                                    NotComparable ->
+                                        if config.isRoot then
+                                            BranchedState.state []
 
-                                    else
-                                        Just
-                                            ( Call name []
-                                            , addSubstitutions substitutions state
-                                            )
+                                        else
+                                            addSubstitutions substitutions
+                                                |> BranchedState.map
+                                                    (\_ -> Call name [])
 
-                                TypeAIsMoreGeneral ->
-                                    Just
-                                        ( Call name []
-                                        , addSubstitutions substitutions state
-                                        )
+                                    TypeAIsMoreGeneral ->
+                                        addSubstitutions substitutions
+                                            |> BranchedState.map
+                                                (\_ -> Call name [])
 
-                                TypeBIsMoreGeneral ->
-                                    if targetTypeVarsBound substitutions then
-                                        Nothing
+                                    TypeBIsMoreGeneral ->
+                                        if targetTypeVarsBound substitutions then
+                                            BranchedState.state []
 
-                                    else
-                                        Just
-                                            ( Call name []
-                                            , addSubstitutions substitutions state
-                                            )
+                                        else
+                                            addSubstitutions substitutions
+                                                |> BranchedState.map
+                                                    (\_ -> Call name [])
 
-                targetTypeVarsBound substitutions =
-                    targetTypeVarsBoundBy
-                        config.targetTypeVars
-                        substitutions.bindTypeVariables
-            in
-            List.concatMap (Dict.foldl fieldsOfTargetType []) config.values
+                    targetTypeVarsBound substitutions =
+                        targetTypeVarsBoundBy
+                            config.targetTypeVars
+                            substitutions.bindTypeVariables
+                in
+                BranchedState.traverse
+                    (Dict.toList
+                        >> BranchedState.traverse fieldsOfTargetType
+                    )
+                    config.values
+        }
 
 
 {-| -}
 accessor : Generator
 accessor =
-    Generator identity <|
-        \config state targetType ->
-            case targetType of
-                Lambda (Record fields var) to ->
-                    let
-                        ofToType ( fieldName, tipe ) =
-                            case
-                                Type.unifiability
-                                    { typeA = tipe
-                                    , typeB = to
-                                    }
-                            of
-                                NotUnifiable ->
-                                    Nothing
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                case targetType of
+                    Lambda (Record fields var) to ->
+                        let
+                            ofToType ( fieldName, tipe ) =
+                                case
+                                    Type.unifiability
+                                        { typeA = tipe
+                                        , typeB = to
+                                        }
+                                of
+                                    NotUnifiable ->
+                                        BranchedState.state []
 
-                                Unifiable comparability substitutions ->
-                                    let
-                                        name =
-                                            "." ++ fieldName
-                                    in
-                                    case comparability of
-                                        TypesAreEqual ->
-                                            Just
-                                                ( Call name []
-                                                , addSubstitutions substitutions state
-                                                )
+                                    Unifiable comparability substitutions ->
+                                        let
+                                            name =
+                                                "." ++ fieldName
+                                        in
+                                        case comparability of
+                                            TypesAreEqual ->
+                                                addSubstitutions substitutions
+                                                    |> BranchedState.map
+                                                        (\_ -> Call name [])
 
-                                        NotComparable ->
-                                            if config.isRoot then
-                                                Nothing
+                                            NotComparable ->
+                                                if config.isRoot then
+                                                    BranchedState.state []
 
-                                            else
-                                                Just
-                                                    ( Call name []
-                                                    , addSubstitutions substitutions state
-                                                    )
+                                                else
+                                                    addSubstitutions substitutions
+                                                        |> BranchedState.map
+                                                            (\_ -> Call name [])
 
-                                        TypeAIsMoreGeneral ->
-                                            Just
-                                                ( Call name []
-                                                , addSubstitutions substitutions state
-                                                )
+                                            TypeAIsMoreGeneral ->
+                                                addSubstitutions substitutions
+                                                    |> BranchedState.map
+                                                        (\_ -> Call name [])
 
-                                        TypeBIsMoreGeneral ->
-                                            if targetTypeVarsBound substitutions then
-                                                Nothing
+                                            TypeBIsMoreGeneral ->
+                                                if targetTypeVarsBound substitutions then
+                                                    BranchedState.state []
 
-                                            else
-                                                Just
-                                                    ( Call name []
-                                                    , addSubstitutions substitutions state
-                                                    )
+                                                else
+                                                    addSubstitutions substitutions
+                                                        |> BranchedState.map
+                                                            (\_ -> Call name [])
 
-                        targetTypeVarsBound substitutions =
-                            targetTypeVarsBoundBy
-                                config.targetTypeVars
-                                substitutions.bindTypeVariables
-                    in
-                    List.filterMap ofToType fields
+                            targetTypeVarsBound substitutions =
+                                targetTypeVarsBoundBy
+                                    config.targetTypeVars
+                                    substitutions.bindTypeVariables
+                        in
+                        BranchedState.traverse ofToType fields
 
-                _ ->
-                    []
+                    _ ->
+                        BranchedState.state []
+        }
 
 
 {-| -}
 cases : { matched : Generator, branch : Dict String Type -> Generator } -> Generator
 cases generator =
-    Generator identity <|
-        \config state targetType ->
-            let
-                (Generator matchedTransform matchedGenerator) =
-                    generator.matched
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                let
+                    (Generator stuffMatched) =
+                        generator.matched
 
-                exprs =
-                    config.unions
-                        |> List.concatMap generateMatched
-                        |> List.concatMap generateCase
+                    exprs =
+                        config.unions
+                            |> BranchedState.traverse generateMatched
+                            |> BranchedState.andThen generateCase
 
-                generateMatched union =
-                    List.map (Tuple.pair union.tags) <|
-                        matchedGenerator
-                            { config | values = matchedTransform config.values }
-                            state
-                            (Type union.name (List.map Var union.args))
+                    generateMatched union =
+                        BranchedState.map (Tuple.pair union.tags) <|
+                            stuffMatched.generate
+                                { config | values = stuffMatched.transform config.values }
+                                (Type union.name (List.map Var union.args))
 
-                generateCase ( tags, ( matched, nextState ) ) =
-                    List.map (Tuple.mapFirst (Case matched))
-                        (combineWith Nothing generateBranch tags nextState)
+                    generateCase ( tags, matched ) =
+                        tags
+                            |> BranchedState.combine generateBranch
+                            |> BranchedState.map (Case matched)
 
-                generateBranch ( name, subTypes ) currentState =
-                    let
-                        (Generator transformValues branchGenerator) =
-                            generator.branch (toNewValues subTypes)
-                    in
-                    List.map
-                        (Tuple.mapFirst (Tuple.pair (branch name subTypes)))
-                        (branchGenerator
-                            { config
-                                | isRoot = False
-                                , values = transformValues config.values
-                            }
-                            currentState
-                            targetType
+                    generateBranch ( name, subTypes ) =
+                        let
+                            (Generator stuffBranch) =
+                                generator.branch (toNewValues subTypes)
+                        in
+                        BranchedState.map (Tuple.pair (branch name subTypes)) <|
+                            stuffBranch.generate
+                                { config
+                                    | isRoot = False
+                                    , values = stuffBranch.transform config.values
+                                }
+                                targetType
+
+                    branch name subTypes =
+                        if List.isEmpty subTypes then
+                            name
+
+                        else
+                            String.join " "
+                                (name :: List.map newValueFromType subTypes)
+
+                    toNewValues types =
+                        types
+                            |> List.map toNewValue
+                            |> Dict.fromList
+
+                    toNewValue tipe =
+                        ( newValueFromType tipe
+                        , tipe
                         )
 
-                branch name subTypes =
-                    if List.isEmpty subTypes then
-                        name
+                    newValueFromType tipe =
+                        case tipe of
+                            Type name _ ->
+                                "new" ++ name
 
-                    else
-                        String.join " "
-                            (name :: List.map newValueFromType subTypes)
+                            _ ->
+                                "a"
+                in
+                case targetType of
+                    Type _ _ ->
+                        exprs
 
-                toNewValues types =
-                    types
-                        |> List.map toNewValue
-                        |> Dict.fromList
+                    Tuple _ ->
+                        exprs
 
-                toNewValue tipe =
-                    ( newValueFromType tipe
-                    , tipe
-                    )
+                    Record _ _ ->
+                        exprs
 
-                newValueFromType tipe =
-                    case tipe of
-                        Type name _ ->
-                            "new" ++ name
-
-                        _ ->
-                            "a"
-            in
-            case targetType of
-                Type _ _ ->
-                    exprs
-
-                Tuple _ ->
-                    exprs
-
-                Record _ _ ->
-                    exprs
-
-                _ ->
-                    []
+                    _ ->
+                        BranchedState.state []
+        }
 
 
 
 ------ HELPER
 
 
-addSubstitutions : Substitutions -> GeneratorState -> GeneratorState
-addSubstitutions newSubstitutions state =
+addSubstitutions : Substitutions -> BranchedState GeneratorState ()
+addSubstitutions newSubstitutions =
     let
         add substitutions =
             { bindTypeVariables =
@@ -692,9 +718,14 @@ addSubstitutions newSubstitutions state =
                     substitutions.bindRecordVariables
             }
     in
-    { state
-        | substitutions = add state.substitutions
-    }
+    BranchedState.get
+        |> BranchedState.andThen
+            (\currentState ->
+                BranchedState.put
+                    { currentState
+                        | substitutions = add currentState.substitutions
+                    }
+            )
 
 
 targetTypeVarsBoundBy : Set String -> Dict String Type -> Bool
@@ -721,10 +752,20 @@ varBoundBy uncheckedBoundTypeVars varName =
                     True
 
 
-instantiate : Int -> Type -> ( Type, Int )
-instantiate count tipe =
-    instantiateHelp tipe
-        |> State.run count
+instantiate : Type -> BranchedState GeneratorState Type
+instantiate tipe =
+    BranchedState.get
+        |> BranchedState.andThen
+            (\currentState ->
+                let
+                    ( newType, newCount ) =
+                        instantiateHelp tipe
+                            |> State.run currentState.count
+                in
+                BranchedState.put { currentState | count = newCount }
+                    |> BranchedState.map
+                        (\_ -> newType)
+            )
 
 
 instantiateHelp : Type -> State Int Type
