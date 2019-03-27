@@ -42,6 +42,7 @@ module Generator exposing
 
 -}
 
+import BranchedState exposing (BranchedState)
 import Combine exposing (combineWith)
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias, Module, Union)
@@ -76,20 +77,20 @@ calls, case expressions and tuples. You can also combine these generators.
 type Generator
     = Generator
         (List (Dict String Type) -> List (Dict String Type))
-        (GenerateConfig
-         -> GenerateState
+        (GeneratorConfig
+         -> GeneratorState
          -> Type
-         -> List ( Expr, GenerateState )
+         -> List ( Expr, GeneratorState )
         )
 
 
-type alias GenerateState =
+type alias GeneratorState =
     { count : Int
     , substitutions : Substitutions
     }
 
 
-type alias GenerateConfig =
+type alias GeneratorConfig =
     { targetTypeVars : Set String
     , isRoot : Bool
     , limit : Maybe Int
@@ -677,7 +678,7 @@ cases generator =
 ------ HELPER
 
 
-addSubstitutions : Substitutions -> GenerateState -> GenerateState
+addSubstitutions : Substitutions -> GeneratorState -> GeneratorState
 addSubstitutions newSubstitutions state =
     let
         add substitutions =
