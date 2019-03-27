@@ -249,16 +249,12 @@ call argumentGenerators =
                             calls
 
                         Just ( arguments, substitutions ) ->
-                            arguments
-                                |> combineWith Nothing
-                                    generateArgument
-                                    (addSubstitutions substitutions
-                                        { state | count = newCount }
-                                    )
+                            addSubstitutions substitutions { state | count = newCount }
+                                |> combineWith Nothing generateArgument arguments
                                 |> List.map (Tuple.mapFirst (Call name << List.reverse))
                                 |> List.append calls
 
-                generateArgument currentState ( tipe, Generator transform generator ) =
+                generateArgument ( tipe, Generator transform generator ) currentState =
                     generator
                         { config
                             | isRoot = False
@@ -386,7 +382,7 @@ record (Generator transform generator) =
             case targetType of
                 Record fields var ->
                     let
-                        generateField currentState ( fieldName, fieldType ) =
+                        generateField ( fieldName, fieldType ) currentState =
                             List.map
                                 (Tuple.mapFirst (Tuple.pair fieldName))
                                 (generator
@@ -401,8 +397,8 @@ record (Generator transform generator) =
                                     )
                                 )
                     in
-                    fields
-                        |> combineWith Nothing generateField state
+                    state
+                        |> combineWith Nothing generateField fields
                         |> List.map (Tuple.mapFirst CreateRecord)
 
                 _ ->
@@ -605,37 +601,29 @@ cases generator =
                 (Generator matchedTransform matchedGenerator) =
                     generator.matched
 
-                matchedValues =
+                exprs =
                     config.unions
-                        |> List.concatMap suggestMatched
-                        |> List.concatMap suggestCase
+                        |> List.concatMap generateMatched
+                        |> List.concatMap generateCase
 
-                suggestMatched union =
+                generateMatched union =
                     List.map (Tuple.pair union.tags) <|
                         matchedGenerator
                             { config | values = matchedTransform config.values }
                             state
                             (Type union.name (List.map Var union.args))
 
-                suggestCase ( tags, ( matched, nextState ) ) =
+                generateCase ( tags, ( matched, nextState ) ) =
                     List.map (Tuple.mapFirst (Case matched))
-                        (combineWith Nothing generateBranch nextState tags)
+                        (combineWith Nothing generateBranch tags nextState)
 
-                generateBranch currentState ( name, subTypes ) =
+                generateBranch ( name, subTypes ) currentState =
                     let
-                        branch =
-                            if List.isEmpty subTypes then
-                                name
-
-                            else
-                                String.join " "
-                                    (name :: List.map newValueFromType subTypes)
-
                         (Generator transformValues branchGenerator) =
                             generator.branch (toNewValues subTypes)
                     in
                     List.map
-                        (Tuple.mapFirst (Tuple.pair branch))
+                        (Tuple.mapFirst (Tuple.pair (branch name subTypes)))
                         (branchGenerator
                             { config
                                 | isRoot = False
@@ -644,6 +632,14 @@ cases generator =
                             currentState
                             targetType
                         )
+
+                branch name subTypes =
+                    if List.isEmpty subTypes then
+                        name
+
+                    else
+                        String.join " "
+                            (name :: List.map newValueFromType subTypes)
 
                 toNewValues types =
                     types
@@ -665,13 +661,13 @@ cases generator =
             in
             case targetType of
                 Type _ _ ->
-                    matchedValues
+                    exprs
 
                 Tuple _ ->
-                    matchedValues
+                    exprs
 
                 Record _ _ ->
-                    matchedValues
+                    exprs
 
                 _ ->
                     []

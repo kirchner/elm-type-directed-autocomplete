@@ -6,18 +6,18 @@ module Combine exposing
 
 combine : Maybe Int -> List (List a) -> List (List a)
 combine limit pools =
-    combineWith limit (\_ list -> List.map (\a -> ( a, () )) list) () pools
+    combineWith limit (\list _ -> List.map (\a -> ( a, () )) list) pools ()
         |> List.map Tuple.first
 
 
-combineWith : Maybe Int -> (s -> b -> List ( a, s )) -> s -> List b -> List ( List a, s )
-combineWith limit toPool initialState inputs =
+combineWith : Maybe Int -> (a -> s -> List ( b, s )) -> List a -> s -> List ( List b, s )
+combineWith limit toPool inputs initialState =
     let
         limitOrInfinity =
             Maybe.withDefault (Basics.floor (1 / 0)) limit
     in
     if limitOrInfinity > 0 then
-        combineHelp 0 toPool initialState limitOrInfinity inputs
+        combineHelp 0 toPool inputs initialState limitOrInfinity
             |> Tuple.first
 
     else
@@ -26,12 +26,12 @@ combineWith limit toPool initialState inputs =
 
 combineHelp :
     Int
-    -> (s -> b -> List ( a, s ))
+    -> (b -> s -> List ( a, s ))
+    -> List b
     -> s
     -> Int
-    -> List b
     -> ( List ( List a, s ), Int )
-combineHelp totalCount toPool currentState limit inputs =
+combineHelp totalCount toPool inputs currentState limit =
     case inputs of
         [] ->
             ( [ ( [], currentState ) ]
@@ -48,7 +48,7 @@ combineHelp totalCount toPool currentState limit inputs =
                         ( expr, nextState ) :: otherExprs ->
                             let
                                 ( nextCombinations, nextCount ) =
-                                    combineHelp count toPool nextState limit otherInputs
+                                    combineHelp count toPool otherInputs nextState limit
                             in
                             if nextCount >= limit then
                                 ( acc
@@ -71,4 +71,4 @@ combineHelp totalCount toPool currentState limit inputs =
                                     , nextCount
                                     )
             in
-            collect (toPool currentState input) ( [], totalCount )
+            collect (toPool input currentState) ( [], totalCount )
