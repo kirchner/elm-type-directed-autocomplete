@@ -460,53 +460,15 @@ field =
                                 BranchedState.state []
 
                     ofTargetType recordName ( fieldName, tipe ) =
-                        case
-                            Type.unifiability
-                                { typeA = tipe
-                                , typeB = targetType
-                                }
-                        of
-                            NotUnifiable ->
-                                BranchedState.state []
-
-                            Unifiable comparability substitutions ->
-                                let
-                                    name =
-                                        recordName ++ "." ++ fieldName
-                                in
-                                case comparability of
-                                    TypesAreEqual ->
-                                        addSubstitutions substitutions
-                                            |> BranchedState.map
-                                                (\_ -> Call name [])
-
-                                    NotComparable ->
-                                        if config.isRoot then
-                                            BranchedState.state []
-
-                                        else
-                                            addSubstitutions substitutions
-                                                |> BranchedState.map
-                                                    (\_ -> Call name [])
-
-                                    TypeAIsMoreGeneral ->
-                                        addSubstitutions substitutions
-                                            |> BranchedState.map
-                                                (\_ -> Call name [])
-
-                                    TypeBIsMoreGeneral ->
-                                        if targetTypeVarsBound substitutions then
-                                            BranchedState.state []
-
-                                        else
-                                            addSubstitutions substitutions
-                                                |> BranchedState.map
-                                                    (\_ -> Call name [])
-
-                    targetTypeVarsBound substitutions =
-                        targetTypeVarsBoundBy
-                            config.targetTypeVars
-                            substitutions.bindTypeVariables
+                        let
+                            expr =
+                                Call (recordName ++ "." ++ fieldName) []
+                        in
+                        whenUnifiable config
+                            (\_ -> expr)
+                            { typeA = tipe
+                            , typeB = targetType
+                            }
                 in
                 BranchedState.traverse
                     (Dict.toList
@@ -527,53 +489,15 @@ accessor =
                     Lambda (Record fields var) to ->
                         let
                             ofToType ( fieldName, tipe ) =
-                                case
-                                    Type.unifiability
-                                        { typeA = tipe
-                                        , typeB = to
-                                        }
-                                of
-                                    NotUnifiable ->
-                                        BranchedState.state []
-
-                                    Unifiable comparability substitutions ->
-                                        let
-                                            name =
-                                                "." ++ fieldName
-                                        in
-                                        case comparability of
-                                            TypesAreEqual ->
-                                                addSubstitutions substitutions
-                                                    |> BranchedState.map
-                                                        (\_ -> Call name [])
-
-                                            NotComparable ->
-                                                if config.isRoot then
-                                                    BranchedState.state []
-
-                                                else
-                                                    addSubstitutions substitutions
-                                                        |> BranchedState.map
-                                                            (\_ -> Call name [])
-
-                                            TypeAIsMoreGeneral ->
-                                                addSubstitutions substitutions
-                                                    |> BranchedState.map
-                                                        (\_ -> Call name [])
-
-                                            TypeBIsMoreGeneral ->
-                                                if targetTypeVarsBound substitutions then
-                                                    BranchedState.state []
-
-                                                else
-                                                    addSubstitutions substitutions
-                                                        |> BranchedState.map
-                                                            (\_ -> Call name [])
-
-                            targetTypeVarsBound substitutions =
-                                targetTypeVarsBoundBy
-                                    config.targetTypeVars
-                                    substitutions.bindTypeVariables
+                                let
+                                    expr =
+                                        Call ("." ++ fieldName) []
+                                in
+                                whenUnifiable config
+                                    (\_ -> expr)
+                                    { typeA = tipe
+                                    , typeB = to
+                                    }
                         in
                         BranchedState.traverse ofToType fields
 
@@ -670,6 +594,61 @@ run (Generator { transform, generate }) config tipe =
     in
     BranchedState.get
         |> BranchedState.andThen runHelp
+
+
+whenUnifiable :
+    GeneratorConfig
+    -> (() -> a)
+    ->
+        { typeA : Type
+        , typeB : Type
+        }
+    -> BranchedState GeneratorState a
+whenUnifiable config func { typeA, typeB } =
+    let
+        targetTypeVarsBound substitutions =
+            targetTypeVarsBoundBy
+                config.targetTypeVars
+                substitutions.bindTypeVariables
+    in
+    case
+        Type.unifiability
+            { typeA = typeA
+            , typeB = typeB
+            }
+    of
+        NotUnifiable ->
+            BranchedState.state []
+
+        Unifiable comparability substitutions ->
+            case comparability of
+                TypesAreEqual ->
+                    addSubstitutions substitutions
+                        |> BranchedState.map
+                            func
+
+                NotComparable ->
+                    if config.isRoot then
+                        BranchedState.state []
+
+                    else
+                        addSubstitutions substitutions
+                            |> BranchedState.map
+                                func
+
+                TypeAIsMoreGeneral ->
+                    addSubstitutions substitutions
+                        |> BranchedState.map
+                            func
+
+                TypeBIsMoreGeneral ->
+                    if targetTypeVarsBound substitutions then
+                        BranchedState.state []
+
+                    else
+                        addSubstitutions substitutions
+                            |> BranchedState.map
+                                func
 
 
 addSubstitutions : Substitutions -> BranchedState GeneratorState ()
