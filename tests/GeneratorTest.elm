@@ -32,6 +32,7 @@ import Generator
         , call
         , cases
         , exprToString
+        , firstN
         , for
         , record
         , recordUpdate
@@ -55,6 +56,7 @@ suite =
             , casesTest
             , allTest
             , equivalenceTest
+            , firstNTest
             ]
         , takeValuesTest
         ]
@@ -452,6 +454,43 @@ allTest =
             )
             [ ( int
               , [ "intC" ]
+              )
+            ]
+        ]
+
+
+firstNTest : Test
+firstNTest =
+    describe "firstN"
+        [ testGenerator "only 1 result from 2 possibilities"
+            (firstN 1 (call [])
+                |> addValues
+                    (Dict.fromList
+                        [ ( "int1", int )
+                        , ( "int2", int )
+                        ]
+                    )
+            )
+            [ ( int
+              , [ "int1" ]
+              )
+            ]
+        , testGenerator "only 2 in nested generator"
+            (call
+                [ firstN 2 value ]
+                |> addValues
+                    (Dict.fromList
+                        [ ( "int1", int )
+                        , ( "int2", int )
+                        , ( "int3", int )
+                        , ( "func", Lambda int int )
+                        ]
+                    )
+            )
+            [ ( int
+              , [ "func int1"
+                , "func int2"
+                ]
               )
             ]
         ]

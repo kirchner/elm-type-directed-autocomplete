@@ -90,7 +90,6 @@ type alias GeneratorState =
 type alias GeneratorConfig =
     { targetTypeVars : Set String
     , isRoot : Bool
-    , limit : Maybe Int
     , unions : List Union
     , aliases : List Alias
     , values : List (Dict String Type)
@@ -208,14 +207,13 @@ takeValues distance (Generator stuff) =
 -}
 for : Type -> Generator -> List Expr
 for targetType (Generator stuff) =
-    BranchedState.finalValues
+    BranchedState.finalValues Nothing
         { count = 0
         , substitutions = Type.noSubstitutions
         }
         (stuff.generate
             { targetTypeVars = Type.typeVariables targetType
             , isRoot = True
-            , limit = Nothing
             , unions = []
             , aliases = []
             , values = stuff.transform []
@@ -346,8 +344,9 @@ firstN newLimit (Generator stuff) =
     Generator
         { stuff
             | generate =
-                \config ->
-                    stuff.generate { config | limit = Just newLimit }
+                \config targetType ->
+                    BranchedState.withLimit (Just newLimit) <|
+                        stuff.generate config targetType
         }
 
 

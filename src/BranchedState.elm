@@ -1,7 +1,9 @@
 module BranchedState exposing
     ( BranchedState
+    , advance
     , andThen
     , combine
+    , embed
     , finalValues
     , get
     , join
@@ -9,34 +11,39 @@ module BranchedState exposing
     , put
     , state
     , traverse
+    , withLimit
     )
 
 ---- TYPE AND CONSTRUCTS
 
 
 type BranchedState state value
-    = BranchedState (state -> List ( value, state ))
+    = BranchedState (Maybe Int -> state -> List ( value, state ))
 
 
 state : List value -> BranchedState state value
 state values =
     BranchedState <|
-        \currentState ->
-            List.map (\value -> ( value, currentState ))
-                values
+        \limit currentState ->
+            values
+                |> List.map (\value -> ( value, currentState ))
+                |> take limit
 
 
 embed : (s -> List a) -> BranchedState s a
 embed computeA =
     BranchedState <|
-        \currentState ->
-            List.map (\value -> ( value, currentState ))
-                (computeA currentState)
+        \limit currentState ->
+            computeA currentState
+                |> List.map (\value -> ( value, currentState ))
+                |> take limit
 
 
 advance : (s -> List ( a, s )) -> BranchedState s a
 advance computeA =
-    BranchedState computeA
+    BranchedState <|
+        \limit ->
+            computeA >> take limit
 
 
 
@@ -46,20 +53,22 @@ advance computeA =
 map : (a -> b) -> BranchedState s a -> BranchedState s b
 map func (BranchedState computeA) =
     BranchedState <|
-        \currentState ->
-            List.map (Tuple.mapFirst func) (computeA currentState)
+        \limit currentState ->
+            computeA limit currentState
+                |> List.map (Tuple.mapFirst func)
 
 
 map2 : (a -> b -> c) -> BranchedState s a -> BranchedState s b -> BranchedState s c
 map2 func (BranchedState computeA) (BranchedState computeB) =
     BranchedState <|
-        \currentState ->
-            List.concatMap
-                (\( a, nextState ) ->
-                    List.map (Tuple.mapFirst (func a))
-                        (computeB nextState)
-                )
-                (computeA currentState)
+        \limit currentState ->
+            take limit <|
+                List.concatMap
+                    (\( a, nextState ) ->
+                        List.map (Tuple.mapFirst (func a))
+                            (computeB limit nextState)
+                    )
+                    (computeA limit currentState)
 
 
 map3 :
@@ -86,27 +95,29 @@ andMap =
 andThen : (a -> BranchedState s b) -> BranchedState s a -> BranchedState s b
 andThen func (BranchedState computeA) =
     BranchedState <|
-        \currentState ->
-            List.concatMap
-                (\( a, nextState ) ->
-                    let
-                        (BranchedState runB) =
-                            func a
-                    in
-                    runB nextState
-                )
-                (computeA currentState)
+        \limit currentState ->
+            take limit <|
+                List.concatMap
+                    (\( a, nextState ) ->
+                        let
+                            (BranchedState computeB) =
+                                func a
+                        in
+                        computeB limit nextState
+                    )
+                    (computeA limit currentState)
 
 
 join : BranchedState s (BranchedState s a) -> BranchedState s a
 join (BranchedState computeBranchedState) =
     BranchedState <|
-        \currentState ->
-            List.concatMap
-                (\( BranchedState computeA, nextState ) ->
-                    computeA nextState
-                )
-                (computeBranchedState currentState)
+        \limit currentState ->
+            take limit <|
+                List.concatMap
+                    (\( BranchedState computeA, nextState ) ->
+                        computeA limit nextState
+                    )
+                    (computeBranchedState limit currentState)
 
 
 
@@ -116,41 +127,56 @@ join (BranchedState computeBranchedState) =
 get : BranchedState s s
 get =
     BranchedState <|
-        \currentState ->
-            [ ( currentState, currentState ) ]
+        \limit currentState ->
+            case limit of
+                Just 0 ->
+                    []
+
+                _ ->
+                    [ ( currentState, currentState ) ]
 
 
 put : s -> BranchedState s ()
 put newState =
     BranchedState <|
-        \_ ->
-            [ ( (), newState ) ]
+        \limit _ ->
+            case limit of
+                Just 0 ->
+                    []
+
+                _ ->
+                    [ ( (), newState ) ]
 
 
 modify : (s -> s) -> BranchedState s ()
 modify func =
     BranchedState <|
-        \currentState ->
-            [ ( (), func currentState ) ]
+        \limit currentState ->
+            case limit of
+                Just 0 ->
+                    []
+
+                _ ->
+                    [ ( (), func currentState ) ]
 
 
 
 ---- RUNNING STATE
 
 
-run : s -> BranchedState s a -> List ( a, s )
-run initialState (BranchedState computeA) =
-    computeA initialState
+run : Maybe Int -> s -> BranchedState s a -> List ( a, s )
+run limit initialState (BranchedState computeA) =
+    computeA limit initialState
 
 
-finalValues : s -> BranchedState s a -> List a
-finalValues initialState (BranchedState computeA) =
-    List.map Tuple.first (computeA initialState)
+finalValues : Maybe Int -> s -> BranchedState s a -> List a
+finalValues limit initialState (BranchedState computeA) =
+    List.map Tuple.first (computeA limit initialState)
 
 
-finalStates : s -> BranchedState s a -> List s
-finalStates initialState (BranchedState computeA) =
-    List.map Tuple.second (computeA initialState)
+finalStates : Maybe Int -> s -> BranchedState s a -> List s
+finalStates limit initialState (BranchedState computeA) =
+    List.map Tuple.second (computeA limit initialState)
 
 
 
@@ -160,22 +186,23 @@ finalStates initialState (BranchedState computeA) =
 traverse : (a -> BranchedState s b) -> List a -> BranchedState s b
 traverse func listA =
     BranchedState <|
-        \currentState ->
-            List.concatMap
-                (\a ->
-                    let
-                        (BranchedState computeB) =
-                            func a
-                    in
-                    computeB currentState
-                )
-                listA
+        \limit currentState ->
+            take limit <|
+                List.concatMap
+                    (\a ->
+                        let
+                            (BranchedState computeB) =
+                                func a
+                        in
+                        computeB limit currentState
+                    )
+                    listA
 
 
 combine : (a -> BranchedState s b) -> List a -> BranchedState s (List b)
 combine func listA =
     BranchedState <|
-        \currentState ->
+        \limit currentState ->
             case listA of
                 [] ->
                     [ ( [], currentState ) ]
@@ -185,7 +212,7 @@ combine func listA =
                         (BranchedState computeB) =
                             func a
                     in
-                    computeB currentState
+                    computeB limit currentState
                         |> List.concatMap
                             (\( b, nextState ) ->
                                 let
@@ -193,5 +220,27 @@ combine func listA =
                                         combine func restA
                                 in
                                 List.map (Tuple.mapFirst ((::) b))
-                                    (computeRestA nextState)
+                                    (computeRestA limit nextState)
                             )
+                        |> take limit
+
+
+
+---- LIMIT
+
+
+withLimit : Maybe Int -> BranchedState s a -> BranchedState s a
+withLimit newLimit (BranchedState computeA) =
+    BranchedState <|
+        \_ currentState ->
+            computeA newLimit currentState
+
+
+
+---- HELPER
+
+
+take : Maybe Int -> List a -> List a
+take =
+    Maybe.map List.take
+        >> Maybe.withDefault identity

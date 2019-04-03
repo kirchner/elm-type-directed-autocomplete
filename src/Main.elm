@@ -43,6 +43,7 @@ import Generator
         , exprToText
         , field
         , first
+        , firstN
         , for
         , record
         , recordUpdate
@@ -906,67 +907,69 @@ generator model =
                 Nothing
             , if model.suggestCases then
                 Just <|
-                    cases
-                        { matched = call []
-                        , branch =
-                            \newValues ->
-                                all
-                                    [ all
-                                        [ recordUpdate <|
-                                            all
-                                                [ value
-                                                    |> addValues newValues
-                                                    |> takeValues 1
-                                                , call
+                    first <|
+                        cases
+                            { matched = call []
+                            , branch =
+                                \newValues ->
+                                    all
+                                        [ all
+                                            [ recordUpdate <|
+                                                all
                                                     [ value
                                                         |> addValues newValues
                                                         |> takeValues 1
-                                                    ]
-                                                ]
-                                        , value
-                                        ]
-                                    , tuple
-                                        { first =
-                                            all
-                                                [ recordUpdate <|
-                                                    all
+                                                    , call
                                                         [ value
                                                             |> addValues newValues
                                                             |> takeValues 1
-                                                        , call
+                                                        ]
+                                                    ]
+                                            , value
+                                            ]
+                                        , tuple
+                                            { first =
+                                                all
+                                                    [ recordUpdate <|
+                                                        all
                                                             [ value
                                                                 |> addValues newValues
                                                                 |> takeValues 1
+                                                            , call
+                                                                [ value
+                                                                    |> addValues newValues
+                                                                    |> takeValues 1
+                                                                ]
                                                             ]
-                                                        ]
-                                                , call []
-                                                ]
-                                        , second =
-                                            all
-                                                [ call []
-                                                , call
-                                                    [ value
-                                                        |> addValues newValues
+                                                    , call []
                                                     ]
-                                                ]
-                                        }
-                                    ]
-                        }
+                                            , second =
+                                                all
+                                                    [ call []
+                                                    , call
+                                                        [ value
+                                                            |> addValues newValues
+                                                        ]
+                                                    ]
+                                            }
+                                        ]
+                            }
 
               else
                 Nothing
             , if model.suggestOnceEvaluated then
                 Just
                     (call
-                        [ all
-                            [ field
-                            , value
-                            , accessor
-                            , call
-                                [ value
-                                    |> takeValues 1
+                        [ firstN 1 <|
+                            all
+                                [ field
+                                , value
+                                , accessor
+                                , call
+                                    [ value
+                                        |> takeValues 1
+                                    ]
                                 ]
-                            ]
                         ]
                     )
 
@@ -976,20 +979,22 @@ generator model =
             , if model.suggestTwiceEvaluated then
                 Just
                     (call
-                        [ all
-                            [ value
-                            , field
-                            , accessor
-                            , call
+                        [ firstN 2 <|
+                            all
                                 [ value
+                                , field
+                                , accessor
+                                , call
+                                    [ value
+                                        |> takeValues 1
+                                    ]
+                                ]
+                        , firstN 2 <|
+                            all
+                                [ field
+                                , value
                                     |> takeValues 1
                                 ]
-                            ]
-                        , all
-                            [ field
-                            , value
-                                |> takeValues 1
-                            ]
                         ]
                     )
 
