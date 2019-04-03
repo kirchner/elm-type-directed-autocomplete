@@ -25,9 +25,7 @@ state : List value -> BranchedState state value
 state values =
     BranchedState <|
         \limit currentState ->
-            values
-                |> List.map (\value -> ( value, currentState ))
-                |> take limit
+            limitMap limit (\value -> ( value, currentState )) values
 
 
 embed : (s -> List a) -> BranchedState s a
@@ -35,8 +33,7 @@ embed computeA =
     BranchedState <|
         \limit currentState ->
             computeA currentState
-                |> List.map (\value -> ( value, currentState ))
-                |> take limit
+                |> limitMap limit (\value -> ( value, currentState ))
 
 
 advance : (s -> List ( a, s )) -> BranchedState s a
@@ -63,7 +60,7 @@ map2 func (BranchedState computeA) (BranchedState computeB) =
     BranchedState <|
         \limit currentState ->
             take limit <|
-                List.concatMap
+                limitConcatMap limit
                     (\( a, nextState ) ->
                         List.map (Tuple.mapFirst (func a))
                             (computeB limit nextState)
@@ -97,7 +94,7 @@ andThen func (BranchedState computeA) =
     BranchedState <|
         \limit currentState ->
             take limit <|
-                List.concatMap
+                limitConcatMap limit
                     (\( a, nextState ) ->
                         let
                             (BranchedState computeB) =
@@ -112,12 +109,11 @@ join : BranchedState s (BranchedState s a) -> BranchedState s a
 join (BranchedState computeBranchedState) =
     BranchedState <|
         \limit currentState ->
-            take limit <|
-                List.concatMap
-                    (\( BranchedState computeA, nextState ) ->
-                        computeA limit nextState
-                    )
-                    (computeBranchedState limit currentState)
+            limitConcatMap limit
+                (\( BranchedState computeA, nextState ) ->
+                    computeA limit nextState
+                )
+                (computeBranchedState limit currentState)
 
 
 
@@ -187,16 +183,15 @@ traverse : (a -> BranchedState s b) -> List a -> BranchedState s b
 traverse func listA =
     BranchedState <|
         \limit currentState ->
-            take limit <|
-                List.concatMap
-                    (\a ->
-                        let
-                            (BranchedState computeB) =
-                                func a
-                        in
-                        computeB limit currentState
-                    )
-                    listA
+            limitConcatMap limit
+                (\a ->
+                    let
+                        (BranchedState computeB) =
+                            func a
+                    in
+                    computeB limit currentState
+                )
+                listA
 
 
 combine : (a -> BranchedState s b) -> List a -> BranchedState s (List b)
@@ -213,7 +208,7 @@ combine func listA =
                             func a
                     in
                     computeB limit currentState
-                        |> List.concatMap
+                        |> limitConcatMap limit
                             (\( b, nextState ) ->
                                 let
                                     (BranchedState computeRestA) =
@@ -222,7 +217,6 @@ combine func listA =
                                 List.map (Tuple.mapFirst ((::) b))
                                     (computeRestA limit nextState)
                             )
-                        |> take limit
 
 
 
@@ -240,7 +234,120 @@ withLimit newLimit (BranchedState computeA) =
 ---- HELPER
 
 
+{-| -}
 take : Maybe Int -> List a -> List a
 take =
     Maybe.map List.take
         >> Maybe.withDefault identity
+
+
+{-| -}
+limitMap : Maybe Int -> (a -> b) -> List a -> List b
+limitMap limit =
+    case limit of
+        Nothing ->
+            mapHelp []
+
+        Just actualLimit ->
+            limitMapHelp 0 [] actualLimit
+
+
+mapHelp : List b -> (a -> b) -> List a -> List b
+mapHelp collected func values =
+    case values of
+        [] ->
+            List.reverse collected
+
+        value :: rest ->
+            mapHelp (func value :: collected) func rest
+
+
+limitMapHelp : Int -> List b -> Int -> (a -> b) -> List a -> List b
+limitMapHelp count collected limit func values =
+    case values of
+        [] ->
+            List.reverse collected
+
+        value :: rest ->
+            if limit < count then
+                limitMapHelp
+                    (count + 1)
+                    (func value :: collected)
+                    limit
+                    func
+                    rest
+
+            else
+                List.reverse collected
+
+
+{-| -}
+limitConcatMap : Maybe Int -> (a -> List b) -> List a -> List b
+limitConcatMap limit =
+    case limit of
+        Nothing ->
+            concatMapHelp [] []
+
+        Just actualLimit ->
+            limitConcatMapHelp 0 [] [] actualLimit
+
+
+concatMapHelp : List b -> List b -> (a -> List b) -> List a -> List b
+concatMapHelp collected listB func listA =
+    case listB of
+        [] ->
+            case listA of
+                [] ->
+                    List.reverse collected
+
+                a :: restA ->
+                    concatMapHelp
+                        collected
+                        (func a)
+                        func
+                        restA
+
+        b :: restB ->
+            concatMapHelp
+                (b :: collected)
+                restB
+                func
+                listA
+
+
+limitConcatMapHelp :
+    Int
+    -> List b
+    -> List b
+    -> Int
+    -> (a -> List b)
+    -> List a
+    -> List b
+limitConcatMapHelp count collected listB limit func listA =
+    if count < limit then
+        case listB of
+            [] ->
+                case listA of
+                    [] ->
+                        List.reverse collected
+
+                    a :: restA ->
+                        limitConcatMapHelp
+                            count
+                            collected
+                            (func a)
+                            limit
+                            func
+                            restA
+
+            b :: restB ->
+                limitConcatMapHelp
+                    (count + 1)
+                    (b :: collected)
+                    restB
+                    limit
+                    func
+                    listA
+
+    else
+        List.reverse collected

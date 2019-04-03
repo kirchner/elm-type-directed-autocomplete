@@ -11,6 +11,7 @@ import Generator
         , addValues
         , all
         , call
+        , firstN
         , for
         , value
         )
@@ -19,7 +20,7 @@ import Json.Decode as Decode
 
 main : BenchmarkProgram
 main =
-    program comparison
+    program suiteFirstN
 
 
 comparison : Benchmark
@@ -66,6 +67,130 @@ outerAllGenerator =
         ]
 
 
+suiteFirstN : Benchmark
+suiteFirstN =
+    describe "for"
+        [ describe "core modules"
+            [ describe "call [ value ]"
+                [ compare "Int"
+                    "no limit"
+                    (\_ ->
+                        callValueGenerator
+                            |> for int
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueFirstNGenerator
+                            |> for int
+                    )
+                , compare "Float"
+                    "no limit"
+                    (\_ ->
+                        callValueGenerator
+                            |> for float
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueFirstNGenerator
+                            |> for float
+                    )
+                , compare "String"
+                    "no limit"
+                    (\_ ->
+                        callValueGenerator
+                            |> for string
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueFirstNGenerator
+                            |> for string
+                    )
+                , compare "List Int"
+                    "no limit"
+                    (\_ ->
+                        callValueGenerator
+                            |> for listInt
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueFirstNGenerator
+                            |> for listInt
+                    )
+                , compare "List Int -> List Int"
+                    "no limit"
+                    (\_ ->
+                        callValueGenerator
+                            |> for listIntToListInt
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueFirstNGenerator
+                            |> for listIntToListInt
+                    )
+                ]
+            , describe "call [ value, value ]"
+                [ compare "List Int -> Int"
+                    "no limit"
+                    (\_ ->
+                        callValueValueGenerator
+                            |> for listIntToInt
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueValueFirstNGenerator
+                            |> for listIntToInt
+                    )
+                , compare "List Int -> String"
+                    "no limit"
+                    (\_ ->
+                        callValueValueGenerator
+                            |> for listIntToString
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueValueFirstNGenerator
+                            |> for listIntToString
+                    )
+                ]
+            , describe "call [ value, value, value ]"
+                [ compare "Int"
+                    "no limit"
+                    (\_ ->
+                        callValueValueValueGenerator
+                            |> for int
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueValueValueFirstNGenerator
+                            |> for int
+                    )
+                , compare "Float"
+                    "no limit"
+                    (\_ ->
+                        callValueValueValueGenerator
+                            |> for float
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueValueValueFirstNGenerator
+                            |> for float
+                    )
+                , compare "String"
+                    "no limit"
+                    (\_ ->
+                        callValueValueValueGenerator
+                            |> for string
+                    )
+                    "limit == 1"
+                    (\_ ->
+                        callValueValueValueFirstNGenerator
+                            |> for string
+                    )
+                ]
+            ]
+        ]
+
+
 suite : Benchmark
 suite =
     describe "for"
@@ -89,7 +214,7 @@ suite =
                             |> for listInt
                 ]
             , describe "call [ value ]"
-                [ benchmark "targetType: Int" <|
+                [ benchmark "Int" <|
                     \_ ->
                         callValueGenerator
                             |> for int
@@ -198,15 +323,33 @@ callValueGenerator =
         |> addValues values
 
 
+callValueFirstNGenerator : Generator
+callValueFirstNGenerator =
+    call [ firstN 1 value ]
+        |> addValues values
+
+
 callValueValueGenerator : Generator
 callValueValueGenerator =
     call [ value, value ]
         |> addValues valuesWithConstants
 
 
+callValueValueFirstNGenerator : Generator
+callValueValueFirstNGenerator =
+    call [ firstN 1 value, firstN 1 value ]
+        |> addValues valuesWithConstants
+
+
 callValueValueValueGenerator : Generator
 callValueValueValueGenerator =
     call [ value, value, value ]
+        |> addValues valuesWithConstants
+
+
+callValueValueValueFirstNGenerator : Generator
+callValueValueValueFirstNGenerator =
+    call [ firstN 1 value, firstN 1 value, firstN 1 value ]
         |> addValues valuesWithConstants
 
 
