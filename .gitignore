@@ -4,3 +4,4 @@ elm-stuff/
 dist/
 gh-pages/
 *.log
+elm.js

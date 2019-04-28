@@ -865,142 +865,143 @@ suggest model targetType =
 
 generator : Model -> Generator
 generator model =
-    all <|
-        List.filterMap identity
-            [ if model.suggestRecordUpdates then
-                Just <|
-                    recordUpdate value
+    firstN 5 <|
+        all <|
+            List.filterMap identity
+                [ if model.suggestRecordUpdates then
+                    Just <|
+                        recordUpdate value
 
-              else
-                Nothing
-            , Just (record value)
-            , Just field
-            , if model.suggestExactMatches then
-                Just value
+                  else
+                    Nothing
+                , Just (record value)
+                , Just field
+                , if model.suggestExactMatches then
+                    Just value
 
-              else
-                Nothing
-            , if model.suggestTuples then
-                Just <|
-                    tuple
-                        { first =
-                            all
-                                [ recordUpdate value
-                                , call []
-                                , call
-                                    [ value
-                                    , field
+                  else
+                    Nothing
+                , if model.suggestTuples then
+                    Just <|
+                        tuple
+                            { first =
+                                all
+                                    [ recordUpdate value
+                                    , call []
+                                    , call
+                                        [ value
+                                        , field
+                                        ]
                                     ]
-                                ]
-                        , second =
-                            all
-                                [ recordUpdate value
-                                , call []
-                                , call
-                                    [ value
-                                    , field
+                            , second =
+                                all
+                                    [ recordUpdate value
+                                    , call []
+                                    , call
+                                        [ value
+                                        , field
+                                        ]
                                     ]
-                                ]
-                        }
+                            }
 
-              else
-                Nothing
-            , if model.suggestCases then
-                Just <|
-                    first <|
-                        cases
-                            { matched = call []
-                            , branch =
-                                \newValues ->
-                                    all
-                                        [ all
-                                            [ recordUpdate <|
-                                                all
-                                                    [ value
-                                                        |> addValues newValues
-                                                        |> takeValues 1
-                                                    , call
+                  else
+                    Nothing
+                , if model.suggestCases then
+                    Just <|
+                        first <|
+                            cases
+                                { matched = call []
+                                , branch =
+                                    \newValues ->
+                                        all
+                                            [ all
+                                                [ recordUpdate <|
+                                                    all
                                                         [ value
                                                             |> addValues newValues
                                                             |> takeValues 1
-                                                        ]
-                                                    ]
-                                            , value
-                                            ]
-                                        , tuple
-                                            { first =
-                                                all
-                                                    [ recordUpdate <|
-                                                        all
+                                                        , call
                                                             [ value
                                                                 |> addValues newValues
                                                                 |> takeValues 1
-                                                            , call
+                                                            ]
+                                                        ]
+                                                , value
+                                                ]
+                                            , tuple
+                                                { first =
+                                                    all
+                                                        [ recordUpdate <|
+                                                            all
                                                                 [ value
                                                                     |> addValues newValues
                                                                     |> takeValues 1
+                                                                , call
+                                                                    [ value
+                                                                        |> addValues newValues
+                                                                        |> takeValues 1
+                                                                    ]
                                                                 ]
-                                                            ]
-                                                    , call []
-                                                    ]
-                                            , second =
-                                                all
-                                                    [ call []
-                                                    , call
-                                                        [ value
-                                                            |> addValues newValues
+                                                        , call []
                                                         ]
-                                                    ]
-                                            }
+                                                , second =
+                                                    all
+                                                        [ call []
+                                                        , call
+                                                            [ value
+                                                                |> addValues newValues
+                                                            ]
+                                                        ]
+                                                }
+                                            ]
+                                }
+
+                  else
+                    Nothing
+                , if model.suggestOnceEvaluated then
+                    Just
+                        (call
+                            [ firstN 1 <|
+                                all
+                                    [ field
+                                    , value
+                                    , accessor
+                                    , call
+                                        [ value
+                                            |> takeValues 1
                                         ]
-                            }
+                                    ]
+                            ]
+                        )
 
-              else
-                Nothing
-            , if model.suggestOnceEvaluated then
-                Just
-                    (call
-                        [ firstN 1 <|
-                            all
-                                [ field
-                                , value
-                                , accessor
-                                , call
+                  else
+                    Nothing
+                , Just accessor
+                , if model.suggestTwiceEvaluated then
+                    Just
+                        (call
+                            [ firstN 2 <|
+                                all
                                     [ value
+                                    , field
+                                    , accessor
+                                    , call
+                                        [ value
+                                            |> takeValues 1
+                                        ]
+                                    ]
+                            , firstN 2 <|
+                                all
+                                    [ field
+                                    , value
                                         |> takeValues 1
                                     ]
-                                ]
-                        ]
-                    )
+                            ]
+                        )
 
-              else
-                Nothing
-            , Just accessor
-            , if model.suggestTwiceEvaluated then
-                Just
-                    (call
-                        [ firstN 2 <|
-                            all
-                                [ value
-                                , field
-                                , accessor
-                                , call
-                                    [ value
-                                        |> takeValues 1
-                                    ]
-                                ]
-                        , firstN 2 <|
-                            all
-                                [ field
-                                , value
-                                    |> takeValues 1
-                                ]
-                        ]
-                    )
-
-              else
-                Nothing
-            ]
+                  else
+                    Nothing
+                ]
 
 
 removeScope : Type -> Type
