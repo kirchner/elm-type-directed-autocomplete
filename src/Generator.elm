@@ -115,6 +115,8 @@ default =
     all
         [ recordUpdate value
         , value
+        , field
+        , accessor
         , tuple
             { first =
                 all
@@ -133,23 +135,47 @@ default =
             { matched = value
             , branch =
                 \newValues ->
-                    all
-                        [ recordUpdate <|
-                            all
-                                [ value
-                                    |> addValues newValues
-                                    |> takeValues 1
-                                , call
+                    first <|
+                        all
+                            [ tuple
+                                { first =
+                                    all
+                                        [ recordUpdate <|
+                                            all
+                                                [ value
+                                                    |> addValues newValues
+                                                    |> takeValues 1
+                                                , call
+                                                    [ value
+                                                        |> addValues newValues
+                                                        |> takeValues 1
+                                                    ]
+                                                ]
+                                        , value
+                                        , call [ value ]
+                                        ]
+                                , second =
+                                    all
+                                        [ value
+                                        , call [ value ]
+                                        ]
+                                }
+                            , recordUpdate <|
+                                all
                                     [ value
                                         |> addValues newValues
                                         |> takeValues 1
+                                    , call
+                                        [ value
+                                            |> addValues newValues
+                                            |> takeValues 1
+                                        ]
                                     ]
-                                ]
-                        , value
-                        ]
+                            , value
+                            ]
             }
-        , call [ value ]
-        , call [ value, value ]
+        , call [ all [ value, field, accessor ] ]
+        , call [ all [ value, field, accessor ], all [ value, field, accessor ] ]
         ]
 
 

@@ -776,7 +776,8 @@ suggest : Model -> Type -> List Expr
 suggest model targetType =
     let
         declarations =
-            Declaration.parse model.code
+            preProcess model.code
+                |> List.filterMap Declaration.parse
 
         localValues =
             declarations
@@ -861,6 +862,28 @@ suggest model targetType =
             |> addValues localValues
             |> for (Type.normalize localAliases targetType)
         ]
+
+
+preProcess : String -> List String
+preProcess text =
+    String.lines text
+        |> List.foldl
+            (\line lines ->
+                if String.trim line == "" then
+                    lines
+
+                else if String.startsWith " " line then
+                    case lines of
+                        previousLine :: rest ->
+                            (previousLine ++ line) :: rest
+
+                        [] ->
+                            lines
+
+                else
+                    line :: lines
+            )
+            []
 
 
 generator : Model -> Generator

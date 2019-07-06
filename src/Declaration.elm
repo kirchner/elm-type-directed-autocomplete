@@ -74,33 +74,12 @@ type Declaration
     | CustomType String (List String) (List ( String, List Type ))
 
 
-parse : String -> List Declaration
+parse : String -> Maybe Declaration
 parse text =
-    preProcess text
-        |> List.filterMap
-            (Parser.run declaration >> Result.toMaybe)
-
-
-preProcess : String -> List String
-preProcess text =
-    String.lines text
-        |> List.foldl
-            (\line lines ->
-                if String.trim line == "" then
-                    lines
-
-                else if String.startsWith " " line then
-                    case lines of
-                        previousLine :: rest ->
-                            (previousLine ++ line) :: rest
-
-                        [] ->
-                            lines
-
-                else
-                    line :: lines
-            )
-            []
+    text
+        |> String.replace "\n" " "
+        |> Parser.run declaration
+        |> Result.toMaybe
 
 
 declaration : Parser Declaration
