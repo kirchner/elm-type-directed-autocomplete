@@ -579,17 +579,10 @@ fresh : Infer Type
 fresh =
     Infer <|
         \_ ->
-            State.get
-                |> State.andThen
-                    (\count ->
-                        State.put (count + 1)
-                            |> State.map
-                                (\_ ->
-                                    ( []
-                                    , []
-                                    , Ok (Var ("a" ++ String.fromInt count))
-                                    )
-                                )
+            State.advance <|
+                \count ->
+                    ( ( [], [], Ok (Var ("a" ++ String.fromInt count)) )
+                    , count + 1
                     )
 
 
@@ -706,21 +699,14 @@ instantiateHelp vars subst =
             State.state subst
 
         var :: rest ->
-            let
-                increaseCount count =
-                    State.put (count + 1)
-                        |> State.andThen (addSubst count)
-
-                addSubst count _ =
-                    subst
-                        |> Dict.insert var (Var (toVar count))
-                        |> instantiateHelp rest
-
-                toVar count =
-                    "a" ++ String.fromInt count
-            in
-            State.get
-                |> State.andThen increaseCount
+            State.andThen (instantiateHelp rest) <|
+                State.advance <|
+                    \count ->
+                        ( Dict.insert var
+                            (Var ("a" ++ String.fromInt count))
+                            subst
+                        , count + 1
+                        )
 
 
 generalize : TypeEnv -> Type -> Scheme
