@@ -7,7 +7,8 @@
   "license": "Apache-2.0",
   "scripts": {
     "web": "elm make --output=elm.js src/Main.elm",
-    "cli": "elm make --output=dist/cli.js src/Cli.elm"
+    "cli": "elm make --optimize --output=dist/cli.js src/Cli.elm",
+    "cli-debug": "elm make --output=dist/cli.js src/Cli.elm"
   },
   "bin": {
     "elm-completions": "cli.js"

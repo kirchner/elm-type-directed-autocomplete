@@ -238,7 +238,7 @@ for targetType (Generator stuff) =
         , substitutions = Type.noSubstitutions
         }
         (stuff.generate
-            { targetTypeVars = Type.typeVariables targetType
+            { targetTypeVars = Type.freeTypeVars targetType
             , isRoot = True
             , unions = []
             , aliases = []
@@ -747,11 +747,11 @@ instantiateHelp tipe =
             (\count ->
                 let
                     oldTypeVars =
-                        Type.typeVariables tipe
+                        Type.freeTypeVars tipe
 
                     substitutions =
                         { bindTypeVariables =
-                            Type.typeVariables tipe
+                            Type.freeTypeVars tipe
                                 |> Set.toList
                                 |> List.indexedMap
                                     (\index name ->

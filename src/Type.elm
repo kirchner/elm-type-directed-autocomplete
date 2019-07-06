@@ -2,10 +2,12 @@ module Type exposing
     ( Comparability(..)
     , Substitutions
     , Unifiability(..)
+    , apply
+    , freeTypeVars
+    , fromTypeAnnotation
     , noSubstitutions
     , normalize
     , substitute
-    , typeVariables
     , unifiability
     )
 
@@ -29,9 +31,12 @@ module Type exposing
 
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias)
+import Elm.Syntax.Node exposing (Node(..))
+import Elm.Syntax.TypeAnnotation as Src
 import Elm.Type exposing (Type(..))
 import List.Extra as List
 import Set exposing (Set)
+import Src
 import State exposing (State)
 
 
@@ -341,7 +346,7 @@ bindTypeVariable : String -> Type -> State Substitutions Bool
 bindTypeVariable name tipe =
     let
         nameOccursInType =
-            Set.member name (typeVariables tipe)
+            Set.member name (freeTypeVars tipe)
 
         bindIfNew substitutions =
             case Dict.get name substitutions.bindTypeVariables of
@@ -475,30 +480,93 @@ substitute substitutions tipe =
                 actualMaybeVar
 
 
-{-| Returns all type variables.
+{-| Returns all free type variables.
 -}
-typeVariables : Type -> Set String
-typeVariables tipe =
+freeTypeVars : Type -> Set String
+freeTypeVars tipe =
     case tipe of
         Var name ->
             Set.singleton name
 
         Lambda typeA typeB ->
             Set.union
-                (typeVariables typeA)
-                (typeVariables typeB)
+                (freeTypeVars typeA)
+                (freeTypeVars typeB)
 
         Tuple types ->
             types
-                |> List.map typeVariables
+                |> List.map freeTypeVars
                 |> List.foldl Set.union Set.empty
 
         Type name vars ->
             vars
-                |> List.map typeVariables
+                |> List.map freeTypeVars
                 |> List.foldl Set.union Set.empty
 
         Record fields maybeVar ->
             fields
-                |> List.map (Tuple.second >> typeVariables)
+                |> List.map (Tuple.second >> freeTypeVars)
                 |> List.foldl Set.union Set.empty
+
+
+apply : Dict String Type -> Type -> Type
+apply subst tipe =
+    case tipe of
+        Type _ _ ->
+            tipe
+
+        Var var ->
+            Dict.get var subst
+                |> Maybe.withDefault tipe
+
+        Lambda from to ->
+            Lambda (apply subst from) (apply subst to)
+
+        Tuple types ->
+            Tuple (List.map (apply subst) types)
+
+        Record fields var ->
+            Record
+                (List.map (Tuple.mapSecond (apply subst)) fields)
+                var
+
+
+fromTypeAnnotation : Node Src.TypeAnnotation -> Type
+fromTypeAnnotation (Node _ typeAnnotation) =
+    case typeAnnotation of
+        Src.GenericType var ->
+            Var var
+
+        Src.Typed (Node _ ( moduleName, name )) typeAnnotations ->
+            Type
+                (Src.qualifiedName moduleName name)
+                (List.map fromTypeAnnotation typeAnnotations)
+
+        Src.Unit ->
+            Tuple []
+
+        Src.Tupled typeAnnotations ->
+            Tuple (List.map fromTypeAnnotation typeAnnotations)
+
+        Src.Record recordFields ->
+            Record
+                (List.map
+                    (\(Node _ ( Node _ name, annotation )) ->
+                        ( name, fromTypeAnnotation annotation )
+                    )
+                    recordFields
+                )
+                Nothing
+
+        Src.GenericRecord (Node _ var) (Node _ recordFields) ->
+            Record
+                (List.map
+                    (\(Node _ ( Node _ name, annotation )) ->
+                        ( name, fromTypeAnnotation annotation )
+                    )
+                    recordFields
+                )
+                (Just var)
+
+        Src.FunctionTypeAnnotation from to ->
+            Lambda (fromTypeAnnotation from) (fromTypeAnnotation to)
