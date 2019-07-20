@@ -227,14 +227,16 @@ infer holeRange (Node range expr) =
                                 inferHelp types exprs =
                                     case exprs of
                                         [] ->
-                                            fresh
+                                            freshVar
                                                 |> andThen
-                                                    (\typeVar ->
+                                                    (\var ->
                                                         addConstraint
                                                             ( functionType
-                                                            , List.foldl Lambda typeVar types
+                                                            , List.foldl Lambda
+                                                                (Var var)
+                                                                types
                                                             )
-                                                            |> map (\_ -> typeVar)
+                                                            |> map (\_ -> Var var)
                                                     )
 
                                         firstExpr :: rest ->
@@ -373,7 +375,7 @@ infer holeRange (Node range expr) =
         ListExpr elementExprs ->
             case elementExprs of
                 [] ->
-                    fresh
+                    map Var freshVar
 
                 firstExpr :: rest ->
                     let
@@ -420,21 +422,12 @@ infer holeRange (Node range expr) =
                     lookupEnv name
                         |> andThen
                             (\recordType ->
-                                fresh
+                                freshVar
                                     |> andThen
                                         (\var ->
-                                            let
-                                                varName =
-                                                    case var of
-                                                        Var n ->
-                                                            Just n
-
-                                                        _ ->
-                                                            Nothing
-                                            in
                                             addConstraint
                                                 ( recordType
-                                                , Record fieldTypes varName
+                                                , Record fieldTypes (Just var)
                                                 )
                                                 |> map (\_ -> recordType)
                                         )
@@ -472,31 +465,26 @@ inferPattern : Node Pattern -> Infer ( Type, List ( String, Scheme ) )
 inferPattern (Node _ pattern) =
     case pattern of
         AllPattern ->
-            fresh
-                |> map (\tipe -> ( tipe, [] ))
+            freshVar
+                |> map (\var -> ( Var var, [] ))
 
         UnitPattern ->
-            return (Tuple [])
-                |> map (\tipe -> ( tipe, [] ))
+            return ( Tuple [], [] )
 
         CharPattern _ ->
-            return (Type "Char" [])
-                |> map (\tipe -> ( tipe, [] ))
+            return ( Type "Char" [], [] )
 
         StringPattern _ ->
-            return (Type "String" [])
-                |> map (\tipe -> ( tipe, [] ))
+            return ( Type "String" [], [] )
 
         IntPattern _ ->
-            return (Type "Int" [])
-                |> map (\tipe -> ( tipe, [] ))
+            return ( Type "Int" [], [] )
 
         HexPattern _ ->
             throwError (UnsupportedPattern pattern)
 
         FloatPattern _ ->
-            return (Type "Float" [])
-                |> map (\tipe -> ( tipe, [] ))
+            return ( Type "Float" [], [] )
 
         TuplePattern patterns ->
             traverse inferPattern patterns
@@ -518,18 +506,18 @@ inferPattern (Node _ pattern) =
             throwError (UnsupportedPattern pattern)
 
         VarPattern name ->
-            fresh
+            freshVar
                 |> map
-                    (\tipe ->
-                        ( tipe
-                        , [ ( name, ForAll [] tipe ) ]
+                    (\var ->
+                        ( Var var
+                        , [ ( name, ForAll [] (Var var) ) ]
                         )
                     )
 
         NamedPattern { moduleName, name } patterns ->
-            fresh
+            freshVar
                 |> andThen
-                    (\tipe ->
+                    (\var ->
                         lookupEnv (Src.qualifiedName moduleName name)
                             |> andThen
                                 (\constructorType ->
@@ -539,11 +527,11 @@ inferPattern (Node _ pattern) =
                                             (\( types, schemes ) ->
                                                 addConstraint
                                                     ( constructorType
-                                                    , List.foldl Lambda tipe types
+                                                    , List.foldl Lambda (Var var) types
                                                     )
                                                     |> map
                                                         (\_ ->
-                                                            ( tipe
+                                                            ( Var var
                                                             , List.concat schemes
                                                             )
                                                         )
@@ -572,13 +560,13 @@ inferCaseBranch holeRange exprType ( pattern, expr ) =
             )
 
 
-fresh : Infer Type
-fresh =
+freshVar : Infer String
+freshVar =
     Infer <|
         \_ ->
             State.advance <|
                 \count ->
-                    ( ( [], [], Ok (Var ("a" ++ String.fromInt count)) )
+                    ( ( [], [], Ok ("a" ++ String.fromInt count) )
                     , count + 1
                     )
 
