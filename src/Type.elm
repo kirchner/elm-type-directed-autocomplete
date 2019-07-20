@@ -525,10 +525,26 @@ apply subst tipe =
         Tuple types ->
             Tuple (List.map (apply subst) types)
 
-        Record fields var ->
-            Record
-                (List.map (Tuple.mapSecond (apply subst)) fields)
-                var
+        Record fields maybeVar ->
+            case maybeVar of
+                Nothing ->
+                    Record
+                        (List.map (Tuple.mapSecond (apply subst)) fields)
+                        maybeVar
+
+                Just var ->
+                    case Dict.get var subst of
+                        Just (Record otherFields maybeOtherVar) ->
+                            Record
+                                (List.map (Tuple.mapSecond (apply subst)) fields
+                                    ++ List.map (Tuple.mapSecond (apply subst)) otherFields
+                                )
+                                maybeOtherVar
+
+                        _ ->
+                            Record
+                                (List.map (Tuple.mapSecond (apply subst)) fields)
+                                maybeVar
 
 
 fromTypeAnnotation : Node Src.TypeAnnotation -> Type

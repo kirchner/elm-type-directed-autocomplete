@@ -164,6 +164,7 @@ suggestions { rawUnions, rawValues, src, holeRange } =
                     |> List.map (values >> Dict.map (\_ -> Type.normalize localAliases))
                     |> List.append (List.map Dict.fromList localEnv)
                     |> List.foldl Dict.union Dict.empty
+            , typeAliases = localAliases
             }
     of
         Nothing ->

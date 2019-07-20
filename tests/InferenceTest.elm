@@ -24,6 +24,7 @@ bar num =
                         , end = { column = 8, row = 3 }
                         }
                     , values = Dict.empty
+                    , typeAliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -45,6 +46,7 @@ bar num =
                         , end = { column = 10, row = 3 }
                         }
                     , values = Dict.empty
+                    , typeAliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -68,12 +70,42 @@ bar num =
                         , end = { column = 17, row = 3 }
                         }
                     , values = Dict.empty
+                    , typeAliases = []
                     }
                     |> Expect.equal
                         (Just
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "num", Type "Int" [] ) ]
+                            )
+                        )
+        , test "record update" <|
+            \_ ->
+                Inference.inferHole
+                    { src =
+                        """bar : { name : String, count : Int } -> { name : String, count : Int }
+bar data =
+    { data | name = foo }
+"""
+                    , holeRange =
+                        { start = { column = 21, row = 3 }
+                        , end = { column = 24, row = 3 }
+                        }
+                    , values = Dict.empty
+                    , typeAliases = []
+                    }
+                    |> Expect.equal
+                        (Just
+                            ( Type "String" []
+                            , Dict.fromList
+                                [ ( "data"
+                                  , Record
+                                        [ ( "name", Type "String" [] )
+                                        , ( "count", Type "Int" [] )
+                                        ]
+                                        Nothing
+                                  )
+                                ]
                             )
                         )
         , test "case" <|
@@ -95,6 +127,7 @@ foo int =
                         , end = { column = 25, row = 6 }
                         }
                     , values = Dict.empty
+                    , typeAliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -121,6 +154,7 @@ foo bool =
                         , end = { column = 12, row = 4 }
                         }
                     , values = Dict.empty
+                    , typeAliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -149,6 +183,7 @@ foo int =
                                         Type "String" []
                               )
                             ]
+                    , typeAliases = []
                     }
                     |> Expect.equal
                         (Just

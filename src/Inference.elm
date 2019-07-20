@@ -1,6 +1,7 @@
 module Inference exposing (inferHole)
 
 import Dict exposing (Dict)
+import Elm.Docs exposing (Alias)
 import Elm.Parser
 import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
@@ -12,6 +13,7 @@ import Elm.Syntax.TypeAnnotation as Src
 import Elm.Type exposing (Type(..))
 import Scheme exposing (Scheme(..))
 import Set exposing (Set)
+import Solver
 import Src
 import State exposing (State)
 import Triple
@@ -23,6 +25,7 @@ inferHole :
     { src : String
     , holeRange : Range
     , values : Dict String Type
+    , typeAliases : List Alias
     }
     -> Maybe ( Type, Dict String Type )
 inferHole params =
@@ -36,83 +39,42 @@ inferHole params =
 
         Ok rawFile ->
             let
-                file =
-                    Elm.Processing.process Elm.Processing.init rawFile
+                getFunction (Node _ declaration) =
+                    case declaration of
+                        FunctionDeclaration function ->
+                            Just function
+
+                        _ ->
+                            Nothing
             in
-            file.declarations
+            rawFile
+                |> Elm.Processing.process Elm.Processing.init
+                |> .declarations
                 |> List.filterMap getFunction
                 |> List.head
-                |> Maybe.andThen (getHole params.values params.holeRange)
+                |> Maybe.andThen
+                    (getHole
+                        params.typeAliases
+                        params.values
+                        params.holeRange
+                    )
 
 
-type alias Function =
-    { expr : Node Expression
-    , typeEnv : TypeEnv
-    , returnType : Type
-    }
-
-
-getFunction : Node Declaration -> Maybe Function
-getFunction (Node _ declaration) =
-    case declaration of
-        FunctionDeclaration function ->
-            let
-                (Node _ functionImplementation) =
-                    function.declaration
-
-                (Node _ name) =
-                    functionImplementation.name
-            in
-            case function.signature of
-                Nothing ->
-                    Nothing
-
-                Just (Node _ signature) ->
-                    let
-                        functionType =
-                            Type.fromTypeAnnotation
-                                signature.typeAnnotation
-
-                        arguments =
-                            argumentsFromPatterns
-                                functionImplementation.arguments
-
-                        toFunction ( typeEnv, returnType ) =
-                            { expr = functionImplementation.expression
-                            , typeEnv = typeEnv
-                            , returnType = returnType
-                            }
-                    in
-                    typeEnvFromArguments arguments functionType
-                        |> Maybe.map toFunction
-
-        _ ->
-            Nothing
-
-
-argumentsFromPatterns : List (Node Pattern) -> List String
-argumentsFromPatterns patterns =
-    let
-        help (Node _ pattern) =
-            case pattern of
-                VarPattern name ->
-                    name
-
-                _ ->
-                    "_"
-    in
-    List.map help patterns
-
-
-getHole : Dict String Type -> Range -> Function -> Maybe ( Type, Dict String Type )
-getHole values holeRange function =
+getHole :
+    List Alias
+    -> Dict String Type
+    -> Range
+    -> Function
+    -> Maybe ( Type, Dict String Type )
+getHole typeAliases values holeRange function =
     let
         ( constraints, holes, result ) =
-            runInfer (TypeEnv.join function.typeEnv initialEnv)
+            runInfer typeAliases
+                initialEnv
                 { start = incrementRow holeRange.start
                 , end = incrementRow holeRange.end
                 }
-                function.expr
+                function
 
         initialEnv =
             values
@@ -126,13 +88,10 @@ getHole values holeRange function =
         Err error ->
             Nothing
 
-        Ok inferedReturnType ->
+        Ok _ ->
             let
                 solve ( _, tipe, env ) =
-                    (( inferedReturnType, function.returnType )
-                        :: constraints
-                    )
-                        |> runSolve
+                    Solver.run constraints
                         |> Result.toMaybe
                         |> Maybe.map (substitute tipe env)
 
@@ -150,43 +109,6 @@ getHole values holeRange function =
             holes
                 |> List.head
                 |> Maybe.andThen solve
-
-
-typeEnvFromArguments : List String -> Type -> Maybe ( TypeEnv, Type )
-typeEnvFromArguments names tipe =
-    typeEnvFromArgumentsHelp [] names tipe
-
-
-typeEnvFromArgumentsHelp :
-    List ( String, Type )
-    -> List String
-    -> Type
-    -> Maybe ( TypeEnv, Type )
-typeEnvFromArgumentsHelp values names tipe =
-    case ( names, tipe ) of
-        ( [], returnType ) ->
-            Just
-                ( TypeEnv.fromValues values
-                , returnType
-                )
-
-        ( name :: restNames, Lambda from to ) ->
-            typeEnvFromArgumentsHelp
-                (( name, from ) :: values)
-                restNames
-                to
-
-        _ ->
-            Nothing
-
-
-
----- SUBST
-
-
-compose : Dict String Type -> Dict String Type -> Dict String Type
-compose substA substB =
-    Dict.union (Dict.map (\_ -> Type.apply substA) substB) substA
 
 
 
@@ -219,10 +141,6 @@ addConstraint constraint =
 
 type Error
     = UnboundVariable String
-    | InfiniteType String Type
-    | UnificationFail Type Type
-    | UnificationMismatch (List Type) (List Type)
-    | RecordUnificationMismatch (List ( String, Type )) (List ( String, Type ))
     | ParserError
     | SyntaxError
     | UnsupportedExpression Expression
@@ -231,16 +149,64 @@ type Error
 
 
 runInfer :
-    TypeEnv
+    List Alias
+    -> TypeEnv
     -> Range
-    -> Node Expression
+    -> Function
     -> ( List Constraint, List Hole, Result Error Type )
-runInfer env holeRange expr =
+runInfer typeAliases env holeRange expr =
     let
         (Infer run) =
-            infer holeRange expr
+            inferFunction typeAliases holeRange expr
     in
     State.finalValue 0 (run env)
+
+
+inferFunction : List Alias -> Range -> Function -> Infer Type
+inferFunction typeAliases holeRange function =
+    let
+        (Node _ declaration) =
+            function.declaration
+
+        inferHelp args argTypes schemes =
+            case args of
+                [] ->
+                    inEnvs schemes
+                        (infer holeRange declaration.expression
+                            |> andThen
+                                (\tipe ->
+                                    let
+                                        inferedType =
+                                            returnType argTypes tipe
+                                    in
+                                    case function.signature of
+                                        Nothing ->
+                                            return inferedType
+
+                                        Just (Node _ signature) ->
+                                            addConstraint
+                                                ( inferedType
+                                                , signature.typeAnnotation
+                                                    |> Type.fromTypeAnnotation
+                                                    |> Type.normalize typeAliases
+                                                )
+                                                |> map (\_ -> inferedType)
+                                )
+                        )
+
+                arg :: rest ->
+                    inferPattern arg
+                        |> andThen
+                            (\( argType, newSchemes ) ->
+                                inferHelp rest
+                                    (argType :: argTypes)
+                                    (newSchemes ++ schemes)
+                            )
+
+        returnType vars tipe =
+            List.foldl Lambda tipe vars
+    in
+    inferHelp declaration.arguments [] []
 
 
 infer : Range -> Node Expression -> Infer Type
@@ -444,8 +410,39 @@ infer holeRange (Node range expr) =
         RecordAccessFunction _ ->
             throwError (UnsupportedExpression expr)
 
-        RecordUpdateExpression _ _ ->
-            throwError (UnsupportedExpression expr)
+        RecordUpdateExpression (Node _ name) recordSetters ->
+            let
+                inferRecordSetter (Node _ ( Node _ fieldName, fieldExpr )) =
+                    infer holeRange fieldExpr
+                        |> map (Tuple.pair fieldName)
+
+                inferRecordType fieldTypes =
+                    lookupEnv name
+                        |> andThen
+                            (\recordType ->
+                                fresh
+                                    |> andThen
+                                        (\var ->
+                                            let
+                                                varName =
+                                                    case var of
+                                                        Var n ->
+                                                            Just n
+
+                                                        _ ->
+                                                            Nothing
+                                            in
+                                            addConstraint
+                                                ( recordType
+                                                , Record fieldTypes varName
+                                                )
+                                                |> map (\_ -> recordType)
+                                        )
+                            )
+            in
+            recordSetters
+                |> traverse inferRecordSetter
+                |> andThen inferRecordType
 
         GLSLExpression _ ->
             throwError (UnsupportedExpression expr)
@@ -719,151 +716,3 @@ generalize env tipe =
                     (TypeEnv.freeTypeVars env)
     in
     ForAll subst tipe
-
-
-
----- UNIFICATION
-
-
-unifies : Type -> Type -> Result Error (Dict String Type)
-unifies typeA typeB =
-    if typeA == typeB then
-        Ok Dict.empty
-
-    else
-        case ( typeA, typeB ) of
-            ( Var varA, _ ) ->
-                bind varA typeB
-
-            ( _, Var varB ) ->
-                bind varB typeA
-
-            ( Lambda fromA toA, Lambda fromB toB ) ->
-                unifyMany [ fromA, toA ] [ fromB, toB ]
-
-            ( Tuple typeAs, Tuple typeBs ) ->
-                unifyMany typeAs typeBs
-
-            ( Record fieldsA maybeVarA, Record fieldsB maybeVarB ) ->
-                case ( maybeVarA, maybeVarB ) of
-                    ( Nothing, Nothing ) ->
-                        unifyFields
-                            (List.sortBy Tuple.first fieldsA)
-                            (List.sortBy Tuple.first fieldsB)
-
-                    ( Just nameA, Nothing ) ->
-                        Err UnsupportedUnification
-
-                    ( Nothing, Just nameB ) ->
-                        Err UnsupportedUnification
-
-                    ( Just nameA, Just nameB ) ->
-                        Err UnsupportedUnification
-
-            _ ->
-                Err (UnificationFail typeA typeB)
-
-
-unifyFields :
-    List ( String, Type )
-    -> List ( String, Type )
-    -> Result Error (Dict String Type)
-unifyFields fieldsA fieldsB =
-    case ( fieldsA, fieldsB ) of
-        ( ( nameA, typeA ) :: restA, ( nameB, typeB ) :: restB ) ->
-            if nameA == nameB then
-                unifies typeA typeB
-                    |> Result.andThen
-                        (\subst ->
-                            unifyFields
-                                (List.map (Tuple.mapSecond (Type.apply subst)) restA)
-                                (List.map (Tuple.mapSecond (Type.apply subst)) restB)
-                                |> Result.map
-                                    (\newSubst ->
-                                        compose newSubst subst
-                                    )
-                        )
-
-            else
-                Err (RecordUnificationMismatch fieldsA fieldsB)
-
-        ( [], [] ) ->
-            Ok Dict.empty
-
-        _ ->
-            Err (RecordUnificationMismatch fieldsA fieldsB)
-
-
-unifyMany : List Type -> List Type -> Result Error (Dict String Type)
-unifyMany typeAs typeBs =
-    case ( typeAs, typeBs ) of
-        ( [], [] ) ->
-            Ok Dict.empty
-
-        ( typeA :: restA, typeB :: restB ) ->
-            unifies typeA typeB
-                |> Result.andThen
-                    (\subst ->
-                        unifyMany
-                            (List.map (Type.apply subst) restA)
-                            (List.map (Type.apply subst) restB)
-                            |> Result.map
-                                (\newSubst ->
-                                    compose newSubst subst
-                                )
-                    )
-
-        _ ->
-            Err (UnificationMismatch typeAs typeBs)
-
-
-bind : String -> Type -> Result Error (Dict String Type)
-bind var tipe =
-    let
-        isVar =
-            case tipe of
-                Var otherVar ->
-                    otherVar == var
-
-                _ ->
-                    False
-    in
-    if isVar then
-        Ok Dict.empty
-
-    else if Set.member var (Type.freeTypeVars tipe) then
-        Err (InfiniteType var tipe)
-
-    else
-        Ok (Dict.singleton var tipe)
-
-
-
----- SOLVE
-
-
-runSolve : List Constraint -> Result Error (Dict String Type)
-runSolve constraints =
-    solver
-        ( Dict.empty, constraints )
-
-
-solver : ( Dict String Type, List Constraint ) -> Result Error (Dict String Type)
-solver ( subst, constraints ) =
-    case constraints of
-        [] ->
-            Ok subst
-
-        ( typeA, typeB ) :: rest ->
-            unifies typeA typeB
-                |> Result.andThen
-                    (\newSubst ->
-                        solver
-                            ( compose newSubst subst
-                            , List.map
-                                (Tuple.mapFirst (Type.apply newSubst)
-                                    >> Tuple.mapSecond (Type.apply newSubst)
-                                )
-                                rest
-                            )
-                    )
