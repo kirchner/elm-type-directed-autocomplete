@@ -22,67 +22,21 @@ import TypeEnv exposing (TypeEnv)
 
 
 inferHole :
-    { src : String
-    , holeRange : Range
+    { function : Function
+    , range : Range
     , values : Dict String Type
-    , typeAliases : List Alias
+    , aliases : List Alias
     }
     -> Maybe ( Type, Dict String Type )
-inferHole params =
-    let
-        srcModule =
-            "module Main exposing (..)\n" ++ params.src
-    in
-    case Elm.Parser.parse srcModule of
-        Err error ->
-            Nothing
-
-        Ok rawFile ->
-            let
-                getFunction (Node _ declaration) =
-                    case declaration of
-                        FunctionDeclaration function ->
-                            Just function
-
-                        _ ->
-                            Nothing
-            in
-            rawFile
-                |> Elm.Processing.process Elm.Processing.init
-                |> .declarations
-                |> List.filterMap getFunction
-                |> List.head
-                |> Maybe.andThen
-                    (getHole
-                        params.typeAliases
-                        params.values
-                        params.holeRange
-                    )
-
-
-getHole :
-    List Alias
-    -> Dict String Type
-    -> Range
-    -> Function
-    -> Maybe ( Type, Dict String Type )
-getHole typeAliases values holeRange function =
+inferHole { aliases, values, range, function } =
     let
         ( constraints, holes, result ) =
-            runInfer typeAliases
-                initialEnv
-                { start = incrementRow holeRange.start
-                , end = incrementRow holeRange.end
-                }
-                function
+            runInfer aliases initialEnv range function
 
         initialEnv =
             values
                 |> Dict.toList
                 |> TypeEnv.fromValues
-
-        incrementRow location =
-            { location | row = location.row + 1 }
     in
     case result of
         Err error ->

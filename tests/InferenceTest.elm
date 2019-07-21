@@ -19,12 +19,12 @@ suite =
 bar num =
     foo
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 5, row = 3 }
                         , end = { column = 8, row = 3 }
                         }
                     , values = Dict.empty
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -41,12 +41,12 @@ bar num =
 bar num =
     ( foo, 123 )
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 7, row = 3 }
                         , end = { column = 10, row = 3 }
                         }
                     , values = Dict.empty
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -65,12 +65,12 @@ bar num =
     , count = 1
     }
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 14, row = 3 }
                         , end = { column = 17, row = 3 }
                         }
                     , values = Dict.empty
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -87,12 +87,12 @@ bar num =
 bar data =
     { data | name = foo }
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 21, row = 3 }
                         , end = { column = 24, row = 3 }
                         }
                     , values = Dict.empty
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -122,12 +122,12 @@ foo int =
             _ ->
                 ( 2, "foo" )
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 22, row = 6 }
                         , end = { column = 25, row = 6 }
                         }
                     , values = Dict.empty
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -149,12 +149,12 @@ foo bool =
     else
         "bar"
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 9, row = 4 }
                         , end = { column = 12, row = 4 }
                         }
                     , values = Dict.empty
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just
@@ -171,7 +171,7 @@ foo bool =
 foo int =
     String.repeat int bar
 """
-                    , holeRange =
+                    , range =
                         { start = { column = 23, row = 3 }
                         , end = { column = 26, row = 3 }
                         }
@@ -183,7 +183,7 @@ foo int =
                                         Type "String" []
                               )
                             ]
-                    , typeAliases = []
+                    , aliases = []
                     }
                     |> Expect.equal
                         (Just

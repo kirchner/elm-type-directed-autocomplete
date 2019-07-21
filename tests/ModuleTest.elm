@@ -30,92 +30,88 @@ suite =
             \_ ->
                 Module.exposed file interface
                     |> Expect.equal
-                        (Just
-                            { values =
-                                Dict.fromList
-                                    [ ( "update"
-                                      , Lambda (Type "Msg" [])
-                                            (Lambda (Type "Model" [])
-                                                (Type "Model" [])
-                                            )
-                                      )
-                                    ]
-                            , aliases =
-                                [ { name = "Model"
-                                  , comment = ""
-                                  , args = []
-                                  , tipe =
-                                        Record
-                                            [ ( "name", Type "String" [] ) ]
-                                            Nothing
-                                  }
+                        { values =
+                            Dict.fromList
+                                [ ( "update"
+                                  , Lambda (Type "Msg" [])
+                                        (Lambda (Type "Model" [])
+                                            (Type "Model" [])
+                                        )
+                                  )
                                 ]
-                            , unions =
-                                [ { name = "Msg"
-                                  , comment = ""
-                                  , args = []
-                                  , tags = []
-                                  }
-                                ]
-                            }
-                        )
+                        , aliases =
+                            [ { name = "Model"
+                              , comment = ""
+                              , args = []
+                              , tipe =
+                                    Record
+                                        [ ( "name", Type "String" [] ) ]
+                                        Nothing
+                              }
+                            ]
+                        , unions =
+                            [ { name = "Msg"
+                              , comment = ""
+                              , args = []
+                              , tags = []
+                              }
+                            ]
+                        }
         , test "internal" <|
             \_ ->
                 Module.internal file
                     |> Expect.equal
-                        (Just
-                            { values =
-                                Dict.fromList
-                                    [ ( "update"
-                                      , Lambda (Type "Msg" [])
-                                            (Lambda (Type "Model" [])
-                                                (Type "Model" [])
-                                            )
-                                      )
-                                    , ( "internal"
-                                      , Lambda (Type "String" []) (Type "String" [])
-                                      )
+                        { values =
+                            Dict.fromList
+                                [ ( "update"
+                                  , Lambda (Type "Msg" [])
+                                        (Lambda (Type "Model" [])
+                                            (Type "Model" [])
+                                        )
+                                  )
+                                , ( "internal"
+                                  , Lambda (Type "String" []) (Type "String" [])
+                                  )
+                                ]
+                        , aliases =
+                            [ { name = "Model"
+                              , comment = ""
+                              , args = []
+                              , tipe =
+                                    Record
+                                        [ ( "name", Type "String" [] ) ]
+                                        Nothing
+                              }
+                            ]
+                        , unions =
+                            [ { name = "Internal"
+                              , comment = ""
+                              , args = []
+                              , tags = [ ( "Internal", [] ) ]
+                              }
+                            , { name = "Msg"
+                              , comment = ""
+                              , args = []
+                              , tags =
+                                    [ ( "NoOp", [] )
+                                    , ( "NameChanged", [ Type "String" [] ] )
                                     ]
-                            , aliases =
-                                [ { name = "Model"
-                                  , comment = ""
-                                  , args = []
-                                  , tipe =
-                                        Record
-                                            [ ( "name", Type "String" [] ) ]
-                                            Nothing
-                                  }
-                                ]
-                            , unions =
-                                [ { name = "Internal"
-                                  , comment = ""
-                                  , args = []
-                                  , tags = [ ( "Internal", [] ) ]
-                                  }
-                                , { name = "Msg"
-                                  , comment = ""
-                                  , args = []
-                                  , tags =
-                                        [ ( "NoOp", [] )
-                                        , ( "NameChanged", [ Type "String" [] ] )
-                                        ]
-                                  }
-                                ]
-                            }
-                        )
+                              }
+                            ]
+                        }
         , test "functionDeclarationAt" <|
             \_ ->
-                Module.functionDeclarationAt
-                    { start =
-                        { row = 13
-                        , column = 4
+                file
+                    |> Module.functionDeclarationAt
+                        { start =
+                            { row = 13
+                            , column = 4
+                            }
+                        , end =
+                            { row = 13
+                            , column = 8
+                            }
                         }
-                    , end =
-                        { row = 13
-                        , column = 8
-                        }
-                    }
-                    file
                     |> Maybe.map
                         (.declaration
                             >> Elm.Syntax.Node.value

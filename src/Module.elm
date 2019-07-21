@@ -37,15 +37,15 @@ emptyModule =
 
 
 {-| -}
-exposed : File -> Interface -> Maybe Module
+exposed : File -> Interface -> Module
 exposed file interface =
-    Just (collect emptyModule (Just interface) file.declarations)
+    collect emptyModule (Just interface) file.declarations
 
 
 {-| -}
-internal : File -> Maybe Module
+internal : File -> Module
 internal file =
-    Just (collect emptyModule Nothing file.declarations)
+    collect emptyModule Nothing file.declarations
 
 
 {-| -}
@@ -65,12 +65,12 @@ functionDeclarationAtHelp holeRange declarations =
                 containsHole =
                     ((range.start.row < holeRange.start.row)
                         || ((range.start.row == holeRange.start.row)
-                                && (range.start.column < holeRange.start.column)
+                                && (range.start.column <= holeRange.start.column)
                            )
                     )
                         && ((range.end.row > holeRange.end.row)
                                 || ((range.end.row == holeRange.end.row)
-                                        && (range.end.column > holeRange.end.column)
+                                        && (range.end.column >= holeRange.end.column)
                                    )
                            )
             in

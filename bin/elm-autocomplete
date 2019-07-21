@@ -1,0 +1,34 @@
+#!/usr/bin/env node
+
+var readline = require('readline');
+var runner = require("../lib/runner.js");
+
+
+runner
+  .parseProject()
+  .then(app => {
+    app.ports.completions.subscribe(function(completions) {
+      console.log(JSON.stringify(completions));
+    });
+
+    var rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: false
+    });
+
+    var recurse = function() {
+      rl.question('', function(line) {
+        var params = JSON.parse(line);
+
+        if (params) {
+          app.ports.completionsFor.send(params);
+        }
+
+        recurse();
+      });
+    };
+
+    recurse();
+  })
+  .catch(console.error);
