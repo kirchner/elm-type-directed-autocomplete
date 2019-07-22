@@ -1,34 +1,164 @@
 #!/usr/bin/env node
 
-var readline = require('readline');
-var runner = require("../lib/runner.js");
+var child_process = require("child_process"),
+    fs = require("fs"),
+    minimist = require("minimist"),
+    net = require("net"),
+    path = require("path"),
+    readline = require('readline'),
+    runner = require("../lib/runner.js");
 
 
-runner
-  .parseProject()
-  .then(app => {
-    app.ports.completions.subscribe(function(completions) {
-      console.log(JSON.stringify(completions));
-    });
+var args = minimist(process.argv.slice(2), {
+  boolean: ["server"],
+  boolean: ["stop-server"],
+  string: ["file"],
+  string: ["range"]
+});
 
-    var rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-      terminal: false
-    });
 
-    var recurse = function() {
-      rl.question('', function(line) {
-        var params = JSON.parse(line);
+if (args["stop-server"]) {
+  console.log("stoping server");
 
-        if (params) {
-          app.ports.completionsFor.send(params);
-        }
+  fs.stat("elm-stuff/autocomplete/server.sock", function(error, stats) {
+    if (error) {
+      process.exit(0);
+    }
 
-        recurse();
+    var client = net.createConnection("elm-stuff/autocomplete/server.sock");
+
+    client
+      .on("error", function(error) {
+        console.error("stop-server:", error);
+        process.exit(0);
       });
-    };
 
-    recurse();
-  })
-  .catch(console.error);
+    client.write("stop");
+  });
+} else if (args.server) {
+  fs.stat("elm-stuff/autocomplete/server.sock", function(error, stats) {
+    if (error) {
+      createServer();
+      return;
+    }
+
+    fs.unlink("elm-stuff/autocomplete/server.sock", function(error) {
+      if (error) {
+        console.error("unlink:", error);
+        process.exit(0);
+      }
+
+      createServer();
+    });
+  });
+} else {
+  fs.stat("elm-stuff/autocomplete/server.sock", function(error, stats) {
+    if (error) {
+      spawnServer();
+
+      var waitForServer = function() {
+        fs.stat("elm-stuff/autocomplete/server.sock", function(error, stats) {
+          if (error) {
+            setTimeout(waitForServer, 300);
+          } else {
+            sendRequest(args);
+          }
+        });
+      }
+      waitForServer();
+    } else {
+      sendRequest(args);
+    }
+  });
+}
+
+
+var spawnServer = function() {
+  var spawn = child_process.spawn;
+  var out = fs.openSync("elm-stuff/autocomplete/server.log", "a");
+  var err = fs.openSync("elm-stuff/autocomplete/server.log", "a");
+
+  spawn("node", ["bin/elm-autocomplete", "--server"], {
+    stdio: ["ignore", out, err],
+    detached: true
+  }).unref();
+}
+
+
+var sendRequest = function(args) {
+  var client = net.createConnection("elm-stuff/autocomplete/server.sock");
+
+  client
+    .on("data", function(data) {
+      console.log(data.toString());
+      process.exit(0);
+    })
+    .on("error", function(error) {
+      if (error.errno === "ECONNREFUSED") {
+        spawnServer();
+        setTimeout(function() { sendRequest(args); }, 300);
+      } else {
+        process.exit(0);
+      }
+    })
+    .on("connect", function() {
+      var fileName = path.resolve(args.file);
+      var range = JSON.parse("[" + args.range + "]");
+
+      client.write(JSON.stringify({
+        fileName: fileName,
+        range: range
+      }));
+    });
+}
+
+
+var createServer = function() {
+  console.log("Initializing ...");
+
+  runner
+    .parseProject()
+    .then(app => {
+      console.log("Loaded project and waiting for requests");
+
+      var server = net.createServer(function(stream) {
+        stream.on("data", function(msg) {
+          if (msg.toString() === "stop") {
+            console.log("exiting...");
+            process.exit(0);
+          }
+        });
+      });
+
+      server
+        .listen("elm-stuff/autocomplete/server.sock")
+        .on("connection", function(socket) {
+          var respond = function(completions) {
+            console.log(JSON.stringify(completions, null, "  "));
+            console.log("================================================================================");
+            socket.write(JSON.stringify(completions));
+            app.ports.completions.unsubscribe(respond);
+          };
+          app.ports.completions.subscribe(respond);
+
+          socket.on("data", function(line) {
+
+            try {
+              var params = JSON.parse(line.toString());
+
+              console.log();
+              console.log("================================================================================");
+              console.log(JSON.stringify(params, null, "  "));
+              console.log("--------------------------------------------------------------------------------");
+
+              if (params) {
+                app.ports.completionsFor.send(params);
+              }
+            } catch(error) {
+              console.error(error);
+            }
+          });
+        });
+    })
+    .catch(console.error);
+};

@@ -220,9 +220,8 @@ update msg model =
                                     function
                                         |> infer values aliases params.range
                                         |> Maybe.map (generate values aliases unions)
-                                        |> Maybe.map completions
-                                        |> Maybe.withDefault
-                                            (toJS (Encode.string "no completions found"))
+                                        |> Maybe.withDefault []
+                                        |> completions
                     )
 
 
