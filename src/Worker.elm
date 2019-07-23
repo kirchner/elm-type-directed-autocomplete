@@ -50,7 +50,6 @@ type alias PackageIdentifier =
 
 type alias ModuleData =
     { name : ModuleName
-    , fileName : String
     , file : File
     , exposed : Module
     , internal : Module
@@ -62,7 +61,7 @@ parse file =
     Parser.parse file.content
         |> Result.map
             (\rawFile ->
-                ( toModuleData file.package file.fileName rawFile
+                ( toModuleData file.package rawFile
                 , RawFile.encode rawFile
                 )
             )
@@ -72,12 +71,12 @@ parse file =
 parseCached : CachedFile -> Result String ModuleData
 parseCached cached =
     Decode.decodeValue RawFile.decoder cached.data
-        |> Result.map (toModuleData cached.package cached.fileName)
+        |> Result.map (toModuleData cached.package)
         |> Result.mapError Decode.errorToString
 
 
-toModuleData : Maybe PackageIdentifier -> String -> RawFile -> ModuleData
-toModuleData package fileName rawFile =
+toModuleData : Maybe PackageIdentifier -> RawFile -> ModuleData
+toModuleData package rawFile =
     let
         interface =
             Interface.build rawFile
@@ -86,7 +85,6 @@ toModuleData package fileName rawFile =
             Processing.process Processing.init rawFile
     in
     { name = RawFile.moduleName rawFile
-    , fileName = fileName
     , file = file
     , exposed = Module.exposed file interface
     , internal = Module.internal file
@@ -138,7 +136,7 @@ store file data =
 
 
 type alias Model =
-    { modules : List ModuleData }
+    { modules : Dict String ModuleData }
 
 
 type Msg
@@ -149,7 +147,7 @@ type Msg
 
 init : flags -> ( Model, Cmd msg )
 init _ =
-    ( { modules = [] }
+    ( { modules = Dict.empty }
     , Cmd.none
     )
 
@@ -160,8 +158,11 @@ update msg model =
         Parse file ->
             case parse file of
                 Ok ( mod, data ) ->
-                    ( { model | modules = mod :: model.modules }
-                    , store file data
+                    ( { model | modules = Dict.insert file.fileName mod model.modules }
+                    , Cmd.batch
+                        [ store file data
+                        , toJS (Encode.string ("reparsed " ++ file.fileName))
+                        ]
                     )
 
                 Err e ->
@@ -172,8 +173,8 @@ update msg model =
         Restore cached ->
             case parseCached cached of
                 Ok mod ->
-                    ( { model | modules = mod :: model.modules }
-                    , Cmd.none
+                    ( { model | modules = Dict.insert cached.fileName mod model.modules }
+                    , toJS (Encode.string ("restored " ++ cached.fileName))
                     )
 
                 Err e ->
@@ -192,12 +193,8 @@ update msg model =
                     )
 
                 Ok params ->
-                    let
-                        isFile { fileName } =
-                            fileName == params.fileName
-                    in
                     ( model
-                    , case List.find isFile model.modules of
+                    , case Dict.get params.fileName model.modules of
                         Nothing ->
                             toJS (Encode.string "no file found")
 
