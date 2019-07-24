@@ -38,7 +38,7 @@ type alias InFile =
 type alias CachedFile =
     { package : Maybe PackageIdentifier
     , fileName : String
-    , data : Encode.Value
+    , data : Value
     }
 
 
@@ -52,11 +52,10 @@ type alias ModuleData =
     { name : ModuleName
     , file : File
     , exposed : Module
-    , internal : Module
     }
 
 
-parse : InFile -> Result String ( ModuleData, Encode.Value )
+parse : InFile -> Result String ( ModuleData, Value )
 parse file =
     Parser.parse file.content
         |> Result.map
@@ -87,7 +86,6 @@ toModuleData package rawFile =
     { name = RawFile.moduleName rawFile
     , file = file
     , exposed = Module.exposed file interface
-    , internal = Module.internal file
     }
 
 
@@ -101,36 +99,31 @@ port toElm : (InFile -> msg) -> Sub msg
 port restore : (CachedFile -> msg) -> Sub msg
 
 
-port toJS : Encode.Value -> Cmd msg
+port toJS : Value -> Cmd msg
 
 
 port storeFile :
     { content : String
-    , data : Encode.Value
+    , data : Value
     }
     -> Cmd msg
 
 
-port completionsFor : (Value -> msg) -> Sub msg
+port completionsFor : (CompletionRequest -> msg) -> Sub msg
 
 
-type alias Params =
+type alias CompletionRequest =
     { fileName : String
-    , range : Range
+    , src : String
+    , column : Int
+    , row : Int
     }
-
-
-paramsDecoder : Decoder Params
-paramsDecoder =
-    Decode.succeed Params
-        |> Decode.required "fileName" Decode.string
-        |> Decode.required "range" Elm.Syntax.Range.decoder
 
 
 port completions : List String -> Cmd msg
 
 
-store : InFile -> Encode.Value -> Cmd msg
+store : InFile -> Value -> Cmd msg
 store file data =
     storeFile { content = file.content, data = data }
 
@@ -142,7 +135,7 @@ type alias Model =
 type Msg
     = Parse InFile
     | Restore CachedFile
-    | For Value
+    | For CompletionRequest
 
 
 init : flags -> ( Model, Cmd msg )
@@ -185,40 +178,71 @@ update msg model =
                         ]
                     )
 
-        For rawParams ->
-            case Decode.decodeValue paramsDecoder rawParams of
+        For completionRequest ->
+            case Parser.parse completionRequest.src of
                 Err e ->
                     ( model
-                    , toJS <| Encode.string (Decode.errorToString e)
+                    , Cmd.batch
+                        [ toJS (Encode.string "could not parse file")
+                        , completions []
+                        ]
                     )
 
-                Ok params ->
+                Ok rawFile ->
+                    let
+                        file =
+                            Processing.process Processing.init rawFile
+
+                        range =
+                            { start =
+                                { column = completionRequest.column
+                                , row = completionRequest.row
+                                }
+                            , end =
+                                { column = completionRequest.column + wordLength
+                                , row = completionRequest.row
+                                }
+                            }
+
+                        wordLength =
+                            completionRequest.src
+                                |> String.lines
+                                |> List.getAt (completionRequest.row - 1)
+                                |> Maybe.map
+                                    (String.dropLeft (completionRequest.column - 5)
+                                        >> String.words
+                                    )
+                                |> Maybe.andThen List.head
+                                |> Maybe.map String.length
+                                |> Maybe.withDefault 1
+                    in
                     ( model
-                    , case Dict.get params.fileName model.modules of
+                    , case Module.functionDeclarationAt range file of
                         Nothing ->
-                            toJS (Encode.string "no file found")
+                            Cmd.batch
+                                [ toJS (Encode.string "no function declaration found")
+                                , completions []
+                                ]
 
-                        Just { file, internal } ->
-                            case Module.functionDeclarationAt params.range file of
-                                Nothing ->
-                                    toJS (Encode.string "no function declaration found")
+                        Just function ->
+                            let
+                                internal =
+                                    Module.internal file
 
-                                Just function ->
-                                    let
-                                        values =
-                                            internal.values
+                                values =
+                                    internal.values
 
-                                        aliases =
-                                            internal.aliases
+                                aliases =
+                                    internal.aliases
 
-                                        unions =
-                                            internal.unions
-                                    in
-                                    function
-                                        |> infer values aliases params.range
-                                        |> Maybe.map (generate values aliases unions)
-                                        |> Maybe.withDefault []
-                                        |> completions
+                                unions =
+                                    internal.unions
+                            in
+                            function
+                                |> infer values aliases range
+                                |> Maybe.map (generate values aliases unions)
+                                |> Maybe.withDefault []
+                                |> completions
                     )
 
 
