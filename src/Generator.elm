@@ -113,7 +113,11 @@ available. Take a look at its source code, to get an idea of what is possible.
 default : Generator
 default =
     all
-        [ recordUpdate value
+        [ recordUpdate <|
+            all
+                [ value
+                , field
+                ]
         , value
         , field
         , accessor

@@ -16,7 +16,7 @@ import Elm.Syntax.File exposing (File)
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Type
-import Elm.Type exposing (Type)
+import Elm.Type exposing (Type(..))
 import Type
 
 
@@ -156,6 +156,9 @@ collect exposings maybeInterface declarations =
                         (Node _ name) =
                             tipe.name
 
+                        args =
+                            List.map toArg tipe.generics
+
                         toArg (Node _ generic) =
                             generic
                     in
@@ -169,7 +172,7 @@ collect exposings maybeInterface declarations =
                                     | unions =
                                         { name = name
                                         , comment = ""
-                                        , args = List.map toArg tipe.generics
+                                        , args = args
                                         , tags = []
                                         }
                                             :: exposings.unions
@@ -189,6 +192,23 @@ collect exposings maybeInterface declarations =
                                         , List.map Type.fromTypeAnnotation
                                             valueConstructor.arguments
                                         )
+
+                                values =
+                                    List.map toValue tipe.constructors
+
+                                toValue (Node _ valueConstructor) =
+                                    let
+                                        (Node _ constructorName) =
+                                            valueConstructor.name
+                                    in
+                                    ( constructorName
+                                    , List.foldr (Lambda << Type.fromTypeAnnotation)
+                                        targetType
+                                        valueConstructor.arguments
+                                    )
+
+                                targetType =
+                                    Type name (List.map Var args)
                             in
                             collect
                                 { exposings
@@ -199,6 +219,13 @@ collect exposings maybeInterface declarations =
                                         , tags = List.filterMap toTag tipe.constructors
                                         }
                                             :: exposings.unions
+                                    , values =
+                                        List.foldl
+                                            (\( constructor, value ) ->
+                                                Dict.insert constructor value
+                                            )
+                                            exposings.values
+                                            values
                                 }
                                 maybeInterface
                                 rest

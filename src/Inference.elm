@@ -1,4 +1,4 @@
-module Inference exposing (inferHole)
+module Inference exposing (Error(..), errorToString, inferHole)
 
 import Dict exposing (Dict)
 import Elm.Docs exposing (Alias)
@@ -27,7 +27,7 @@ inferHole :
     , values : Dict String Type
     , aliases : List Alias
     }
-    -> Maybe ( Type, Dict String Type )
+    -> Result Error ( Type, Dict String Type )
 inferHole { aliases, values, range, function } =
     let
         ( constraints, holes, result ) =
@@ -40,7 +40,7 @@ inferHole { aliases, values, range, function } =
     in
     case result of
         Err error ->
-            Nothing
+            Err error
 
         Ok _ ->
             let
@@ -63,6 +63,7 @@ inferHole { aliases, values, range, function } =
             holes
                 |> List.head
                 |> Maybe.andThen solve
+                |> Result.fromMaybe CouldNotSolve
 
 
 
@@ -100,6 +101,32 @@ type Error
     | UnsupportedExpression Expression
     | UnsupportedPattern Pattern
     | UnsupportedUnification
+    | CouldNotSolve
+
+
+errorToString : Error -> String
+errorToString error =
+    case error of
+        UnboundVariable name ->
+            "Unbound variable " ++ name
+
+        ParserError ->
+            "Parser error"
+
+        SyntaxError ->
+            "Syntax error"
+
+        UnsupportedExpression expr ->
+            "UnsupportedExpression " ++ "TODO"
+
+        UnsupportedPattern pattern ->
+            "Unsupported pattern " ++ "TODO"
+
+        UnsupportedUnification ->
+            "Unsuppoerted unification"
+
+        CouldNotSolve ->
+            "Could not solve constraints"
 
 
 runInfer :
