@@ -381,17 +381,48 @@ infer holeRange (Node range expr) =
         Hex _ ->
             throwError (UnsupportedExpression expr)
 
-        Negation _ ->
-            throwError (UnsupportedExpression expr)
+        Negation numberExpr ->
+            infer holeRange numberExpr
 
         LetExpression _ ->
             throwError (UnsupportedExpression expr)
 
-        RecordAccess _ _ ->
-            throwError (UnsupportedExpression expr)
+        RecordAccess recordExpr (Node _ name) ->
+            let
+                getRecordVar recordType =
+                    freshVar
+                        |> andThen (getFieldVar recordType)
 
-        RecordAccessFunction _ ->
-            throwError (UnsupportedExpression expr)
+                getFieldVar recordType recordVar =
+                    freshVar
+                        |> andThen (returnType recordType recordVar)
+
+                returnType recordType recordVar fieldVar =
+                    addConstraint
+                        ( recordType
+                        , Record [ ( name, Var fieldVar ) ] (Just recordVar)
+                        )
+                        |> map (\_ -> Var fieldVar)
+            in
+            infer holeRange recordExpr
+                |> andThen getRecordVar
+
+        RecordAccessFunction name ->
+            let
+                getFieldVar recordVar =
+                    freshVar
+                        |> andThen (returnType recordVar)
+
+                returnType recordVar fieldVar =
+                    return <|
+                        Lambda
+                            (Record [ ( name, Var fieldVar ) ]
+                                (Just recordVar)
+                            )
+                            (Var fieldVar)
+            in
+            freshVar
+                |> andThen getFieldVar
 
         RecordUpdateExpression (Node _ name) recordSetters ->
             let
