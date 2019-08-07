@@ -596,18 +596,33 @@ toString tipe =
             var
 
         Lambda from to ->
-            toString from
-                ++ " -> "
-                ++ toString to
+            String.concat
+                [ toString from
+                , " -> "
+                , toString to
+                ]
 
         Tuple tipes ->
-            "( "
-                ++ String.join ", "
-                    (List.map toString tipes)
-                ++ " )"
+            String.concat
+                [ "( "
+                , String.join ", " (List.map toString tipes)
+                , " )"
+                ]
 
         Type name tipes ->
             String.join " " (name :: List.map toString tipes)
 
-        Record _ _ ->
-            "TODO: Record"
+        Record fields maybeVar ->
+            let
+                fieldToString ( fieldName, fieldType ) =
+                    fieldName ++ " : " ++ toString fieldType
+            in
+            String.concat
+                [ case maybeVar of
+                    Nothing ->
+                        "{ "
+
+                    Just var ->
+                        "{ " ++ var ++ " | "
+                , String.join ", " (List.map fieldToString fields)
+                ]
