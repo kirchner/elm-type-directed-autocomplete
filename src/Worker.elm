@@ -243,7 +243,13 @@ update msg model =
                                         ++ defaultImports
                                         |> List.concatMap
                                             (importedValuesFromImport model.modules)
+                                        |> List.filter (not << unnecessary)
                                         |> Dict.fromList
+
+                                unnecessary ( name, _ ) =
+                                    (name == "Debug.todo")
+                                        || (name == "always")
+                                        || (name == "identity")
                             in
                             case
                                 Inference.inferHole
