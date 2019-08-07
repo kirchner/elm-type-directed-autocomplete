@@ -8,6 +8,7 @@ module Type exposing
     , noSubstitutions
     , normalize
     , substitute
+    , toString
     , unifiability
     )
 
@@ -586,3 +587,27 @@ fromTypeAnnotation (Node _ typeAnnotation) =
 
         Src.FunctionTypeAnnotation from to ->
             Lambda (fromTypeAnnotation from) (fromTypeAnnotation to)
+
+
+toString : Type -> String
+toString tipe =
+    case tipe of
+        Var var ->
+            var
+
+        Lambda from to ->
+            toString from
+                ++ " -> "
+                ++ toString to
+
+        Tuple tipes ->
+            "( "
+                ++ String.join ", "
+                    (List.map toString tipes)
+                ++ " )"
+
+        Type name tipes ->
+            String.join " " (name :: List.map toString tipes)
+
+        Record _ _ ->
+            "TODO: Record"

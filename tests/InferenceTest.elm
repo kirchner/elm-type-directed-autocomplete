@@ -198,6 +198,53 @@ foo int =
                                 [ ( "int", Type "Int" [] ) ]
                             )
                         )
+        , test "record accessor" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """update : Msg -> Model -> Model
+update msg model =
+    case msg of
+        NoOp ->
+            { model | count = model.count }
+
+        NameChanged ->
+            foo
+"""
+                    , range =
+                        { start = { column = 13, row = 8 }
+                        , end = { column = 16, row = 8 }
+                        }
+                    , values =
+                        Dict.fromList
+                            [ ( "msg", Type "Msg" [] )
+                            , ( "model", Type "Model" [] )
+                            , ( "NoOp", Type "Msg" [] )
+                            , ( "NameChanged", Type "Msg" [] )
+                            ]
+                    , aliases =
+                        [ { name = "Model"
+                          , comment = ""
+                          , args = []
+                          , tipe =
+                                Record
+                                    [ ( "count", Type "Int" [] )
+                                    , ( "name", Type "String" [] )
+                                    ]
+                                    Nothing
+                          }
+                        ]
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Record
+                                [ ( "count", Type "Int" [] )
+                                , ( "name", Type "String" [] )
+                                ]
+                                Nothing
+                            , Dict.empty
+                            )
+                        )
         ]
 
 

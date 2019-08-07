@@ -46,8 +46,8 @@ inferHole { aliases, values, range, function } =
             let
                 solve ( _, tipe, env ) =
                     Solver.run constraints
-                        |> Result.toMaybe
-                        |> Maybe.map (substitute tipe env)
+                        |> Result.mapError CouldNotSolve
+                        |> Result.map (substitute tipe env)
 
                 substitute tipe env subst =
                     let
@@ -62,8 +62,8 @@ inferHole { aliases, values, range, function } =
             in
             holes
                 |> List.head
-                |> Maybe.andThen solve
-                |> Result.fromMaybe CouldNotSolve
+                |> Result.fromMaybe NoHoleFound
+                |> Result.andThen solve
 
 
 
@@ -101,7 +101,8 @@ type Error
     | UnsupportedExpression Expression
     | UnsupportedPattern Pattern
     | UnsupportedUnification
-    | CouldNotSolve
+    | CouldNotSolve Solver.Error
+    | NoHoleFound
 
 
 errorToString : Error -> String
@@ -125,8 +126,11 @@ errorToString error =
         UnsupportedUnification ->
             "Unsuppoerted unification"
 
-        CouldNotSolve ->
-            "Could not solve constraints"
+        CouldNotSolve solverError ->
+            "Could not solve constraints: " ++ Solver.errorToString solverError
+
+        NoHoleFound ->
+            "No hole found at the specified range"
 
 
 runInfer :

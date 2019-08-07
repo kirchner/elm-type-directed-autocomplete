@@ -251,40 +251,14 @@ update msg model =
 
                                         tagToString ( tagName, tagTypes ) =
                                             tagName
-                                                ++ " "
-                                                ++ (List.map typeToString tagTypes
-                                                        |> String.join " "
-                                                   )
+                                                :: List.map Type.toString tagTypes
+                                                |> String.join " "
 
-                                        typeToString tipe =
-                                            case tipe of
-                                                Var var ->
-                                                    var
-
-                                                Lambda from to ->
-                                                    typeToString from
-                                                        ++ " -> "
-                                                        ++ typeToString to
-
-                                                Tuple tipes ->
-                                                    "( "
-                                                        ++ String.join ", "
-                                                            (List.map typeToString tipes)
-                                                        ++ " )"
-
-                                                Type name tipes ->
-                                                    name
-                                                        ++ " "
-                                                        ++ String.join " " (List.map typeToString tipes)
-
-                                                Record _ _ ->
-                                                    "TODO: Record"
-
-                                        valueToString ( name, tipe ) =
+                                        valueToString ( fieldName, fieldType ) =
                                             String.concat
-                                                [ name
+                                                [ fieldName
                                                 , " : "
-                                                , typeToString tipe
+                                                , Type.toString fieldType
                                                 ]
                                     in
                                     Cmd.batch
@@ -300,15 +274,17 @@ update msg model =
                                                     , String.fromInt range.end.column
                                                     , " "
                                                     , String.fromInt range.end.row
-                                                    , "\nThe error was: "
+                                                    , "\n\nThe error was:\n  "
                                                     , Inference.errorToString error
                                                     , "."
-                                                    , "\nUnions: "
+                                                    , "\n\nUnions:\n"
                                                     , List.map unionToString unions
-                                                        |> String.join ", "
-                                                    , "\nValues: "
+                                                        |> List.map (\line -> "  " ++ line)
+                                                        |> String.join "\n"
+                                                    , "\n\nValues:\n"
                                                     , List.map valueToString (Dict.toList values)
-                                                        |> String.join ", "
+                                                        |> List.map (\line -> "  " ++ line)
+                                                        |> String.join "\n"
                                                     ]
                                             )
                                         , completions []

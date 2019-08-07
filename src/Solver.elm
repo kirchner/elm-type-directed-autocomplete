@@ -1,4 +1,4 @@
-module Solver exposing (Constraint, Error(..), run)
+module Solver exposing (Constraint, Error(..), errorToString, run)
 
 import Dict exposing (Dict)
 import Elm.Type exposing (Type(..))
@@ -15,6 +15,38 @@ type Error
     | UnificationFail Type Type
     | UnificationMismatch (List Type) (List Type)
     | RecordUnificationMismatch (List ( String, Type )) (List ( String, Type ))
+
+
+errorToString : Error -> String
+errorToString error =
+    case error of
+        InfiniteType name tipe ->
+            "Infinite type: " ++ name ++ " : " ++ Type.toString tipe
+
+        UnificationFail typeA typeB ->
+            "Cannot unify " ++ Type.toString typeA ++ " and " ++ Type.toString typeB
+
+        UnificationMismatch typesA typesB ->
+            String.concat
+                [ "Cannot unify [ "
+                , String.join ", " (List.map Type.toString typesA)
+                , " ] and [ "
+                , String.join ", " (List.map Type.toString typesB)
+                , " ]"
+                ]
+
+        RecordUnificationMismatch fieldsA fieldsB ->
+            let
+                fieldToString ( fieldName, fieldType ) =
+                    fieldName ++ " : " ++ Type.toString fieldType
+            in
+            String.concat
+                [ "Cannot unify record types { "
+                , String.join ", " (List.map fieldToString fieldsA)
+                , " } and { "
+                , String.join ", " (List.map fieldToString fieldsB)
+                , " }"
+                ]
 
 
 run : List Constraint -> Result Error (Dict String Type)
@@ -175,7 +207,7 @@ unifyFields collectedFields maybeVarA maybeVarB fieldsA fieldsB =
                                         Ok (Dict.singleton varB (Record [] Nothing))
 
                             Just varA ->
-                                Ok (Dict.singleton varA (Record [] Nothing))
+                                Ok (Dict.singleton varA (Record [] maybeVarB))
 
                     else
                         case maybeVarB of

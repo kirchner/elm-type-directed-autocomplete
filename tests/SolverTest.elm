@@ -167,4 +167,16 @@ suite =
                             Dict.fromList
                                 [ ( "a", Type "String" [] ) ]
                         )
+        , test "{ a | name : String }  ~  { b | name : String}" <|
+            \_ ->
+                Solver.run
+                    [ ( Record [ ( "name", Type "String" [] ) ] (Just "a")
+                      , Record [ ( "name", Type "String" [] ) ] (Just "b")
+                      )
+                    ]
+                    |> Expect.equal
+                        (Ok <|
+                            Dict.fromList
+                                [ ( "a", Record [] (Just "b") ) ]
+                        )
         ]
