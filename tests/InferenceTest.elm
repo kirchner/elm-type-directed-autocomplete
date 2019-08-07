@@ -1,10 +1,16 @@
 module InferenceTest exposing (suite)
 
-import Dict
+import Dict exposing (Dict)
+import Elm.Docs exposing (Alias)
+import Elm.Parser
+import Elm.Processing
+import Elm.Syntax.Expression exposing (Function)
+import Elm.Syntax.Range exposing (Range)
 import Elm.Type exposing (Type(..))
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import Inference
+import Module
 import Test exposing (..)
 
 
@@ -13,7 +19,7 @@ suite =
     concat
         [ test "simple value" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """bar : Int -> String
 bar num =
@@ -27,7 +33,7 @@ bar num =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "num", Type "Int" [] ) ]
@@ -35,7 +41,7 @@ bar num =
                         )
         , test "tuple" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """bar : Int -> ( String, Int )
 bar num =
@@ -49,7 +55,7 @@ bar num =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "num", Type "Int" [] ) ]
@@ -57,7 +63,7 @@ bar num =
                         )
         , test "record" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """bar : Int -> { name : String, count : Int }
 bar num =
@@ -73,7 +79,7 @@ bar num =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "num", Type "Int" [] ) ]
@@ -81,7 +87,7 @@ bar num =
                         )
         , test "record update" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """bar : { name : String, count : Int } -> { name : String, count : Int }
 bar data =
@@ -95,7 +101,7 @@ bar data =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "data"
@@ -110,7 +116,7 @@ bar data =
                         )
         , test "case" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """foo : Int -> Float -> ( Int, String )
 foo int =
@@ -130,7 +136,7 @@ foo int =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "int", Type "Int" [] )
@@ -140,7 +146,7 @@ foo int =
                         )
         , test "if" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """foo : Bool -> String
 foo bool =
@@ -157,7 +163,7 @@ foo bool =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "bool", Type "Bool" [] ) ]
@@ -165,7 +171,7 @@ foo bool =
                         )
         , test "with known value" <|
             \_ ->
-                Inference.inferHole
+                inferHelp
                     { src =
                         """foo : Int -> String
 foo int =
@@ -186,10 +192,55 @@ foo int =
                     , aliases = []
                     }
                     |> Expect.equal
-                        (Just
+                        (Ok
                             ( Type "String" []
                             , Dict.fromList
                                 [ ( "int", Type "Int" [] ) ]
                             )
                         )
         ]
+
+
+inferHelp :
+    { src : String
+    , range : Range
+    , values : Dict String Type
+    , aliases : List Alias
+    }
+    -> Result Inference.Error ( Type, Dict String Type )
+inferHelp { src, range, values, aliases } =
+    let
+        actualSrc =
+            "module Main exposing (..)\n" ++ src
+    in
+    case Elm.Parser.parse actualSrc of
+        Err error ->
+            Debug.todo ("Could not parse src:\n" ++ actualSrc)
+
+        Ok rawFile ->
+            let
+                file =
+                    Elm.Processing.process Elm.Processing.init rawFile
+
+                actualRange =
+                    { start =
+                        { column = range.start.column
+                        , row = range.start.row + 1
+                        }
+                    , end =
+                        { column = range.end.column
+                        , row = range.end.row + 1
+                        }
+                    }
+            in
+            case Module.functionDeclarationAt actualRange file of
+                Nothing ->
+                    Debug.todo "No function declaration at the specified range"
+
+                Just function ->
+                    Inference.inferHole
+                        { function = function
+                        , range = actualRange
+                        , values = values
+                        , aliases = aliases
+                        }

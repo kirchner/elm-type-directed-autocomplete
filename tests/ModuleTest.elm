@@ -72,6 +72,11 @@ suite =
                                 , ( "internal"
                                   , Lambda (Type "String" []) (Type "String" [])
                                   )
+                                , ( "Internal", Type "Internal" [] )
+                                , ( "NoOp", Type "Msg" [] )
+                                , ( "NameChanged"
+                                  , Lambda (Type "String" []) (Type "Msg" [])
+                                  )
                                 ]
                         , aliases =
                             [ { name = "Model"
