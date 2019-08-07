@@ -7,14 +7,14 @@ import Elm.Parser as Parser
 import Elm.Processing as Processing
 import Elm.RawFile as RawFile exposing (RawFile)
 import Elm.Syntax.Declaration as Declaration exposing (Declaration)
-import Elm.Syntax.Exposing as Exposing
+import Elm.Syntax.Exposing as Exposing exposing (Exposing(..), TopLevelExpose(..))
 import Elm.Syntax.Expression exposing (Function)
 import Elm.Syntax.File exposing (File)
 import Elm.Syntax.Import exposing (Import)
 import Elm.Syntax.Module as Module
 import Elm.Syntax.ModuleName exposing (ModuleName)
-import Elm.Syntax.Node as Node exposing (Node)
-import Elm.Syntax.Range exposing (Location, Range)
+import Elm.Syntax.Node as Node exposing (Node(..))
+import Elm.Syntax.Range exposing (Location, Range, emptyRange)
 import Elm.Type exposing (Type(..))
 import Generator exposing (Expr)
 import Inference
@@ -230,24 +230,31 @@ update msg model =
                                     Module.internal file
 
                                 values =
-                                    internal.values
+                                    [ internal.values, importedValues ]
 
                                 aliases =
                                     internal.aliases
 
                                 unions =
                                     internal.unions
+
+                                importedValues =
+                                    RawFile.imports rawFile
+                                        ++ defaultImports
+                                        |> List.concatMap
+                                            (importedValuesFromImport model.modules)
+                                        |> Dict.fromList
                             in
                             case
                                 Inference.inferHole
                                     { function = function
                                     , range = range
-                                    , values = values
+                                    , values = List.foldl Dict.union Dict.empty values
                                     , aliases = aliases
                                     }
                                     |> Result.mapError
                                         (inferenceErrorToString
-                                            values
+                                            (List.foldl Dict.union Dict.empty values)
                                             aliases
                                             unions
                                             range
@@ -265,6 +272,174 @@ update msg model =
                                 Ok cmd ->
                                     cmd
                     )
+
+
+defaultImports : List Import
+defaultImports =
+    -- import Basics exposing (..)
+    -- import List exposing (List, (::))
+    -- import Maybe exposing (Maybe(..))
+    -- import Result exposing (Result(..))
+    -- import String exposing (String)
+    -- import Char exposing (Char)
+    -- import Tuple
+    --
+    -- import Debug
+    --
+    -- import Platform exposing ( Program )
+    -- import Platform.Cmd as Cmd exposing ( Cmd )
+    -- import Platform.Sub as Sub exposing ( Sub )
+    [ { moduleName = Node emptyRange [ "Basics" ]
+      , moduleAlias = Nothing
+      , exposingList = Just (Node emptyRange (All emptyRange))
+      }
+    , { moduleName = Node emptyRange [ "List" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "List")
+                        , Node emptyRange (InfixExpose "(::)")
+                        ]
+      }
+    , { moduleName = Node emptyRange [ "Maybe" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange <|
+                            TypeExpose
+                                { name = "Maybe"
+                                , open = Just emptyRange
+                                }
+                        ]
+      }
+    , { moduleName = Node emptyRange [ "Result" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange <|
+                            TypeExpose
+                                { name = "Result"
+                                , open = Just emptyRange
+                                }
+                        ]
+      }
+    , { moduleName = Node emptyRange [ "String" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "String") ]
+      }
+    , { moduleName = Node emptyRange [ "Char" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Char") ]
+      }
+    , { moduleName = Node emptyRange [ "Tuple" ]
+      , moduleAlias = Nothing
+      , exposingList = Nothing
+      }
+    , { moduleName = Node emptyRange [ "Debug" ]
+      , moduleAlias = Nothing
+      , exposingList = Nothing
+      }
+    , { moduleName = Node emptyRange [ "Platform" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Platform") ]
+      }
+    , { moduleName = Node emptyRange [ "Platform", "Cmd" ]
+      , moduleAlias = Just (Node emptyRange [ "Cmd" ])
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Cmd") ]
+      }
+    , { moduleName = Node emptyRange [ "Platform", "Sub" ]
+      , moduleAlias = Just (Node emptyRange [ "Sub" ])
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Sub") ]
+      }
+    ]
+
+
+importedValuesFromImport : Dict String ModuleData -> Import -> List ( String, Type )
+importedValuesFromImport modules { moduleName, moduleAlias, exposingList } =
+    let
+        (Node _ name) =
+            moduleName
+
+        qualify valueName =
+            case exposingList of
+                Nothing ->
+                    qualifyHelp valueName
+
+                Just (Node _ (All _)) ->
+                    valueName
+
+                Just (Node _ (Explicit topLevelExposes)) ->
+                    if List.any (isExposed valueName) topLevelExposes then
+                        valueName
+
+                    else
+                        qualifyHelp valueName
+
+        qualifyHelp valueName =
+            case moduleAlias of
+                Nothing ->
+                    moduleNameToString name ++ "." ++ valueName
+
+                Just (Node _ aliasedName) ->
+                    moduleNameToString aliasedName ++ "." ++ valueName
+
+        isExposed valueName (Node _ topLevelExpose) =
+            case topLevelExpose of
+                InfixExpose infixName ->
+                    infixName == valueName
+
+                FunctionExpose functionName ->
+                    functionName == valueName
+
+                TypeOrAliasExpose typeName ->
+                    typeName == valueName
+
+                TypeExpose exposedType ->
+                    exposedType.name == valueName
+    in
+    case
+        modules
+            |> Dict.values
+            |> List.find (\moduleData -> moduleData.name == name)
+    of
+        Nothing ->
+            []
+
+        Just moduleData ->
+            moduleData.exposed.values
+                |> Dict.toList
+                |> List.map (Tuple.mapFirst qualify)
+
+
+moduleNameToString : ModuleName -> String
+moduleNameToString =
+    String.join "."
 
 
 inferenceErrorToString :
@@ -323,14 +498,23 @@ inferenceErrorToString values aliases unions range function error =
 
 generateCompletions :
     Range
-    -> Dict String Type
+    -> List (Dict String Type)
     -> List Alias
     -> List Union
     -> ( Type, Dict String Type )
     -> Cmd Msg
-generateCompletions range values aliases unions ( tipe, localValues ) =
+generateCompletions range globalValues aliases unions ( tipe, localValues ) =
+    let
+        addValues generator =
+            List.foldl
+                (\values ->
+                    Generator.addValues (Dict.map (\_ -> Type.normalize aliases) values)
+                )
+                generator
+                globalValues
+    in
     Generator.default
-        |> Generator.addValues (Dict.map (\_ -> Type.normalize aliases) values)
+        |> addValues
         |> Generator.addValues (Dict.map (\_ -> Type.normalize aliases) localValues)
         |> Generator.addUnions unions
         |> Generator.for (Type.normalize aliases tipe)
