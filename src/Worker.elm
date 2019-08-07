@@ -16,7 +16,7 @@ import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node)
 import Elm.Syntax.Range exposing (Location, Range)
 import Elm.Type exposing (Type(..))
-import Generator
+import Generator exposing (Expr)
 import Inference
 import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Decode
@@ -238,117 +238,123 @@ update msg model =
                                 unions =
                                     internal.unions
                             in
-                            case infer values aliases range function of
+                            case
+                                Inference.inferHole
+                                    { function = function
+                                    , range = range
+                                    , values = values
+                                    , aliases = aliases
+                                    }
+                                    |> Result.mapError
+                                        (inferenceErrorToString
+                                            values
+                                            aliases
+                                            unions
+                                            range
+                                            function
+                                        )
+                                    |> Result.map
+                                        (generateCompletions range values aliases unions)
+                            of
                                 Err error ->
-                                    let
-                                        unionToString union =
-                                            String.concat
-                                                [ String.join " " (union.name :: union.args)
-                                                , " = "
-                                                , List.map tagToString union.tags
-                                                    |> String.join " | "
-                                                ]
-
-                                        tagToString ( tagName, tagTypes ) =
-                                            tagName
-                                                :: List.map Type.toString tagTypes
-                                                |> String.join " "
-
-                                        valueToString ( fieldName, fieldType ) =
-                                            String.concat
-                                                [ fieldName
-                                                , " : "
-                                                , Type.toString fieldType
-                                                ]
-                                    in
                                     Cmd.batch
-                                        [ toJS
-                                            (Encode.string <|
-                                                String.concat
-                                                    [ "Could not infer at"
-                                                    , " "
-                                                    , String.fromInt range.start.column
-                                                    , " "
-                                                    , String.fromInt range.start.row
-                                                    , " "
-                                                    , String.fromInt range.end.column
-                                                    , " "
-                                                    , String.fromInt range.end.row
-                                                    , "\n\nThe error was:\n  "
-                                                    , Inference.errorToString error
-                                                    , "."
-                                                    , "\n\nUnions:\n"
-                                                    , List.map unionToString unions
-                                                        |> List.map (\line -> "  " ++ line)
-                                                        |> String.join "\n"
-                                                    , "\n\nValues:\n"
-                                                    , List.map valueToString (Dict.toList values)
-                                                        |> List.map (\line -> "  " ++ line)
-                                                        |> String.join "\n"
-                                                    ]
-                                            )
+                                        [ toJS (Encode.string error)
                                         , completions []
                                         ]
 
-                                Ok infered ->
-                                    let
-                                        rawCompletions =
-                                            generate values aliases unions infered
-                                    in
-                                    rawCompletions
-                                        |> List.map
-                                            (\completion ->
-                                                case String.lines completion of
-                                                    [] ->
-                                                        ""
-
-                                                    first :: [] ->
-                                                        first
-
-                                                    first :: rest ->
-                                                        first
-                                                            ++ "\n"
-                                                            ++ (List.map
-                                                                    (\line ->
-                                                                        String.repeat (range.start.column - 1) " "
-                                                                            ++ line
-                                                                    )
-                                                                    rest
-                                                                    |> String.join "\n"
-                                                               )
-                                            )
-                                        |> completions
+                                Ok cmd ->
+                                    cmd
                     )
 
 
-infer :
-    Dict String Type
-    -> List Alias
-    -> Range
-    -> Function
-    -> Result Inference.Error ( Type, Dict String Type )
-infer values aliases range function =
-    Inference.inferHole
-        { function = function
-        , range = range
-        , values = values
-        , aliases = aliases
-        }
-
-
-generate :
+inferenceErrorToString :
     Dict String Type
     -> List Alias
     -> List Union
+    -> Range
+    -> Function
+    -> Inference.Error
+    -> String
+inferenceErrorToString values aliases unions range function error =
+    let
+        unionToString union =
+            String.concat
+                [ String.join " " (union.name :: union.args)
+                , " = "
+                , List.map tagToString union.tags
+                    |> String.join " | "
+                ]
+
+        tagToString ( tagName, tagTypes ) =
+            tagName
+                :: List.map Type.toString tagTypes
+                |> String.join " "
+
+        valueToString ( fieldName, fieldType ) =
+            String.concat
+                [ fieldName
+                , " : "
+                , Type.toString fieldType
+                ]
+    in
+    String.concat
+        [ "Could not infer at"
+        , " "
+        , String.fromInt range.start.column
+        , " "
+        , String.fromInt range.start.row
+        , " "
+        , String.fromInt range.end.column
+        , " "
+        , String.fromInt range.end.row
+        , "\n\nThe error was:\n  "
+        , Inference.errorToString error
+        , "."
+        , "\n\nUnions:\n"
+        , List.map unionToString unions
+            |> List.map (\line -> "  " ++ line)
+            |> String.join "\n"
+        , "\n\nValues:\n"
+        , List.map valueToString (Dict.toList values)
+            |> List.map (\line -> "  " ++ line)
+            |> String.join "\n"
+        ]
+
+
+generateCompletions :
+    Range
+    -> Dict String Type
+    -> List Alias
+    -> List Union
     -> ( Type, Dict String Type )
-    -> List String
-generate values aliases unions ( tipe, localValues ) =
+    -> Cmd Msg
+generateCompletions range values aliases unions ( tipe, localValues ) =
     Generator.default
         |> Generator.addValues (Dict.map (\_ -> Type.normalize aliases) values)
         |> Generator.addValues (Dict.map (\_ -> Type.normalize aliases) localValues)
         |> Generator.addUnions unions
         |> Generator.for (Type.normalize aliases tipe)
-        |> List.map Generator.exprToText
+        |> List.map (completionToString range)
+        |> completions
+
+
+completionToString : Range -> Expr -> String
+completionToString range completion =
+    case String.lines (Generator.exprToText completion) of
+        [] ->
+            ""
+
+        first :: [] ->
+            first
+
+        first :: rest ->
+            String.concat
+                [ first
+                , "\n"
+                , String.join "\n" <|
+                    List.map (\line -> String.repeat (range.start.column - 1) " " ++ line)
+                        rest
+                ]
 
 
 subscriptions : Sub Msg
