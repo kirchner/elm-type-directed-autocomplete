@@ -143,11 +143,17 @@ bar num =
                         }
                     , binops =
                         Dict.singleton "::"
-                            { direction = Node emptyRange Right
-                            , precedence = Node emptyRange 5
-                            , operator = Node emptyRange "::"
-                            , function = Node emptyRange "cons"
-                            }
+                            ( { direction = Node emptyRange Right
+                              , precedence = Node emptyRange 5
+                              , operator = Node emptyRange "::"
+                              , function = Node emptyRange "cons"
+                              }
+                            , Lambda (Var "a")
+                                (Lambda
+                                    (Type "List" [ Var "a" ])
+                                    (Type "List" [ Var "a" ])
+                                )
+                            )
                     , values =
                         Dict.singleton "cons" <|
                             Lambda (Var "a")
@@ -359,7 +365,7 @@ update msg model =
 inferHelp :
     { src : String
     , range : Range
-    , binops : Dict String Infix
+    , binops : Dict String ( Infix, Type )
     , values : Dict String Type
     , aliases : List Alias
     }

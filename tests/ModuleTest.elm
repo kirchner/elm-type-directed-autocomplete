@@ -39,6 +39,13 @@ suite =
                                         )
                                   )
                                 ]
+                        , binops = Dict.empty
+                        , internalValues =
+                            Dict.fromList
+                                [ ( "internal"
+                                  , Lambda (Type "String" []) (Type "String" [])
+                                  )
+                                ]
                         , aliases =
                             [ { name = "Model"
                               , comment = ""
@@ -78,6 +85,8 @@ suite =
                                   , Lambda (Type "String" []) (Type "Msg" [])
                                   )
                                 ]
+                        , binops = Dict.empty
+                        , internalValues = Dict.empty
                         , aliases =
                             [ { name = "Model"
                               , comment = ""
