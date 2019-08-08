@@ -513,8 +513,8 @@ freeTypeVars tipe =
 apply : Dict String Type -> Type -> Type
 apply subst tipe =
     case tipe of
-        Type _ _ ->
-            tipe
+        Type name subTypes ->
+            Type name (List.map (apply subst) subTypes)
 
         Var var ->
             Dict.get var subst

@@ -255,4 +255,4 @@ bind var tipe =
 
 compose : Dict String Type -> Dict String Type -> Dict String Type
 compose substA substB =
-    Dict.union (Dict.map (\_ -> Type.apply substA) substB) substA
+    Dict.union substA (Dict.map (\_ -> Type.apply substA) substB)

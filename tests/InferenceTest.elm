@@ -5,7 +5,9 @@ import Elm.Docs exposing (Alias)
 import Elm.Parser
 import Elm.Processing
 import Elm.Syntax.Expression exposing (Function)
-import Elm.Syntax.Range exposing (Range)
+import Elm.Syntax.Infix exposing (Infix, InfixDirection(..))
+import Elm.Syntax.Node exposing (Node(..))
+import Elm.Syntax.Range exposing (Range, emptyRange)
 import Elm.Type exposing (Type(..))
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
@@ -29,6 +31,7 @@ bar num =
                         { start = { column = 5, row = 3 }
                         , end = { column = 8, row = 3 }
                         }
+                    , binops = Dict.empty
                     , values = Dict.empty
                     , aliases = []
                     }
@@ -51,12 +54,111 @@ bar num =
                         { start = { column = 7, row = 3 }
                         , end = { column = 10, row = 3 }
                         }
+                    , binops = Dict.empty
                     , values = Dict.empty
                     , aliases = []
                     }
                     |> Expect.equal
                         (Ok
                             ( Type "String" []
+                            , Dict.fromList
+                                [ ( "num", Type "Int" [] ) ]
+                            )
+                        )
+        , {-
+             _ =
+                 -- num1 <| num2 <| foo
+                 OperatorApplication "<|"
+                     Left
+                     (Node {} (FunctionOrValue [] "num1"))
+                     (Node {}
+                         (OperatorApplication "<|"
+                             Left
+                             (Node {} (FunctionOrValue [] "num2"))
+                             (Node {} (FunctionOrValue [] "foo"))
+                         )
+                     )
+
+             _ =
+                 -- num1 |> num2 |> foo
+                 OperatorApplication "|>"
+                     Left
+                     (Node {} (FunctionOrValue [] "num1"))
+                     (Node {}
+                         (OperatorApplication "|>"
+                             Left
+                             (Node {} (FunctionOrValue [] "num2"))
+                             (Node {} (FunctionOrValue [] "foo"))
+                         )
+                     )
+
+             _ =
+                 -- num1 * num2 + foo
+                 OperatorApplication "*"
+                     Left
+                     (Node {} (FunctionOrValue [] "num1"))
+                     (Node {}
+                         (OperatorApplication "+"
+                             Left
+                             (Node {} (FunctionOrValue [] "num2"))
+                             (Node {} (FunctionOrValue [] "foo"))
+                         )
+                     )
+
+             _ =
+                 -- (num1 * num2) + foo
+                 OperatorApplication "+"
+                     Left
+                     (Node {}
+                         (ParenthesizedExpression
+                             (Node {}
+                                 (OperatorApplication "*"
+                                     Left
+                                     (Node {} (FunctionOrValue [] "num1"))
+                                     (Node {} (FunctionOrValue [] "num2"))
+                                 )
+                             )
+                         )
+                     )
+                     (Node {} (FunctionOrValue [] "foo"))
+
+             _ =
+                 -- num (::)
+                 Application
+                     [ Node {} (FunctionOrValue [] "num")
+                     , Node {} (PrefixOperator "::")
+                     ]
+          -}
+          test "infix operator" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : Int -> List Int
+bar num =
+    num :: foo
+"""
+                    , range =
+                        { start = { column = 12, row = 3 }
+                        , end = { column = 15, row = 3 }
+                        }
+                    , binops =
+                        Dict.singleton "::"
+                            { direction = Node emptyRange Right
+                            , precedence = Node emptyRange 5
+                            , operator = Node emptyRange "::"
+                            , function = Node emptyRange "cons"
+                            }
+                    , values =
+                        Dict.singleton "cons" <|
+                            Lambda (Var "a")
+                                (Lambda (Type "List" [ Var "a" ])
+                                    (Type "List" [ Var "a" ])
+                                )
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Type "List" [ Type "Int" [] ]
                             , Dict.fromList
                                 [ ( "num", Type "Int" [] ) ]
                             )
@@ -75,6 +177,7 @@ bar num =
                         { start = { column = 14, row = 3 }
                         , end = { column = 17, row = 3 }
                         }
+                    , binops = Dict.empty
                     , values = Dict.empty
                     , aliases = []
                     }
@@ -97,6 +200,7 @@ bar data =
                         { start = { column = 21, row = 3 }
                         , end = { column = 24, row = 3 }
                         }
+                    , binops = Dict.empty
                     , values = Dict.empty
                     , aliases = []
                     }
@@ -132,6 +236,7 @@ foo int =
                         { start = { column = 22, row = 6 }
                         , end = { column = 25, row = 6 }
                         }
+                    , binops = Dict.empty
                     , values = Dict.empty
                     , aliases = []
                     }
@@ -159,6 +264,7 @@ foo bool =
                         { start = { column = 9, row = 4 }
                         , end = { column = 12, row = 4 }
                         }
+                    , binops = Dict.empty
                     , values = Dict.empty
                     , aliases = []
                     }
@@ -181,6 +287,7 @@ foo int =
                         { start = { column = 23, row = 3 }
                         , end = { column = 26, row = 3 }
                         }
+                    , binops = Dict.empty
                     , values =
                         Dict.fromList
                             [ ( "String.repeat"
@@ -215,6 +322,7 @@ update msg model =
                         { start = { column = 13, row = 8 }
                         , end = { column = 16, row = 8 }
                         }
+                    , binops = Dict.empty
                     , values =
                         Dict.fromList
                             [ ( "msg", Type "Msg" [] )
@@ -251,11 +359,12 @@ update msg model =
 inferHelp :
     { src : String
     , range : Range
+    , binops : Dict String Infix
     , values : Dict String Type
     , aliases : List Alias
     }
     -> Result Inference.Error ( Type, Dict String Type )
-inferHelp { src, range, values, aliases } =
+inferHelp { src, range, binops, values, aliases } =
     let
         actualSrc =
             "module Main exposing (..)\n" ++ src
@@ -288,6 +397,7 @@ inferHelp { src, range, values, aliases } =
                     Inference.inferHole
                         { function = function
                         , range = actualRange
+                        , binops = binops
                         , values = values
                         , aliases = aliases
                         }

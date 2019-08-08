@@ -6,6 +6,7 @@ import Elm.Parser
 import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Case, Expression(..), Function, FunctionImplementation)
+import Elm.Syntax.Infix exposing (Infix)
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Pattern exposing (Pattern(..))
 import Elm.Syntax.Range exposing (Range)
@@ -24,14 +25,15 @@ import TypeEnv exposing (TypeEnv)
 inferHole :
     { function : Function
     , range : Range
+    , binops : Dict String ( Infix, Type )
     , values : Dict String Type
     , aliases : List Alias
     }
     -> Result Error ( Type, Dict String Type )
-inferHole { aliases, values, range, function } =
+inferHole { binops, aliases, values, range, function } =
     let
         ( constraints, holes, result ) =
-            runInfer aliases initialEnv range function
+            runInfer aliases binops initialEnv range function
 
         initialEnv =
             values
@@ -71,7 +73,11 @@ inferHole { aliases, values, range, function } =
 
 
 type Infer a
-    = Infer (TypeEnv -> State Int ( List Constraint, List Hole, Result Error a ))
+    = Infer (Binops -> TypeEnv -> State Int ( List Constraint, List Hole, Result Error a ))
+
+
+type alias Binops =
+    Dict String ( Infix, Type )
 
 
 type alias Hole =
@@ -81,7 +87,7 @@ type alias Hole =
 storeHole : String -> Type -> Infer ()
 storeHole name tipe =
     Infer <|
-        \env ->
+        \_ env ->
             State.state ( [], [ ( name, tipe, env ) ], Ok () )
 
 
@@ -91,11 +97,12 @@ type alias Constraint =
 
 addConstraint : Constraint -> Infer ()
 addConstraint constraint =
-    Infer (\_ -> State.state ( [ constraint ], [], Ok () ))
+    Infer (\_ _ -> State.state ( [ constraint ], [], Ok () ))
 
 
 type Error
     = UnboundVariable String
+    | UnknownInfix String
     | ParserError
     | SyntaxError
     | UnsupportedExpression Expression
@@ -110,6 +117,9 @@ errorToString error =
     case error of
         UnboundVariable name ->
             "Unbound variable " ++ name
+
+        UnknownInfix name ->
+            "Unknown infix operator " ++ name
 
         ParserError ->
             "Parser error"
@@ -135,16 +145,17 @@ errorToString error =
 
 runInfer :
     List Alias
+    -> Binops
     -> TypeEnv
     -> Range
     -> Function
     -> ( List Constraint, List Hole, Result Error Type )
-runInfer typeAliases env holeRange expr =
+runInfer typeAliases binops env holeRange expr =
     let
         (Infer run) =
             inferFunction typeAliases holeRange expr
     in
-    State.finalValue 0 (run env)
+    State.finalValue 0 (run binops env)
 
 
 inferFunction : List Alias -> Range -> Function -> Infer Type
@@ -246,7 +257,7 @@ infer holeRange (Node range expr) =
                 return (Type "Bool" [])
 
             else
-                lookupEnv (Src.qualifiedName moduleName name)
+                findValue (Src.qualifiedName moduleName name)
 
         IfBlock exprCond exprIf exprElse ->
             let
@@ -373,8 +384,36 @@ infer holeRange (Node range expr) =
                     infer holeRange firstExpr
                         |> andThen inferRest
 
-        OperatorApplication name infixDirection exprA exprB ->
-            throwError (UnsupportedExpression expr)
+        OperatorApplication name _ exprA exprB ->
+            let
+                handleExprA ( _, infixType ) =
+                    -- I think here we assume that exprA is not an
+                    -- OperatorApplication
+                    infer holeRange exprA
+                        |> andThen (handleExprB infixType)
+
+                handleExprB infixType typeA =
+                    case exprB of
+                        Node _ (OperatorApplication nextName _ nextExprA nextExprB) ->
+                            throwError (UnsupportedExpression expr)
+
+                        _ ->
+                            infer holeRange exprB
+                                |> andThen (getReturnVar infixType typeA)
+
+                getReturnVar infixType typeA typeB =
+                    freshVar
+                        |> andThen (returnType infixType typeA typeB)
+
+                returnType infixType typeA typeB returnVar =
+                    addConstraint
+                        ( infixType
+                        , Lambda typeA (Lambda typeB (Var returnVar))
+                        )
+                        |> map (\_ -> Var returnVar)
+            in
+            findInfix name
+                |> andThen handleExprA
 
         PrefixOperator _ ->
             throwError (UnsupportedExpression expr)
@@ -435,7 +474,7 @@ infer holeRange (Node range expr) =
                         |> map (Tuple.pair fieldName)
 
                 inferRecordType fieldTypes =
-                    lookupEnv name
+                    findValue name
                         |> andThen
                             (\recordType ->
                                 freshVar
@@ -457,10 +496,10 @@ infer holeRange (Node range expr) =
             throwError (UnsupportedExpression expr)
 
 
-lookupEnv : String -> Infer Type
-lookupEnv name =
+findValue : String -> Infer Type
+findValue name =
     Infer <|
-        \env ->
+        \binops env ->
             case TypeEnv.lookup name env of
                 Nothing ->
                     State.state
@@ -474,7 +513,27 @@ lookupEnv name =
                         (Infer run) =
                             instantiate scheme
                     in
-                    run env
+                    run binops env
+
+
+findInfix : String -> Infer ( Infix, Type )
+findInfix name =
+    Infer <|
+        \binops _ ->
+            case Dict.get name binops of
+                Nothing ->
+                    State.state
+                        ( []
+                        , []
+                        , Err (UnknownInfix name)
+                        )
+
+                Just infix ->
+                    State.state
+                        ( []
+                        , []
+                        , Ok infix
+                        )
 
 
 inferPattern : Node Pattern -> Infer ( Type, List ( String, Scheme ) )
@@ -534,7 +593,7 @@ inferPattern (Node _ pattern) =
             freshVar
                 |> andThen
                     (\var ->
-                        lookupEnv (Src.qualifiedName moduleName name)
+                        findValue (Src.qualifiedName moduleName name)
                             |> andThen
                                 (\constructorType ->
                                     traverse inferPattern patterns
@@ -579,7 +638,7 @@ inferCaseBranch holeRange exprType ( pattern, expr ) =
 freshVar : Infer String
 freshVar =
     Infer <|
-        \_ ->
+        \_ _ ->
             State.advance <|
                 \count ->
                     ( ( [], [], Ok ("a" ++ String.fromInt count) )
@@ -590,40 +649,40 @@ freshVar =
 inEnv : ( String, Scheme ) -> Infer a -> Infer a
 inEnv ( var, scheme ) (Infer run) =
     Infer <|
-        \env ->
-            run (TypeEnv.extend var scheme env)
+        \binops env ->
+            run binops (TypeEnv.extend var scheme env)
 
 
 inEnvs : List ( String, Scheme ) -> Infer a -> Infer a
 inEnvs newSchemes (Infer run) =
     Infer <|
-        \env ->
+        \binops env ->
             let
                 extend ( name, scheme ) =
                     TypeEnv.extend name scheme
             in
-            run (List.foldl extend env newSchemes)
+            run binops (List.foldl extend env newSchemes)
 
 
 return : a -> Infer a
 return a =
-    Infer (\_ -> State.state ( [], [], Ok a ))
+    Infer (\_ _ -> State.state ( [], [], Ok a ))
 
 
 throwError : Error -> Infer a
 throwError error =
-    Infer (\_ -> State.state ( [], [], Err error ))
+    Infer (\_ _ -> State.state ( [], [], Err error ))
 
 
 map : (a -> b) -> Infer a -> Infer b
 map f (Infer run) =
-    Infer (\env -> State.map (Triple.mapThird (Result.map f)) (run env))
+    Infer (\binops env -> State.map (Triple.mapThird (Result.map f)) (run binops env))
 
 
 map2 : (a -> b -> c) -> Infer a -> Infer b -> Infer c
 map2 f (Infer runA) (Infer runB) =
     Infer <|
-        \env ->
+        \binops env ->
             State.map2
                 (\( logsA, holesA, resultA ) ( logsB, holesB, resultB ) ->
                     ( logsA ++ logsB
@@ -631,15 +690,15 @@ map2 f (Infer runA) (Infer runB) =
                     , Result.map2 f resultA resultB
                     )
                 )
-                (runA env)
-                (runB env)
+                (runA binops env)
+                (runB binops env)
 
 
 andThen : (a -> Infer b) -> Infer a -> Infer b
 andThen f (Infer runA) =
     Infer <|
-        \env ->
-            runA env
+        \binops env ->
+            runA binops env
                 |> State.andThen
                     (\( logsA, holesA, resultA ) ->
                         case resultA of
@@ -651,7 +710,7 @@ andThen f (Infer runA) =
                                     (Infer runB) =
                                         f a
                                 in
-                                runB env
+                                runB binops env
                                     |> State.map
                                         (Triple.mapSecond (List.append holesA)
                                             >> Triple.mapFirst (List.append logsA)
@@ -682,7 +741,7 @@ traverseHelp f listA inferB =
 instantiate : Scheme -> Infer Type
 instantiate (ForAll vars tipe) =
     Infer <|
-        \_ ->
+        \_ _ ->
             instantiateHelp vars Dict.empty
                 |> State.map
                     (\subst ->

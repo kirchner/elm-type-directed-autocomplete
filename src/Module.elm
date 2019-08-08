@@ -13,6 +13,7 @@ import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Function)
 import Elm.Syntax.File exposing (File)
+import Elm.Syntax.Infix exposing (Infix)
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.Type
@@ -22,7 +23,9 @@ import Type
 
 {-| -}
 type alias Module =
-    { values : Dict String Type
+    { binops : Dict String Infix
+    , values : Dict String Type
+    , internalValues : Dict String Type
     , aliases : List Alias
     , unions : List Union
     }
@@ -30,7 +33,9 @@ type alias Module =
 
 emptyModule : Module
 emptyModule =
-    { values = Dict.empty
+    { binops = Dict.empty
+    , values = Dict.empty
+    , internalValues = Dict.empty
     , aliases = []
     , unions = []
     }
@@ -104,17 +109,17 @@ collect exposings maybeInterface declarations =
                         (Node _ name) =
                             functionImplementation.name
                     in
-                    if relevantFunction name maybeInterface then
-                        case function.signature of
-                            Nothing ->
-                                -- TODO insert general type signature?
-                                collect exposings maybeInterface rest
+                    case function.signature of
+                        Nothing ->
+                            -- TODO insert general type signature?
+                            collect exposings maybeInterface rest
 
-                            Just (Node _ signature) ->
-                                let
-                                    tipe =
-                                        Type.fromTypeAnnotation signature.typeAnnotation
-                                in
+                        Just (Node _ signature) ->
+                            let
+                                tipe =
+                                    Type.fromTypeAnnotation signature.typeAnnotation
+                            in
+                            if relevantFunction name maybeInterface then
                                 collect
                                     { exposings
                                         | values = Dict.insert name tipe exposings.values
@@ -122,8 +127,14 @@ collect exposings maybeInterface declarations =
                                     maybeInterface
                                     rest
 
-                    else
-                        collect exposings maybeInterface rest
+                            else
+                                collect
+                                    { exposings
+                                        | internalValues =
+                                            Dict.insert name tipe exposings.internalValues
+                                    }
+                                    maybeInterface
+                                    rest
 
                 AliasDeclaration typeAlias ->
                     let
@@ -234,7 +245,16 @@ collect exposings maybeInterface declarations =
                     collect exposings maybeInterface rest
 
                 InfixDeclaration infix ->
-                    collect exposings maybeInterface rest
+                    let
+                        (Node _ name) =
+                            infix.operator
+                    in
+                    collect
+                        { exposings
+                            | binops = Dict.insert name infix exposings.binops
+                        }
+                        maybeInterface
+                        rest
 
                 Destructuring _ _ ->
                     collect exposings maybeInterface rest

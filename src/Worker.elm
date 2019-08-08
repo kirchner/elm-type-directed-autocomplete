@@ -11,6 +11,7 @@ import Elm.Syntax.Exposing as Exposing exposing (Exposing(..), TopLevelExpose(..
 import Elm.Syntax.Expression exposing (Function)
 import Elm.Syntax.File exposing (File)
 import Elm.Syntax.Import exposing (Import)
+import Elm.Syntax.Infix exposing (Infix)
 import Elm.Syntax.Module as Module
 import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
@@ -232,12 +233,6 @@ update msg model =
                                 values =
                                     [ internal.values, importedValues ]
 
-                                aliases =
-                                    internal.aliases
-
-                                unions =
-                                    internal.unions
-
                                 importedValues =
                                     RawFile.imports rawFile
                                         ++ defaultImports
@@ -250,24 +245,38 @@ update msg model =
                                     (name == "Debug.todo")
                                         || (name == "always")
                                         || (name == "identity")
+
+                                binops =
+                                    List.foldl Dict.union
+                                        Dict.empty
+                                        (RawFile.imports rawFile
+                                            ++ defaultImports
+                                            |> List.map
+                                                (importedBinopsFromImport model.modules)
+                                        )
                             in
                             case
                                 Inference.inferHole
                                     { function = function
                                     , range = range
+                                    , binops = binops
                                     , values = List.foldl Dict.union Dict.empty values
-                                    , aliases = aliases
+                                    , aliases = internal.aliases
                                     }
                                     |> Result.mapError
                                         (inferenceErrorToString
                                             (List.foldl Dict.union Dict.empty values)
-                                            aliases
-                                            unions
+                                            internal.aliases
+                                            internal.unions
                                             range
                                             function
                                         )
                                     |> Result.map
-                                        (generateCompletions range values aliases unions)
+                                        (generateCompletions range
+                                            values
+                                            internal.aliases
+                                            internal.unions
+                                        )
                             of
                                 Err error ->
                                     Cmd.batch
@@ -386,7 +395,39 @@ defaultImports =
     ]
 
 
-importedValuesFromImport : Dict String ModuleData -> Import -> List ( String, Type )
+importedBinopsFromImport : Dict String ModuleData -> Import -> Dict String ( Infix, Type )
+importedBinopsFromImport modules { moduleName } =
+    let
+        (Node _ name) =
+            moduleName
+    in
+    case
+        modules
+            |> Dict.values
+            |> List.find (\moduleData -> moduleData.name == name)
+    of
+        Nothing ->
+            Dict.empty
+
+        Just moduleData ->
+            moduleData.exposed.binops
+                |> Dict.map
+                    (\_ infix ->
+                        let
+                            (Node _ function) =
+                                infix.function
+                        in
+                        ( infix
+                        , Dict.get function moduleData.exposed.internalValues
+                            |> Maybe.withDefault (Var "a")
+                        )
+                    )
+
+
+importedValuesFromImport :
+    Dict String ModuleData
+    -> Import
+    -> List ( String, Type )
 importedValuesFromImport modules { moduleName, moduleAlias, exposingList } =
     let
         (Node _ name) =
