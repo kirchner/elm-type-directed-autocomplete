@@ -15,6 +15,7 @@ import Dict exposing (Dict)
 import Elm.Type exposing (Type)
 import Scheme exposing (Scheme(..))
 import Set exposing (Set)
+import Type
 
 
 type TypeEnv
@@ -68,6 +69,12 @@ toValues (TypeEnv schemes) =
 fromValues : List ( String, Type ) -> TypeEnv
 fromValues values =
     values
-        |> List.map (Tuple.mapSecond (ForAll []))
+        |> List.map
+            (Tuple.mapSecond <|
+                \tipe ->
+                    ForAll
+                        (Set.toList (Type.freeTypeVars tipe))
+                        tipe
+            )
         |> Dict.fromList
         |> TypeEnv

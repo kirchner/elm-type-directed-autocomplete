@@ -335,6 +335,66 @@ bar int =
                                 ]
                             )
                         )
+        , test "using one value twice" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : List Int -> List String
+bar ints =
+    ints
+        |> List.map toFloat
+        |> List.map identity
+        |> foo
+"""
+                    , range =
+                        { start = { column = 12, row = 6 }
+                        , end = { column = 15, row = 6 }
+                        }
+                    , binops =
+                        Dict.fromList
+                            [ ( "|>"
+                              , ( { direction = Node emptyRange Left
+                                  , precedence = Node emptyRange 0
+                                  , operator = Node emptyRange "|>"
+                                  , function = Node emptyRange "apR"
+                                  }
+                                , Lambda
+                                    (Var "a")
+                                    (Lambda
+                                        (Lambda (Var "a") (Var "b"))
+                                        (Var "b")
+                                    )
+                                )
+                              )
+                            ]
+                    , values =
+                        Dict.fromList
+                            [ ( "toFloat"
+                              , Lambda (Type "Int" []) (Type "Float" [])
+                              )
+                            , ( "identity"
+                              , Lambda (Var "a") (Var "a")
+                              )
+                            , ( "List.map"
+                              , Lambda (Lambda (Var "a") (Var "b"))
+                                    (Lambda
+                                        (Type "List" [ Var "a" ])
+                                        (Type "List" [ Var "b" ])
+                                    )
+                              )
+                            ]
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda
+                                (Type "List" [ Type "Float" [] ])
+                                (Type "List" [ Type "String" [] ])
+                            , Dict.fromList
+                                [ ( "ints", Type "List" [ Type "Int" [] ] )
+                                ]
+                            )
+                        )
         , test "record" <|
             \_ ->
                 inferHelp

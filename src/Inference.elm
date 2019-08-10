@@ -603,7 +603,9 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
                         case ( rootAssociativity, associativity ) of
                             ( Left, Left ) ->
                                 sortOperatorApplicationsHelp
-                                    (Binop infixType (makeBinop (Final expr)))
+                                    (\right ->
+                                        Binop infixType (makeBinop (Final expr)) right
+                                    )
                                     precedence
                                     associativity
                                     rest
@@ -611,7 +613,9 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
 
                             ( Right, Right ) ->
                                 sortOperatorApplicationsHelp
-                                    (makeBinop << Binop infixType (Final expr))
+                                    (\right ->
+                                        makeBinop (Binop infixType (Final expr) right)
+                                    )
                                     precedence
                                     associativity
                                     rest
