@@ -386,34 +386,11 @@ infer holeRange (Node range expr) =
 
         OperatorApplication name _ exprA exprB ->
             let
-                handleExprA ( _, infixType ) =
-                    -- I think here we assume that exprA is not an
-                    -- OperatorApplication
-                    infer holeRange exprA
-                        |> andThen (handleExprB infixType)
-
-                handleExprB infixType typeA =
-                    case exprB of
-                        Node _ (OperatorApplication nextName _ nextExprA nextExprB) ->
-                            throwError (UnsupportedExpression expr)
-
-                        _ ->
-                            infer holeRange exprB
-                                |> andThen (getReturnVar infixType typeA)
-
-                getReturnVar infixType typeA typeB =
-                    freshVar
-                        |> andThen (returnType infixType typeA typeB)
-
-                returnType infixType typeA typeB returnVar =
-                    addConstraint
-                        ( infixType
-                        , Lambda typeA (Lambda typeB (Var returnVar))
-                        )
-                        |> map (\_ -> Var returnVar)
+                ( binops, finalExpr ) =
+                    collectOperatorApplications [] name exprA exprB
             in
-            findInfix name
-                |> andThen handleExprA
+            sortOperatorApplications binops finalExpr
+                |> andThen (inferBinop holeRange)
 
         PrefixOperator _ ->
             throwError (UnsupportedExpression expr)
@@ -494,6 +471,129 @@ infer holeRange (Node range expr) =
 
         GLSLExpression _ ->
             throwError (UnsupportedExpression expr)
+
+
+{-| Do sth like this:
+
+    a * (b + c) -->   ([(a, *), (b, +)], c)
+
+-}
+collectOperatorApplications :
+    List ( Node Expression, String )
+    -> String
+    -> Node Expression
+    -> Node Expression
+    -> ( List ( Node Expression, String ), Node Expression )
+collectOperatorApplications collected name exprA exprB =
+    case exprB of
+        Node _ (OperatorApplication nextName _ nextExprA nextExprB) ->
+            collectOperatorApplications (( exprA, name ) :: collected)
+                nextName
+                nextExprA
+                nextExprB
+
+        _ ->
+            ( ( exprA, name ) :: collected, exprB )
+
+
+type Binop
+    = Binop Type Binop Binop
+    | Final (Node Expression)
+
+
+inferBinop : Range -> Binop -> Infer Type
+inferBinop holeRange binop =
+    case binop of
+        Final expr ->
+            infer holeRange expr
+
+        Binop infixType binopA binopB ->
+            let
+                inferBinopB typeA =
+                    inferBinop holeRange binopB
+                        |> andThen (getReturnVar typeA)
+
+                getReturnVar typeA typeB =
+                    freshVar
+                        |> andThen (returnType typeA typeB)
+
+                returnType typeA typeB returnVar =
+                    addConstraint
+                        ( infixType
+                        , Lambda typeA (Lambda typeB (Var returnVar))
+                        )
+                        |> map (\_ -> Var returnVar)
+            in
+            inferBinop holeRange binopA
+                |> andThen inferBinopB
+
+
+sortOperatorApplications :
+    List ( Node Expression, String )
+    -> Node Expression
+    -> Infer Binop
+sortOperatorApplications binops finalExpr =
+    case binops of
+        [] ->
+            return (Final finalExpr)
+
+        ( expr, name ) :: rest ->
+            findInfix name
+                |> andThen
+                    (\( infix, infixType ) ->
+                        let
+                            (Node _ precedence) =
+                                infix.precedence
+                        in
+                        sortOperatorApplicationsHelp
+                            (Binop infixType (Final expr))
+                            precedence
+                            rest
+                            finalExpr
+                    )
+
+
+sortOperatorApplicationsHelp :
+    (Binop -> Binop)
+    -> Int
+    -> List ( Node Expression, String )
+    -> Node Expression
+    -> Infer Binop
+sortOperatorApplicationsHelp makeBinop rootPrecedence middle finalExpr =
+    case middle of
+        [] ->
+            return (makeBinop (Final finalExpr))
+
+        ( expr, name ) :: rest ->
+            let
+                handlePrecedence ( infix, infixType ) =
+                    let
+                        (Node _ precedence) =
+                            infix.precedence
+                    in
+                    if precedence < rootPrecedence then
+                        sortOperatorApplicationsHelp
+                            (makeBinop << Binop infixType (Final expr))
+                            precedence
+                            rest
+                            finalExpr
+
+                    else if precedence > rootPrecedence then
+                        sortOperatorApplicationsHelp
+                            (Binop infixType (makeBinop (Final expr)))
+                            precedence
+                            rest
+                            finalExpr
+
+                    else
+                        let
+                            (Node _ e) =
+                                expr
+                        in
+                        throwError (UnsupportedExpression e)
+            in
+            findInfix name
+                |> andThen handlePrecedence
 
 
 findValue : String -> Infer Type

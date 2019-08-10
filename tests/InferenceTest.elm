@@ -169,6 +169,59 @@ bar num =
                                 [ ( "num", Type "Int" [] ) ]
                             )
                         )
+        , test "two infix operators" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : Int -> Int -> Int
+bar numA numB =
+    numA + numB * foo
+"""
+                    , range =
+                        { start = { column = 19, row = 3 }
+                        , end = { column = 22, row = 3 }
+                        }
+                    , binops =
+                        Dict.fromList
+                            [ ( "+"
+                              , ( { direction = Node emptyRange Left
+                                  , precedence = Node emptyRange 6
+                                  , operator = Node emptyRange "+"
+                                  , function = Node emptyRange "add"
+                                  }
+                                , Lambda (Type "Int" [])
+                                    (Lambda
+                                        (Type "Int" [])
+                                        (Type "Int" [])
+                                    )
+                                )
+                              )
+                            , ( "*"
+                              , ( { direction = Node emptyRange Left
+                                  , precedence = Node emptyRange 7
+                                  , operator = Node emptyRange "*"
+                                  , function = Node emptyRange "mul"
+                                  }
+                                , Lambda (Type "Int" [])
+                                    (Lambda
+                                        (Type "Int" [])
+                                        (Type "Int" [])
+                                    )
+                                )
+                              )
+                            ]
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Type "Int" []
+                            , Dict.fromList
+                                [ ( "numA", Type "Int" [] )
+                                , ( "numB", Type "Int" [] )
+                                ]
+                            )
+                        )
         , test "record" <|
             \_ ->
                 inferHelp
