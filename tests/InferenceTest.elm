@@ -154,12 +154,7 @@ bar num =
                                     (Type "List" [ Var "a" ])
                                 )
                             )
-                    , values =
-                        Dict.singleton "cons" <|
-                            Lambda (Var "a")
-                                (Lambda (Type "List" [ Var "a" ])
-                                    (Type "List" [ Var "a" ])
-                                )
+                    , values = Dict.empty
                     , aliases = []
                     }
                     |> Expect.equal
@@ -219,6 +214,124 @@ bar numA numB =
                             , Dict.fromList
                                 [ ( "numA", Type "Int" [] )
                                 , ( "numB", Type "Int" [] )
+                                ]
+                            )
+                        )
+        , test "function" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : Int -> String
+bar int =
+    foo int
+"""
+                    , range =
+                        { start = { column = 5, row = 3 }
+                        , end = { column = 8, row = 3 }
+                        }
+                    , binops = Dict.empty
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda
+                                (Type "Int" [])
+                                (Type "String" [])
+                            , Dict.fromList
+                                [ ( "int", Type "Int" [] )
+                                ]
+                            )
+                        )
+        , test "pipe operator" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : Int -> String
+bar int =
+    int
+        |> foo
+"""
+                    , range =
+                        { start = { column = 12, row = 4 }
+                        , end = { column = 15, row = 4 }
+                        }
+                    , binops =
+                        Dict.fromList
+                            [ ( "|>"
+                              , ( { direction = Node emptyRange Left
+                                  , precedence = Node emptyRange 0
+                                  , operator = Node emptyRange "|>"
+                                  , function = Node emptyRange "apR"
+                                  }
+                                , Lambda
+                                    (Var "a")
+                                    (Lambda
+                                        (Lambda (Var "a") (Var "b"))
+                                        (Var "b")
+                                    )
+                                )
+                              )
+                            ]
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda
+                                (Type "Int" [])
+                                (Type "String" [])
+                            , Dict.fromList
+                                [ ( "int", Type "Int" [] )
+                                ]
+                            )
+                        )
+        , test "two pipe operators" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : Int -> String
+bar int =
+    int
+        |> toFloat
+        |> foo
+"""
+                    , range =
+                        { start = { column = 12, row = 5 }
+                        , end = { column = 15, row = 5 }
+                        }
+                    , binops =
+                        Dict.fromList
+                            [ ( "|>"
+                              , ( { direction = Node emptyRange Left
+                                  , precedence = Node emptyRange 0
+                                  , operator = Node emptyRange "|>"
+                                  , function = Node emptyRange "apR"
+                                  }
+                                , Lambda
+                                    (Var "a")
+                                    (Lambda
+                                        (Lambda (Var "a") (Var "b"))
+                                        (Var "b")
+                                    )
+                                )
+                              )
+                            ]
+                    , values =
+                        Dict.fromList
+                            [ ( "toFloat"
+                              , Lambda (Type "Int" []) (Type "Float" [])
+                              )
+                            ]
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda
+                                (Type "Float" [])
+                                (Type "String" [])
+                            , Dict.fromList
+                                [ ( "int", Type "Int" [] )
                                 ]
                             )
                         )

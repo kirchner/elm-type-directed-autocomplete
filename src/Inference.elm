@@ -6,7 +6,7 @@ import Elm.Parser
 import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Case, Expression(..), Function, FunctionImplementation)
-import Elm.Syntax.Infix exposing (Infix)
+import Elm.Syntax.Infix exposing (Infix, InfixDirection(..))
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Pattern exposing (Pattern(..))
 import Elm.Syntax.Range exposing (Range)
@@ -103,6 +103,7 @@ addConstraint constraint =
 type Error
     = UnboundVariable String
     | UnknownInfix String
+    | ConflictingAssociativity
     | ParserError
     | SyntaxError
     | UnsupportedExpression Expression
@@ -120,6 +121,9 @@ errorToString error =
 
         UnknownInfix name ->
             "Unknown infix operator " ++ name
+
+        ConflictingAssociativity ->
+            "Found two operators with same precedence but different associativity"
 
         ParserError ->
             "Parser error"
@@ -493,7 +497,7 @@ collectOperatorApplications collected name exprA exprB =
                 nextExprB
 
         _ ->
-            ( ( exprA, name ) :: collected, exprB )
+            ( List.reverse (( exprA, name ) :: collected), exprB )
 
 
 type Binop
@@ -544,10 +548,14 @@ sortOperatorApplications binops finalExpr =
                         let
                             (Node _ precedence) =
                                 infix.precedence
+
+                            (Node _ associativity) =
+                                infix.direction
                         in
                         sortOperatorApplicationsHelp
                             (Binop infixType (Final expr))
                             precedence
+                            associativity
                             rest
                             finalExpr
                     )
@@ -556,10 +564,11 @@ sortOperatorApplications binops finalExpr =
 sortOperatorApplicationsHelp :
     (Binop -> Binop)
     -> Int
+    -> InfixDirection
     -> List ( Node Expression, String )
     -> Node Expression
     -> Infer Binop
-sortOperatorApplicationsHelp makeBinop rootPrecedence middle finalExpr =
+sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle finalExpr =
     case middle of
         [] ->
             return (makeBinop (Final finalExpr))
@@ -570,11 +579,15 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence middle finalExpr =
                     let
                         (Node _ precedence) =
                             infix.precedence
+
+                        (Node _ associativity) =
+                            infix.direction
                     in
                     if precedence < rootPrecedence then
                         sortOperatorApplicationsHelp
                             (makeBinop << Binop infixType (Final expr))
                             precedence
+                            associativity
                             rest
                             finalExpr
 
@@ -582,15 +595,30 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence middle finalExpr =
                         sortOperatorApplicationsHelp
                             (Binop infixType (makeBinop (Final expr)))
                             precedence
+                            associativity
                             rest
                             finalExpr
 
                     else
-                        let
-                            (Node _ e) =
-                                expr
-                        in
-                        throwError (UnsupportedExpression e)
+                        case ( rootAssociativity, associativity ) of
+                            ( Left, Left ) ->
+                                sortOperatorApplicationsHelp
+                                    (Binop infixType (makeBinop (Final expr)))
+                                    precedence
+                                    associativity
+                                    rest
+                                    finalExpr
+
+                            ( Right, Right ) ->
+                                sortOperatorApplicationsHelp
+                                    (makeBinop << Binop infixType (Final expr))
+                                    precedence
+                                    associativity
+                                    rest
+                                    finalExpr
+
+                            _ ->
+                                throwError ConflictingAssociativity
             in
             findInfix name
                 |> andThen handlePrecedence
@@ -619,7 +647,7 @@ findValue name =
 findInfix : String -> Infer ( Infix, Type )
 findInfix name =
     Infer <|
-        \binops _ ->
+        \binops env ->
             case Dict.get name binops of
                 Nothing ->
                     State.state
@@ -628,12 +656,17 @@ findInfix name =
                         , Err (UnknownInfix name)
                         )
 
-                Just infix ->
-                    State.state
-                        ( []
-                        , []
-                        , Ok infix
-                        )
+                Just ( infix, infixType ) ->
+                    let
+                        (Infer run) =
+                            instantiate <|
+                                ForAll (Set.toList (Type.freeTypeVars infixType)) infixType
+
+                        mapThird f ( a, b, c ) =
+                            ( a, b, f c )
+                    in
+                    run binops env
+                        |> State.map (mapThird (Result.map (Tuple.pair infix)))
 
 
 inferPattern : Node Pattern -> Infer ( Type, List ( String, Scheme ) )
