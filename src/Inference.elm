@@ -712,10 +712,40 @@ inferPattern (Node _ pattern) =
             throwError (UnsupportedPattern pattern)
 
         UnConsPattern firstPattern secondPattern ->
-            throwError (UnsupportedPattern pattern)
+            inferPattern firstPattern
+                |> andThen
+                    (\( firstType, firstScheme ) ->
+                        inferPattern secondPattern
+                            |> andThen
+                                (\( secondType, secondScheme ) ->
+                                    addConstraint
+                                        ( secondType
+                                        , Type "List" [ firstType ]
+                                        )
+                                        |> map
+                                            (\_ ->
+                                                ( Type "List" [ firstType ]
+                                                , firstScheme ++ secondScheme
+                                                )
+                                            )
+                                )
+                    )
 
         ListPattern patterns ->
-            throwError (UnsupportedPattern pattern)
+            traverse inferPattern patterns
+                |> map List.unzip
+                |> andThen
+                    (\( types, schemes ) ->
+                        case types of
+                            [] ->
+                                throwError (UnsupportedPattern pattern)
+
+                            tipe :: _ ->
+                                return
+                                    ( Type "List" [ tipe ]
+                                    , List.concat schemes
+                                    )
+                    )
 
         VarPattern name ->
             freshVar
@@ -763,7 +793,10 @@ inferCaseBranch holeRange exprType ( pattern, expr ) =
     inferPattern pattern
         |> andThen
             (\( tipe, schemes ) ->
-                addConstraint ( exprType, tipe )
+                addConstraint
+                    ( exprType
+                    , tipe
+                    )
                     |> andThen
                         (\_ ->
                             inEnvs schemes

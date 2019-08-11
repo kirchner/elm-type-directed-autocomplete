@@ -65,71 +65,7 @@ bar num =
                                 [ ( "num", Type "Int" [] ) ]
                             )
                         )
-        , {-
-             _ =
-                 -- num1 <| num2 <| foo
-                 OperatorApplication "<|"
-                     Left
-                     (Node {} (FunctionOrValue [] "num1"))
-                     (Node {}
-                         (OperatorApplication "<|"
-                             Left
-                             (Node {} (FunctionOrValue [] "num2"))
-                             (Node {} (FunctionOrValue [] "foo"))
-                         )
-                     )
-
-             _ =
-                 -- num1 |> num2 |> foo
-                 OperatorApplication "|>"
-                     Left
-                     (Node {} (FunctionOrValue [] "num1"))
-                     (Node {}
-                         (OperatorApplication "|>"
-                             Left
-                             (Node {} (FunctionOrValue [] "num2"))
-                             (Node {} (FunctionOrValue [] "foo"))
-                         )
-                     )
-
-             _ =
-                 -- num1 * num2 + foo
-                 OperatorApplication "*"
-                     Left
-                     (Node {} (FunctionOrValue [] "num1"))
-                     (Node {}
-                         (OperatorApplication "+"
-                             Left
-                             (Node {} (FunctionOrValue [] "num2"))
-                             (Node {} (FunctionOrValue [] "foo"))
-                         )
-                     )
-
-             _ =
-                 -- (num1 * num2) + foo
-                 OperatorApplication "+"
-                     Left
-                     (Node {}
-                         (ParenthesizedExpression
-                             (Node {}
-                                 (OperatorApplication "*"
-                                     Left
-                                     (Node {} (FunctionOrValue [] "num1"))
-                                     (Node {} (FunctionOrValue [] "num2"))
-                                 )
-                             )
-                         )
-                     )
-                     (Node {} (FunctionOrValue [] "foo"))
-
-             _ =
-                 -- num (::)
-                 Application
-                     [ Node {} (FunctionOrValue [] "num")
-                     , Node {} (PrefixOperator "::")
-                     ]
-          -}
-          test "infix operator" <|
+        , test "infix operator" <|
             \_ ->
                 inferHelp
                     { src =
@@ -583,6 +519,34 @@ update msg model =
                                 ]
                                 Nothing
                             , Dict.empty
+                            )
+                        )
+        , test "uncons pattern" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : List Int -> String
+bar nums =
+    case nums of
+        first :: rest ->
+            foo
+"""
+                    , range =
+                        { start = { column = 13, row = 5 }
+                        , end = { column = 16, row = 5 }
+                        }
+                    , binops = Dict.empty
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Type "String" []
+                            , Dict.fromList
+                                [ ( "first", Type "Int" [] )
+                                , ( "nums", Type "List" [ Type "Int" [] ] )
+                                , ( "rest", Type "List" [ Type "Int" [] ] )
+                                ]
                             )
                         )
         ]
