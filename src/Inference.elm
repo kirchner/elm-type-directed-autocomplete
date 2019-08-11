@@ -548,36 +548,29 @@ inferLambda range lambda =
 
 
 inferCall : Range -> List (Node Expression) -> Infer Type
-inferCall range allExprs =
-    case allExprs of
+inferCall range exprs =
+    case exprs of
         [] ->
             throwError ParserError
 
         function :: arguments ->
             let
                 inferArguments functionType =
-                    let
-                        inferHelp types exprs =
-                            case exprs of
-                                [] ->
-                                    freshVar
-                                        |> andThen
-                                            (\var ->
-                                                addConstraint
-                                                    ( functionType
-                                                    , List.foldl Lambda
-                                                        (Var var)
-                                                        types
-                                                    )
-                                                    |> map (\_ -> Var var)
-                                            )
+                    traverse (infer range) arguments
+                        |> andThen (getReturnVar functionType)
 
-                                firstExpr :: rest ->
-                                    infer range firstExpr
-                                        |> andThen
-                                            (\tipe -> inferHelp (tipe :: types) rest)
-                    in
-                    inferHelp [] arguments
+                getReturnVar functionType types =
+                    freshVar
+                        |> andThen (returnType functionType types)
+
+                returnType functionType types var =
+                    addConstraint
+                        ( functionType
+                        , List.foldl Lambda
+                            (Var var)
+                            types
+                        )
+                        |> map (\_ -> Var var)
             in
             infer range function
                 |> andThen inferArguments
