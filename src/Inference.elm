@@ -441,7 +441,7 @@ infer holeRange (Node range expr) =
                 returnType recordVar fieldVar =
                     return <|
                         Lambda
-                            (Record [ ( name, Var fieldVar ) ]
+                            (Record [ ( String.dropLeft 1 name, Var fieldVar ) ]
                                 (Just recordVar)
                             )
                             (Var fieldVar)
