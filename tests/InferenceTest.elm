@@ -521,6 +521,32 @@ update msg model =
                             , Dict.empty
                             )
                         )
+        , test "empty list pattern" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : List Int -> String
+bar nums =
+    case nums of
+        [] ->
+            foo
+"""
+                    , range =
+                        { start = { column = 13, row = 5 }
+                        , end = { column = 16, row = 5 }
+                        }
+                    , binops = Dict.empty
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Type "String" []
+                            , Dict.fromList
+                                [ ( "nums", Type "List" [ Type "Int" [] ] )
+                                ]
+                            )
+                        )
         , test "uncons pattern" <|
             \_ ->
                 inferHelp

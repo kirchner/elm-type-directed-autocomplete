@@ -738,7 +738,14 @@ inferPattern (Node _ pattern) =
                     (\( types, schemes ) ->
                         case types of
                             [] ->
-                                throwError (UnsupportedPattern pattern)
+                                freshVar
+                                    |> andThen
+                                        (\var ->
+                                            return
+                                                ( Type "List" [ Var var ]
+                                                , []
+                                                )
+                                        )
 
                             tipe :: _ ->
                                 return
