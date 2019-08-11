@@ -3,7 +3,13 @@
 [![Build Status](https://travis-ci.org/kirchner/elm-type-directed-autocomplete.svg?branch=master)](https://travis-ci.org/kirchner/elm-type-directed-autocomplete)
 
 This is an **experimental** tool which generates autocompletion suggestions for
-Elm code based on available type information.
+Elm code based on available type information. It lets you do things like this:
+
+<img src="https://github.com/kirchner/elm-type-directed-autocomplete/raw/master/assets/example-update.gif" alt="autocompletion screencast">
+
+or this:
+
+<img src="https://github.com/kirchner/elm-type-directed-autocomplete/raw/master/assets/example-length.gif" alt="autocompletion screencast">
 
 There are basically two steps to this:
 
