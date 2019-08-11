@@ -520,27 +520,18 @@ inferBinop range binop =
 inferLambda : Range -> Elm.Syntax.Expression.Lambda -> Infer Type
 inferLambda range lambda =
     let
-        inferHelp args argTypes schemes =
-            case args of
-                [] ->
-                    inEnvs schemes
-                        (infer range lambda.expression
-                            |> map (returnType argTypes)
-                        )
-
-                arg :: rest ->
-                    inferPattern arg
-                        |> andThen
-                            (\( argType, newSchemes ) ->
-                                inferHelp rest
-                                    (argType :: argTypes)
-                                    (newSchemes ++ schemes)
-                            )
+        inferBody ( types, schemes ) =
+            inEnvs (List.concat schemes)
+                (infer range lambda.expression
+                    |> map (returnType types)
+                )
 
         returnType vars tipe =
             List.foldl Lambda tipe vars
     in
-    inferHelp lambda.args [] []
+    traverse inferPattern lambda.args
+        |> map List.unzip
+        |> andThen inferBody
 
 
 
