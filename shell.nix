@@ -15,10 +15,10 @@ let
 in
 
 stdenv.mkDerivation {
-  name = "sewing-pattern-editor";
+  name = "env";
 
   buildInputs = [
-    yarn
+    nodejs
   ];
 
   shellHook = ''
