@@ -106,7 +106,7 @@ var sendRequest = function(args) {
       var fileName = path.resolve(args.file);
       var column = parseInt(args.column, 10);
       var row = parseInt(args.row, 10);
-      var src = JSON.parse(fs.readFileSync(0, "utf-8"));
+      var src = fs.readFileSync(0, "utf-8");
 
       client.write(JSON.stringify({
         fileName: fileName,

@@ -6,6 +6,7 @@ exports.activate = async context => {
     sources.createSource({
       name: 'elm',
       filetypes: ['elm'],
+      priority: 200,
       triggerCharacters: [],
       isSnippet: true,
       doComplete: async function(opt) {
@@ -28,13 +29,11 @@ exports.activate = async context => {
 
               return {
                 word: expr.split("\n").join("\r"),
-                abbr: `${expr.split("\n")[0].trim()}...`,
-                isSnippet: true
+                abbr: `${expr.split("\n")[0].trim()}...`
               }
             } else {
               return {
-                word: expr,
-                filterText: expr
+                word: expr
               }
             }
           })
@@ -78,13 +77,13 @@ function query(logger, content, opt) {
       logger.debug("closing elm autocomplete: ", `${completions}`);
       resolve(completions);
     });
-    
+
     elmAutocomplete.on("error", error => {
       reject(error);
     });
 
     elmAutocomplete.stdin.setEncoding("utf-8");
-    elmAutocomplete.stdin.write(JSON.stringify(content));
+    elmAutocomplete.stdin.write(content);
     elmAutocomplete.stdin.end();
   });
 }
