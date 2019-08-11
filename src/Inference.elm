@@ -106,8 +106,6 @@ type Error
     | ConflictingAssociativity
     | ParserError
     | SyntaxError
-    | UnsupportedExpression Expression
-    | UnsupportedPattern Pattern
     | UnsupportedUnification
     | CouldNotSolve Solver.Error
     | NoHoleFound
@@ -130,12 +128,6 @@ errorToString error =
 
         SyntaxError ->
             "Syntax error"
-
-        UnsupportedExpression expr ->
-            "UnsupportedExpression " ++ "TODO"
-
-        UnsupportedPattern pattern ->
-            "Unsupported pattern " ++ "TODO"
 
         UnsupportedUnification ->
             "Unsuppoerted unification"
@@ -397,13 +389,22 @@ infer holeRange (Node range expr) =
                 |> andThen (inferBinop holeRange)
 
         PrefixOperator _ ->
-            throwError (UnsupportedExpression expr)
+            -- TODO implement properly
+            map2 Lambda
+                (map Var freshVar)
+                (map Var freshVar)
 
         Operator _ ->
-            throwError (UnsupportedExpression expr)
+            -- TODO implement properly
+            map2 Lambda
+                (map Var freshVar)
+                (map2 Lambda
+                    (map Var freshVar)
+                    (map Var freshVar)
+                )
 
         Hex _ ->
-            throwError (UnsupportedExpression expr)
+            return (Type "Int" [])
 
         Negation numberExpr ->
             infer holeRange numberExpr
@@ -475,7 +476,9 @@ infer holeRange (Node range expr) =
                 |> andThen inferRecordType
 
         GLSLExpression _ ->
-            throwError (UnsupportedExpression expr)
+            -- TODO implement properly
+            map (Type "Shader") <|
+                traverse (map Var) [ freshVar, freshVar, freshVar ]
 
 
 collectOperatorApplications :
@@ -689,7 +692,7 @@ inferPattern (Node _ pattern) =
             return ( Type "Int" [], [] )
 
         HexPattern _ ->
-            throwError (UnsupportedPattern pattern)
+            return ( Type "Int" [], [] )
 
         FloatPattern _ ->
             return ( Type "Float" [], [] )
@@ -705,7 +708,20 @@ inferPattern (Node _ pattern) =
                     )
 
         RecordPattern names ->
-            throwError (UnsupportedPattern pattern)
+            let
+                toField (Node _ name) =
+                    map (Tuple.pair name << Var) freshVar
+            in
+            map2
+                (\fields rest ->
+                    ( Record fields (Just rest)
+                    , List.map
+                        (Tuple.mapSecond (ForAll []))
+                        fields
+                    )
+                )
+                (traverse toField names)
+                freshVar
 
         UnConsPattern firstPattern secondPattern ->
             inferPattern firstPattern
@@ -784,8 +800,14 @@ inferPattern (Node _ pattern) =
                                 )
                     )
 
-        AsPattern subPattern name ->
-            throwError (UnsupportedPattern pattern)
+        AsPattern subPattern (Node _ name) ->
+            inferPattern subPattern
+                |> map
+                    (\( tipe, schemes ) ->
+                        ( tipe
+                        , ( name, ForAll [] tipe ) :: schemes
+                        )
+                    )
 
         ParenthesizedPattern subPattern ->
             inferPattern subPattern

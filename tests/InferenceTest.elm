@@ -575,6 +575,67 @@ bar nums =
                                 ]
                             )
                         )
+        , test "record pattern" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : { count : Int } -> String
+bar { count } =
+    foo count
+"""
+                    , range =
+                        { start = { column = 5, row = 3 }
+                        , end = { column = 8, row = 3 }
+                        }
+                    , binops = Dict.empty
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda (Type "Int" []) (Type "String" [])
+                            , Dict.fromList
+                                [ ( "count", Type "Int" [] )
+                                ]
+                            )
+                        )
+        , test "as pattern" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """bar : { count : Int } -> String
+bar ({ count } as stuff) =
+    foo stuff count
+"""
+                    , range =
+                        { start = { column = 5, row = 3 }
+                        , end = { column = 8, row = 3 }
+                        }
+                    , binops = Dict.empty
+                    , values = Dict.empty
+                    , aliases = []
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda
+                                (Record
+                                    [ ( "count", Type "Int" [] ) ]
+                                    Nothing
+                                )
+                                (Lambda
+                                    (Type "Int" [])
+                                    (Type "String" [])
+                                )
+                            , Dict.fromList
+                                [ ( "count", Type "Int" [] )
+                                , ( "stuff"
+                                  , Record
+                                        [ ( "count", Type "Int" [] ) ]
+                                        Nothing
+                                  )
+                                ]
+                            )
+                        )
         ]
 
 
