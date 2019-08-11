@@ -408,8 +408,9 @@ infer holeRange (Node range expr) =
         Negation numberExpr ->
             infer holeRange numberExpr
 
-        LetExpression _ ->
-            throwError (UnsupportedExpression expr)
+        LetExpression letBlock ->
+            -- TODO add declarations to env
+            infer holeRange letBlock.expression
 
         RecordAccess recordExpr (Node _ name) ->
             let
@@ -477,11 +478,6 @@ infer holeRange (Node range expr) =
             throwError (UnsupportedExpression expr)
 
 
-{-| Do sth like this:
-
-    a * (b + c) -->   ([(a, *), (b, +)], c)
-
--}
 collectOperatorApplications :
     List ( Node Expression, String )
     -> String
