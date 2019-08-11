@@ -9,15 +9,7 @@ import Elm.Docs exposing (Alias)
 import Elm.Parser
 import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
-import Elm.Syntax.Expression
-    exposing
-        ( Case
-        , CaseBlock
-        , Expression(..)
-        , Function
-        , FunctionImplementation
-        , RecordSetter
-        )
+import Elm.Syntax.Expression exposing (Expression(..))
 import Elm.Syntax.Infix exposing (Infix, InfixDirection(..))
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Pattern exposing (Pattern(..))
@@ -35,7 +27,7 @@ import TypeEnv exposing (TypeEnv)
 
 
 inferHole :
-    { function : Function
+    { function : Elm.Syntax.Expression.Function
     , range : Range
     , binops : Dict String ( Infix, Type )
     , values : Dict String Type
@@ -80,38 +72,6 @@ inferHole { binops, aliases, values, range, function } =
                 |> Result.andThen solve
 
 
-
----- INFER
-
-
-type Infer a
-    = Infer (Binops -> TypeEnv -> State Int ( List Constraint, List Hole, Result Error a ))
-
-
-type alias Binops =
-    Dict String ( Infix, Type )
-
-
-type alias Hole =
-    ( String, Type, TypeEnv )
-
-
-storeHole : String -> Type -> Infer ()
-storeHole name tipe =
-    Infer <|
-        \_ env ->
-            State.state ( [], [ ( name, tipe, env ) ], Ok () )
-
-
-type alias Constraint =
-    ( Type, Type )
-
-
-addConstraint : Constraint -> Infer ()
-addConstraint constraint =
-    Infer (\_ _ -> State.state ( [ constraint ], [], Ok () ))
-
-
 type Error
     = UnboundVariable String
     | UnknownInfix String
@@ -151,17 +111,49 @@ errorToString error =
             "No hole found at the specified range"
 
 
+
+---- INFER
+
+
+type Infer a
+    = Infer (Binops -> TypeEnv -> State Int ( List Constraint, List Hole, Result Error a ))
+
+
+type alias Binops =
+    Dict String ( Infix, Type )
+
+
+type alias Hole =
+    ( String, Type, TypeEnv )
+
+
+storeHole : String -> Type -> Infer ()
+storeHole name tipe =
+    Infer <|
+        \_ env ->
+            State.state ( [], [ ( name, tipe, env ) ], Ok () )
+
+
+type alias Constraint =
+    ( Type, Type )
+
+
+addConstraint : Constraint -> Infer ()
+addConstraint constraint =
+    Infer (\_ _ -> State.state ( [ constraint ], [], Ok () ))
+
+
 runInfer :
     List Alias
     -> Binops
     -> TypeEnv
     -> Range
-    -> Function
+    -> Elm.Syntax.Expression.Function
     -> ( List Constraint, List Hole, Result Error Type )
-runInfer typeAliases binops env holeRange expr =
+runInfer typeAliases binops env range expr =
     let
         (Infer run) =
-            inferFunction typeAliases holeRange expr
+            inferFunction typeAliases range expr
     in
     State.finalValue 0 (run binops env)
 
@@ -170,8 +162,8 @@ runInfer typeAliases binops env holeRange expr =
 ---- INFER TOP-LEVEL FUNCTIONS
 
 
-inferFunction : List Alias -> Range -> Function -> Infer Type
-inferFunction typeAliases holeRange function =
+inferFunction : List Alias -> Range -> Elm.Syntax.Expression.Function -> Infer Type
+inferFunction typeAliases range function =
     let
         (Node _ declaration) =
             function.declaration
@@ -180,7 +172,7 @@ inferFunction typeAliases holeRange function =
             case args of
                 [] ->
                     inEnvs schemes
-                        (infer holeRange declaration.expression
+                        (infer range declaration.expression
                             |> andThen
                                 (\tipe ->
                                     let
@@ -222,10 +214,10 @@ inferFunction typeAliases holeRange function =
 
 
 infer : Range -> Node Expression -> Infer Type
-infer holeRange (Node range expr) =
+infer range (Node currentRange expr) =
     case expr of
         FunctionOrValue moduleName name ->
-            if range == holeRange then
+            if range == currentRange then
                 storeHole name (Var name)
                     |> map (\_ -> Var name)
 
@@ -272,47 +264,47 @@ infer holeRange (Node range expr) =
             return (Tuple [])
 
         ParenthesizedExpression parenthesizedExpr ->
-            infer holeRange parenthesizedExpr
+            infer range parenthesizedExpr
 
         ListExpr elementExprs ->
-            inferList holeRange elementExprs
+            inferList range elementExprs
 
         TupledExpression allExprs ->
-            inferTuple holeRange allExprs
+            inferTuple range allExprs
 
         Negation numberExpr ->
-            infer holeRange numberExpr
+            infer range numberExpr
 
         OperatorApplication name _ exprA exprB ->
-            inferBinops holeRange name exprA exprB
+            inferBinops range name exprA exprB
 
         LambdaExpression lambda ->
-            inferLambda holeRange lambda
+            inferLambda range lambda
 
         Application allExprs ->
-            inferCall holeRange allExprs
+            inferCall range allExprs
 
         IfBlock exprCond exprIf exprElse ->
-            inferIf holeRange exprCond exprIf exprElse
+            inferIf range exprCond exprIf exprElse
 
         CaseExpression caseBlock ->
-            inferCase holeRange caseBlock
+            inferCase range caseBlock
 
         LetExpression letBlock ->
             -- TODO add declarations to env
-            infer holeRange letBlock.expression
+            infer range letBlock.expression
 
         RecordAccessFunction name ->
-            inferAccessor holeRange name
+            inferAccessor range name
 
         RecordAccess recordExpr (Node _ name) ->
-            inferAccess holeRange recordExpr name
+            inferAccess range recordExpr name
 
         RecordUpdateExpression (Node _ name) recordSetters ->
-            inferUpdate holeRange name recordSetters
+            inferUpdate range name recordSetters
 
         RecordExpr recordSetters ->
-            inferRecord holeRange recordSetters
+            inferRecord range recordSetters
 
         GLSLExpression _ ->
             -- TODO implement properly
@@ -325,7 +317,7 @@ infer holeRange (Node range expr) =
 
 
 inferList : Range -> List (Node Expression) -> Infer Type
-inferList holeRange elementExprs =
+inferList range elementExprs =
     case elementExprs of
         [] ->
             map Var freshVar
@@ -334,11 +326,11 @@ inferList holeRange elementExprs =
             let
                 inferRest firstType =
                     rest
-                        |> traverse (infer holeRange)
+                        |> traverse (infer range)
                         |> andThen (traverse (Tuple.pair firstType >> addConstraint))
                         |> map (\_ -> Type "List" [ firstType ])
             in
-            infer holeRange firstExpr
+            infer range firstExpr
                 |> andThen inferRest
 
 
@@ -347,7 +339,7 @@ inferList holeRange elementExprs =
 
 
 inferTuple : Range -> List (Node Expression) -> Infer Type
-inferTuple holeRange allExprs =
+inferTuple range allExprs =
     let
         inferHelp exprs types =
             case exprs of
@@ -355,7 +347,7 @@ inferTuple holeRange allExprs =
                     return (Tuple (List.reverse types))
 
                 firstExpr :: rest ->
-                    infer holeRange firstExpr
+                    infer range firstExpr
                         |> andThen (\tipe -> inferHelp rest (tipe :: types))
     in
     inferHelp allExprs []
@@ -366,13 +358,13 @@ inferTuple holeRange allExprs =
 
 
 inferBinops : Range -> String -> Node Expression -> Node Expression -> Infer Type
-inferBinops holeRange name exprA exprB =
+inferBinops range name exprA exprB =
     let
         ( binops, finalExpr ) =
             collectOperatorApplications [] name exprA exprB
     in
     sortOperatorApplications binops finalExpr
-        |> andThen (inferBinop holeRange)
+        |> andThen (inferBinop range)
 
 
 collectOperatorApplications :
@@ -495,15 +487,15 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
 
 
 inferBinop : Range -> Binop -> Infer Type
-inferBinop holeRange binop =
+inferBinop range binop =
     case binop of
         Final expr ->
-            infer holeRange expr
+            infer range expr
 
         Binop infixType binopA binopB ->
             let
                 inferBinopB typeA =
-                    inferBinop holeRange binopB
+                    inferBinop range binopB
                         |> andThen (getReturnVar typeA)
 
                 getReturnVar typeA typeB =
@@ -517,7 +509,7 @@ inferBinop holeRange binop =
                         )
                         |> map (\_ -> Var returnVar)
             in
-            inferBinop holeRange binopA
+            inferBinop range binopA
                 |> andThen inferBinopB
 
 
@@ -526,13 +518,13 @@ inferBinop holeRange binop =
 
 
 inferLambda : Range -> Elm.Syntax.Expression.Lambda -> Infer Type
-inferLambda holeRange lambda =
+inferLambda range lambda =
     let
         inferHelp args argTypes schemes =
             case args of
                 [] ->
                     inEnvs schemes
-                        (infer holeRange lambda.expression
+                        (infer range lambda.expression
                             |> map (returnType argTypes)
                         )
 
@@ -556,7 +548,7 @@ inferLambda holeRange lambda =
 
 
 inferCall : Range -> List (Node Expression) -> Infer Type
-inferCall holeRange allExprs =
+inferCall range allExprs =
     case allExprs of
         [] ->
             throwError ParserError
@@ -581,13 +573,13 @@ inferCall holeRange allExprs =
                                             )
 
                                 firstExpr :: rest ->
-                                    infer holeRange firstExpr
+                                    infer range firstExpr
                                         |> andThen
                                             (\tipe -> inferHelp (tipe :: types) rest)
                     in
                     inferHelp [] arguments
             in
-            infer holeRange function
+            infer range function
                 |> andThen inferArguments
 
 
@@ -596,19 +588,19 @@ inferCall holeRange allExprs =
 
 
 inferIf : Range -> Node Expression -> Node Expression -> Node Expression -> Infer Type
-inferIf holeRange exprCond exprFirst exprSecond =
+inferIf range exprCond exprFirst exprSecond =
     let
         inferCond =
-            infer holeRange exprCond
+            infer range exprCond
                 |> andThen inferFirst
 
         inferFirst typeCond =
             addConstraint ( typeCond, Type "Bool" [] )
-                |> andThen (\_ -> infer holeRange exprFirst)
+                |> andThen (\_ -> infer range exprFirst)
                 |> andThen (inferSecond typeCond)
 
         inferSecond typeCond typeFirst =
-            infer holeRange exprSecond
+            infer range exprSecond
                 |> andThen (returnHelp typeCond typeFirst)
 
         returnHelp typeCond typeFirst typeSecond =
@@ -622,8 +614,8 @@ inferIf holeRange exprCond exprFirst exprSecond =
 ---- INFER CASE EXPRESSIONS
 
 
-inferCase : Range -> CaseBlock -> Infer Type
-inferCase holeRange caseBlock =
+inferCase : Range -> Elm.Syntax.Expression.CaseBlock -> Infer Type
+inferCase range caseBlock =
     let
         inferCaseBranches exprTipe =
             case caseBlock.cases of
@@ -638,21 +630,21 @@ inferCase holeRange caseBlock =
                                     return firstType
 
                                 nextCase :: nextRest ->
-                                    inferCaseBranch holeRange exprTipe nextCase
+                                    inferCaseBranch range exprTipe nextCase
                                         |> andThen
                                             (Tuple.pair firstType >> addConstraint)
                                         |> andThen
                                             (\_ -> inferRest nextRest firstType)
                     in
-                    inferCaseBranch holeRange exprTipe firstCase
+                    inferCaseBranch range exprTipe firstCase
                         |> andThen (inferRest rest)
     in
-    infer holeRange caseBlock.expression
+    infer range caseBlock.expression
         |> andThen inferCaseBranches
 
 
-inferCaseBranch : Range -> Type -> Case -> Infer Type
-inferCaseBranch holeRange exprType ( pattern, expr ) =
+inferCaseBranch : Range -> Type -> Elm.Syntax.Expression.Case -> Infer Type
+inferCaseBranch range exprType ( pattern, expr ) =
     inferPattern pattern
         |> andThen
             (\( tipe, schemes ) ->
@@ -663,7 +655,7 @@ inferCaseBranch holeRange exprType ( pattern, expr ) =
                     |> andThen
                         (\_ ->
                             inEnvs schemes
-                                (infer holeRange expr)
+                                (infer range expr)
                         )
             )
 
@@ -673,7 +665,7 @@ inferCaseBranch holeRange exprType ( pattern, expr ) =
 
 
 inferAccessor : Range -> String -> Infer Type
-inferAccessor holeRange name =
+inferAccessor range name =
     let
         getFieldVar recordVar =
             freshVar
@@ -696,7 +688,7 @@ inferAccessor holeRange name =
 
 
 inferAccess : Range -> Node Expression -> String -> Infer Type
-inferAccess holeRange recordExpr name =
+inferAccess range recordExpr name =
     let
         getRecordVar recordType =
             freshVar
@@ -713,7 +705,7 @@ inferAccess holeRange recordExpr name =
                 )
                 |> map (\_ -> Var fieldVar)
     in
-    infer holeRange recordExpr
+    infer range recordExpr
         |> andThen getRecordVar
 
 
@@ -721,11 +713,11 @@ inferAccess holeRange recordExpr name =
 ---- INFER RECORD UPDATES
 
 
-inferUpdate : Range -> String -> List (Node RecordSetter) -> Infer Type
-inferUpdate holeRange name recordSetters =
+inferUpdate : Range -> String -> List (Node Elm.Syntax.Expression.RecordSetter) -> Infer Type
+inferUpdate range name recordSetters =
     let
         inferRecordSetter (Node _ ( Node _ fieldName, fieldExpr )) =
-            infer holeRange fieldExpr
+            infer range fieldExpr
                 |> map (Tuple.pair fieldName)
 
         inferRecordType fieldTypes =
@@ -752,11 +744,11 @@ inferUpdate holeRange name recordSetters =
 ---- INFER RECORD CONSTRUCTIONS
 
 
-inferRecord : Range -> List (Node RecordSetter) -> Infer Type
-inferRecord holeRange recordSetters =
+inferRecord : Range -> List (Node Elm.Syntax.Expression.RecordSetter) -> Infer Type
+inferRecord range recordSetters =
     let
         inferSetter (Node _ ( Node _ name, valueExpr )) =
-            infer holeRange valueExpr
+            infer range valueExpr
                 |> map (Tuple.pair name)
     in
     traverse inferSetter recordSetters
