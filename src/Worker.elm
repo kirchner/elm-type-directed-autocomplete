@@ -231,7 +231,13 @@ update msg model =
                                     Module.fromFile file (Interface.build rawFile)
 
                                 values =
-                                    [ thisModule.values, importedValues ]
+                                    [ Dict.union
+                                        thisModule.values
+                                        (Dict.map (\_ -> Tuple.second)
+                                            thisModule.constructors
+                                        )
+                                    , importedValues
+                                    ]
 
                                 importedValues =
                                     (RawFile.imports rawFile ++ defaultImports)
