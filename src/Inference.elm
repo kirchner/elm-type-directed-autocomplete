@@ -695,18 +695,18 @@ inferUpdate range name recordSetters =
 
         inferRecordType fieldTypes =
             findValue name
-                |> andThen
-                    (\recordType ->
-                        freshVar
-                            |> andThen
-                                (\var ->
-                                    addConstraint
-                                        ( recordType
-                                        , Record fieldTypes (Just var)
-                                        )
-                                        |> map (\_ -> recordType)
-                                )
-                    )
+                |> andThen (getFreshVar fieldTypes)
+
+        getFreshVar fieldTypes recordType =
+            freshVar
+                |> andThen (returnType fieldTypes recordType)
+
+        returnType fieldTypes recordType var =
+            addConstraint
+                ( recordType
+                , Record fieldTypes (Just var)
+                )
+                |> map (\_ -> recordType)
     in
     recordSetters
         |> traverse inferRecordSetter
