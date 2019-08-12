@@ -1,8 +1,7 @@
 module Module exposing
     ( Module
-    , exposed
+    , fromFile
     , functionDeclarationAt
-    , internal
     )
 
 import Dict exposing (Dict)
@@ -25,9 +24,13 @@ import Type
 type alias Module =
     { binops : Dict String Infix
     , values : Dict String Type
-    , internalValues : Dict String Type
+    , constructors : Dict String ( String, Type )
     , aliases : List Alias
     , unions : List Union
+    , exposedValues : Dict String Type
+    , exposedConstructors : Dict String ( String, Type )
+    , exposedAliases : List Alias
+    , exposedUnions : List Union
     }
 
 
@@ -35,22 +38,19 @@ emptyModule : Module
 emptyModule =
     { binops = Dict.empty
     , values = Dict.empty
-    , internalValues = Dict.empty
+    , constructors = Dict.empty
     , aliases = []
     , unions = []
+    , exposedValues = Dict.empty
+    , exposedConstructors = Dict.empty
+    , exposedAliases = []
+    , exposedUnions = []
     }
 
 
-{-| -}
-exposed : File -> Interface -> Module
-exposed file interface =
-    collect emptyModule (Just interface) file.declarations
-
-
-{-| -}
-internal : File -> Module
-internal file =
-    collect emptyModule Nothing file.declarations
+fromFile : File -> Interface -> Module
+fromFile file interface =
+    collect emptyModule interface file.declarations
 
 
 {-| -}
@@ -93,8 +93,8 @@ functionDeclarationAtHelp holeRange declarations =
 ---- COLLECT
 
 
-collect : Module -> Maybe Interface -> List (Node Declaration) -> Module
-collect exposings maybeInterface declarations =
+collect : Module -> Interface -> List (Node Declaration) -> Module
+collect exposings interface declarations =
     case declarations of
         [] ->
             exposings
@@ -112,55 +112,60 @@ collect exposings maybeInterface declarations =
                     case function.signature of
                         Nothing ->
                             -- TODO insert general type signature?
-                            collect exposings maybeInterface rest
+                            collect exposings interface rest
 
                         Just (Node _ signature) ->
                             let
                                 tipe =
                                     Type.fromTypeAnnotation signature.typeAnnotation
                             in
-                            if relevantFunction name maybeInterface then
+                            if Elm.Interface.exposesFunction name interface then
                                 collect
                                     { exposings
                                         | values = Dict.insert name tipe exposings.values
+                                        , exposedValues =
+                                            Dict.insert name tipe exposings.exposedValues
                                     }
-                                    maybeInterface
+                                    interface
                                     rest
 
                             else
                                 collect
                                     { exposings
-                                        | internalValues =
-                                            Dict.insert name tipe exposings.internalValues
+                                        | values = Dict.insert name tipe exposings.values
                                     }
-                                    maybeInterface
+                                    interface
                                     rest
 
                 AliasDeclaration typeAlias ->
                     let
                         (Node _ name) =
                             typeAlias.name
+
+                        toArg (Node _ generic) =
+                            generic
+
+                        newAlias =
+                            { name = name
+                            , comment = ""
+                            , args = List.map toArg typeAlias.generics
+                            , tipe = Type.fromTypeAnnotation typeAlias.typeAnnotation
+                            }
                     in
-                    if relevantAlias name maybeInterface then
-                        let
-                            toArg (Node _ generic) =
-                                generic
-                        in
+                    if Elm.Interface.exposesAlias name interface then
                         collect
                             { exposings
-                                | aliases =
-                                    { name = name
-                                    , comment = ""
-                                    , args = List.map toArg typeAlias.generics
-                                    , tipe = Type.fromTypeAnnotation typeAlias.typeAnnotation
-                                    }
-                                        :: exposings.aliases
+                                | aliases = newAlias :: exposings.aliases
+                                , exposedAliases = newAlias :: exposings.exposedAliases
                             }
-                            maybeInterface
+                            interface
                             rest
 
                     else
-                        collect exposings maybeInterface rest
+                        collect
+                            { exposings | aliases = newAlias :: exposings.aliases }
+                            interface
+                            rest
 
                 CustomTypeDeclaration tipe ->
                     let
@@ -172,77 +177,113 @@ collect exposings maybeInterface declarations =
 
                         toArg (Node _ generic) =
                             generic
-                    in
-                    case relevantUnion name maybeInterface of
-                        Unexposed ->
-                            collect exposings maybeInterface rest
 
-                        ConstructorsUnexposed ->
-                            collect
-                                { exposings
-                                    | unions =
-                                        { name = name
-                                        , comment = ""
-                                        , args = args
-                                        , tags = []
-                                        }
-                                            :: exposings.unions
-                                }
-                                maybeInterface
-                                rest
+                        newUnion =
+                            { name = name
+                            , comment = ""
+                            , args = args
+                            , tags = []
+                            }
 
-                        ConstructorsExposed ->
+                        isExposed exposed =
+                            case exposed of
+                                CustomType ( exposedName, exposedConstructors ) ->
+                                    if exposedName == name then
+                                        Just exposedConstructors
+
+                                    else
+                                        Nothing
+
+                                _ ->
+                                    Nothing
+
+                        toTag (Node _ valueConstructor) =
                             let
-                                toTag (Node _ valueConstructor) =
-                                    let
-                                        (Node _ constructorName) =
-                                            valueConstructor.name
-                                    in
-                                    Just
-                                        ( constructorName
-                                        , List.map Type.fromTypeAnnotation
-                                            valueConstructor.arguments
-                                        )
-
-                                values =
-                                    List.map toValue tipe.constructors
-
-                                toValue (Node _ valueConstructor) =
-                                    let
-                                        (Node _ constructorName) =
-                                            valueConstructor.name
-                                    in
-                                    ( constructorName
-                                    , List.foldr (Lambda << Type.fromTypeAnnotation)
-                                        targetType
-                                        valueConstructor.arguments
-                                    )
-
-                                targetType =
-                                    Type name (List.map Var args)
+                                (Node _ constructorName) =
+                                    valueConstructor.name
                             in
+                            Just
+                                ( constructorName
+                                , List.map Type.fromTypeAnnotation
+                                    valueConstructor.arguments
+                                )
+
+                        values =
+                            List.map toValue tipe.constructors
+
+                        toValue (Node _ valueConstructor) =
+                            let
+                                (Node _ constructorName) =
+                                    valueConstructor.name
+                            in
+                            ( constructorName
+                            , ( name
+                              , List.foldr (Lambda << Type.fromTypeAnnotation)
+                                    targetType
+                                    valueConstructor.arguments
+                              )
+                            )
+
+                        targetType =
+                            Type name (List.map Var args)
+                    in
+                    case List.head (List.filterMap isExposed interface) of
+                        Nothing ->
                             collect
                                 { exposings
-                                    | unions =
-                                        { name = name
-                                        , comment = ""
-                                        , args = List.map toArg tipe.generics
-                                        , tags = List.filterMap toTag tipe.constructors
-                                        }
-                                            :: exposings.unions
-                                    , values =
+                                    | unions = newUnion :: exposings.unions
+                                    , constructors =
                                         List.foldl
                                             (\( constructor, value ) ->
                                                 Dict.insert constructor value
                                             )
-                                            exposings.values
+                                            exposings.constructors
                                             values
                                 }
-                                maybeInterface
+                                interface
+                                rest
+
+                        Just [] ->
+                            collect
+                                { exposings
+                                    | unions = newUnion :: exposings.unions
+                                    , constructors =
+                                        List.foldl
+                                            (\( constructor, value ) ->
+                                                Dict.insert constructor value
+                                            )
+                                            exposings.constructors
+                                            values
+                                    , exposedUnions = newUnion :: exposings.exposedUnions
+                                }
+                                interface
+                                rest
+
+                        Just _ ->
+                            collect
+                                { exposings
+                                    | unions = newUnion :: exposings.unions
+                                    , constructors =
+                                        List.foldl
+                                            (\( constructor, value ) ->
+                                                Dict.insert constructor value
+                                            )
+                                            exposings.constructors
+                                            values
+                                    , exposedUnions = newUnion :: exposings.exposedUnions
+                                    , exposedConstructors =
+                                        List.foldl
+                                            (\( constructor, value ) ->
+                                                Dict.insert constructor value
+                                            )
+                                            exposings.exposedConstructors
+                                            values
+                                }
+                                interface
                                 rest
 
                 PortDeclaration signature ->
-                    collect exposings maybeInterface rest
+                    collect exposings interface rest
 
                 InfixDeclaration infix ->
                     let
@@ -253,65 +294,8 @@ collect exposings maybeInterface declarations =
                         { exposings
                             | binops = Dict.insert name infix exposings.binops
                         }
-                        maybeInterface
+                        interface
                         rest
 
                 Destructuring _ _ ->
-                    collect exposings maybeInterface rest
-
-
-relevantFunction : String -> Maybe Interface -> Bool
-relevantFunction name maybeInterface =
-    case maybeInterface of
-        Nothing ->
-            True
-
-        Just interface ->
-            Elm.Interface.exposesFunction name interface
-
-
-type ExposedUnion
-    = Unexposed
-    | ConstructorsExposed
-    | ConstructorsUnexposed
-
-
-relevantUnion : String -> Maybe Interface -> ExposedUnion
-relevantUnion name maybeInterface =
-    case maybeInterface of
-        Nothing ->
-            ConstructorsExposed
-
-        Just interface ->
-            let
-                isType exposed_ =
-                    case exposed_ of
-                        CustomType ( exposedName, exposedConstructors ) ->
-                            if exposedName == name then
-                                Just exposedConstructors
-
-                            else
-                                Nothing
-
-                        _ ->
-                            Nothing
-            in
-            case List.head (List.filterMap isType interface) of
-                Nothing ->
-                    Unexposed
-
-                Just [] ->
-                    ConstructorsUnexposed
-
-                Just _ ->
-                    ConstructorsExposed
-
-
-relevantAlias : String -> Maybe Interface -> Bool
-relevantAlias name maybeInterface =
-    case maybeInterface of
-        Nothing ->
-            True
-
-        Just interface ->
-            Elm.Interface.exposesAlias name interface
+                    collect exposings interface rest

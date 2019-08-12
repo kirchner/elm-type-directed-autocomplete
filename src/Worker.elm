@@ -52,7 +52,7 @@ type alias PackageIdentifier =
 type alias ModuleData =
     { name : ModuleName
     , file : File
-    , exposed : Module
+    , module_ : Module
     }
 
 
@@ -86,7 +86,7 @@ toModuleData package rawFile =
     in
     { name = RawFile.moduleName rawFile
     , file = file
-    , exposed = Module.exposed file interface
+    , module_ = Module.fromFile file interface
     }
 
 
@@ -227,15 +227,14 @@ update msg model =
 
                         Just function ->
                             let
-                                internal =
-                                    Module.internal file
+                                thisModule =
+                                    Module.fromFile file (Interface.build rawFile)
 
                                 values =
-                                    [ internal.values, importedValues ]
+                                    [ thisModule.values, importedValues ]
 
                                 importedValues =
-                                    RawFile.imports rawFile
-                                        ++ defaultImports
+                                    (RawFile.imports rawFile ++ defaultImports)
                                         |> List.concatMap
                                             (importedValuesFromImport model.modules)
                                         |> List.filter (not << unnecessary)
@@ -261,21 +260,21 @@ update msg model =
                                     , range = range
                                     , binops = binops
                                     , values = List.foldl Dict.union Dict.empty values
-                                    , aliases = internal.aliases
+                                    , aliases = thisModule.aliases
                                     }
                                     |> Result.mapError
                                         (inferenceErrorToString
                                             (List.foldl Dict.union Dict.empty values)
-                                            internal.aliases
-                                            internal.unions
+                                            thisModule.aliases
+                                            thisModule.unions
                                             range
                                             function
                                         )
                                     |> Result.map
                                         (generateCompletions range
                                             values
-                                            internal.aliases
-                                            internal.unions
+                                            thisModule.aliases
+                                            thisModule.unions
                                         )
                             of
                                 Err error ->
@@ -410,7 +409,7 @@ importedBinopsFromImport modules { moduleName } =
             Dict.empty
 
         Just moduleData ->
-            moduleData.exposed.binops
+            moduleData.module_.binops
                 |> Dict.map
                     (\_ infix ->
                         let
@@ -418,7 +417,7 @@ importedBinopsFromImport modules { moduleName } =
                                 infix.function
                         in
                         ( infix
-                        , Dict.get function moduleData.exposed.internalValues
+                        , Dict.get function moduleData.module_.values
                             |> Maybe.withDefault (Var "a")
                         )
                     )
@@ -428,60 +427,97 @@ importedValuesFromImport :
     Dict String ModuleData
     -> Import
     -> List ( String, Type )
-importedValuesFromImport modules { moduleName, moduleAlias, exposingList } =
+importedValuesFromImport modules import_ =
     let
-        (Node _ name) =
-            moduleName
+        (Node _ moduleName) =
+            import_.moduleName
 
-        qualify valueName =
-            case exposingList of
+        ---- QUALIFY VALUES
+        qualifyValue name =
+            case import_.exposingList of
                 Nothing ->
-                    qualifyHelp valueName
+                    qualifyHelp name
 
                 Just (Node _ (All _)) ->
-                    valueName
+                    name
 
                 Just (Node _ (Explicit topLevelExposes)) ->
-                    if List.any (isExposed valueName) topLevelExposes then
-                        valueName
+                    if List.any (isExposedValue name) topLevelExposes then
+                        name
 
                     else
-                        qualifyHelp valueName
+                        qualifyHelp name
 
-        qualifyHelp valueName =
-            case moduleAlias of
-                Nothing ->
-                    moduleNameToString name ++ "." ++ valueName
-
-                Just (Node _ aliasedName) ->
-                    moduleNameToString aliasedName ++ "." ++ valueName
-
-        isExposed valueName (Node _ topLevelExpose) =
+        isExposedValue name (Node _ topLevelExpose) =
             case topLevelExpose of
                 InfixExpose infixName ->
-                    infixName == valueName
+                    infixName == name
 
                 FunctionExpose functionName ->
-                    functionName == valueName
+                    functionName == name
 
-                TypeOrAliasExpose typeName ->
-                    typeName == valueName
+                TypeOrAliasExpose _ ->
+                    False
+
+                TypeExpose _ ->
+                    False
+
+        ---- QUALIFY CONSTRUCTORS
+        qualifyConstructor ( name, ( typeName, tipe ) ) =
+            case import_.exposingList of
+                Nothing ->
+                    ( qualifyHelp name, tipe )
+
+                Just (Node _ (All _)) ->
+                    ( name, tipe )
+
+                Just (Node _ (Explicit topLevelExposes)) ->
+                    if List.any (isExposedConstructor typeName) topLevelExposes then
+                        ( name, tipe )
+
+                    else
+                        ( qualifyHelp name, tipe )
+
+        isExposedConstructor typeName (Node _ topLevelExpose) =
+            case topLevelExpose of
+                InfixExpose infixName ->
+                    False
+
+                FunctionExpose functionName ->
+                    False
+
+                TypeOrAliasExpose _ ->
+                    False
 
                 TypeExpose exposedType ->
-                    exposedType.name == valueName
+                    exposedType.name == typeName
+
+        ---- HELP
+        qualifyHelp name =
+            case import_.moduleAlias of
+                Nothing ->
+                    moduleNameToString moduleName ++ "." ++ name
+
+                Just (Node _ aliasedName) ->
+                    moduleNameToString aliasedName ++ "." ++ name
     in
     case
         modules
             |> Dict.values
-            |> List.find (\moduleData -> moduleData.name == name)
+            |> List.find (\moduleData -> moduleData.name == moduleName)
     of
         Nothing ->
             []
 
         Just moduleData ->
-            moduleData.exposed.values
-                |> Dict.toList
-                |> List.map (Tuple.mapFirst qualify)
+            List.concat
+                [ moduleData.module_.exposedValues
+                    |> Dict.toList
+                    |> List.map (Tuple.mapFirst qualifyValue)
+                , moduleData.module_.exposedConstructors
+                    |> Dict.toList
+                    |> List.map qualifyConstructor
+                ]
 
 
 moduleNameToString : ModuleName -> String
