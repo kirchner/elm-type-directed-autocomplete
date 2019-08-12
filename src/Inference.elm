@@ -77,7 +77,7 @@ type Error
     | UnknownInfix String
     | ConflictingAssociativity
     | ParserError
-    | SyntaxError
+    | CaseWithoutBranches
     | UnsupportedUnification
     | CouldNotSolve Solver.Error
     | NoHoleFound
@@ -98,8 +98,8 @@ errorToString error =
         ParserError ->
             "Parser error"
 
-        SyntaxError ->
-            "Syntax error"
+        CaseWithoutBranches ->
+            "There is a case without any branches"
 
         UnsupportedUnification ->
             "Unsuppoerted unification"
@@ -602,26 +602,17 @@ inferCase : Range -> Elm.Syntax.Expression.CaseBlock -> Infer Type
 inferCase range caseBlock =
     let
         inferCaseBranches exprTipe =
-            case caseBlock.cases of
+            traverse (inferCaseBranch range exprTipe) caseBlock.cases
+                |> andThen addConstraints
+
+        addConstraints types =
+            case types of
                 [] ->
-                    throwError SyntaxError
+                    throwError CaseWithoutBranches
 
-                firstCase :: rest ->
-                    let
-                        inferRest cases firstType =
-                            case cases of
-                                [] ->
-                                    return firstType
-
-                                nextCase :: nextRest ->
-                                    inferCaseBranch range exprTipe nextCase
-                                        |> andThen
-                                            (Tuple.pair firstType >> addConstraint)
-                                        |> andThen
-                                            (\_ -> inferRest nextRest firstType)
-                    in
-                    inferCaseBranch range exprTipe firstCase
-                        |> andThen (inferRest rest)
+                firstType :: rest ->
+                    traverse (Tuple.pair firstType >> addConstraint) rest
+                        |> map (\_ -> firstType)
     in
     infer range caseBlock.expression
         |> andThen inferCaseBranches
@@ -629,19 +620,17 @@ inferCase range caseBlock =
 
 inferCaseBranch : Range -> Type -> Elm.Syntax.Expression.Case -> Infer Type
 inferCaseBranch range exprType ( pattern, expr ) =
+    let
+        addConstraintHelp ( tipe, schemes ) =
+            addConstraint ( exprType, tipe )
+                |> andThen (inferBody schemes)
+
+        inferBody schemes _ =
+            inEnvs schemes
+                (infer range expr)
+    in
     inferPattern pattern
-        |> andThen
-            (\( tipe, schemes ) ->
-                addConstraint
-                    ( exprType
-                    , tipe
-                    )
-                    |> andThen
-                        (\_ ->
-                            inEnvs schemes
-                                (infer range expr)
-                        )
-            )
+        |> andThen addConstraintHelp
 
 
 
