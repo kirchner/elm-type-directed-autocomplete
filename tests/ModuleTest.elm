@@ -26,49 +26,12 @@ suite =
                     )
     in
     concat
-        [ test "exposed" <|
+        [ test "fromFile" <|
             \_ ->
-                Module.exposed file interface
+                Module.fromFile file interface
                     |> Expect.equal
-                        { values =
-                            Dict.fromList
-                                [ ( "update"
-                                  , Lambda (Type "Msg" [])
-                                        (Lambda (Type "Model" [])
-                                            (Type "Model" [])
-                                        )
-                                  )
-                                ]
-                        , binops = Dict.empty
-                        , internalValues =
-                            Dict.fromList
-                                [ ( "internal"
-                                  , Lambda (Type "String" []) (Type "String" [])
-                                  )
-                                ]
-                        , aliases =
-                            [ { name = "Model"
-                              , comment = ""
-                              , args = []
-                              , tipe =
-                                    Record
-                                        [ ( "name", Type "String" [] ) ]
-                                        Nothing
-                              }
-                            ]
-                        , unions =
-                            [ { name = "Msg"
-                              , comment = ""
-                              , args = []
-                              , tags = []
-                              }
-                            ]
-                        }
-        , test "internal" <|
-            \_ ->
-                Module.internal file
-                    |> Expect.equal
-                        { values =
+                        { binops = Dict.empty
+                        , values =
                             Dict.fromList
                                 [ ( "update"
                                   , Lambda (Type "Msg" [])
@@ -79,14 +42,17 @@ suite =
                                 , ( "internal"
                                   , Lambda (Type "String" []) (Type "String" [])
                                   )
-                                , ( "Internal", Type "Internal" [] )
-                                , ( "NoOp", Type "Msg" [] )
+                                ]
+                        , constructors =
+                            Dict.fromList
+                                [ ( "Internal", ( "Internal", Type "Internal" [] ) )
+                                , ( "NoOp", ( "Msg", Type "Msg" [] ) )
                                 , ( "NameChanged"
-                                  , Lambda (Type "String" []) (Type "Msg" [])
+                                  , ( "Msg"
+                                    , Lambda (Type "String" []) (Type "Msg" [])
+                                    )
                                   )
                                 ]
-                        , binops = Dict.empty
-                        , internalValues = Dict.empty
                         , aliases =
                             [ { name = "Model"
                               , comment = ""
@@ -101,15 +67,39 @@ suite =
                             [ { name = "Internal"
                               , comment = ""
                               , args = []
-                              , tags = [ ( "Internal", [] ) ]
+                              , tags = []
                               }
                             , { name = "Msg"
                               , comment = ""
                               , args = []
-                              , tags =
-                                    [ ( "NoOp", [] )
-                                    , ( "NameChanged", [ Type "String" [] ] )
-                                    ]
+                              , tags = []
+                              }
+                            ]
+                        , exposedValues =
+                            Dict.fromList
+                                [ ( "update"
+                                  , Lambda (Type "Msg" [])
+                                        (Lambda (Type "Model" [])
+                                            (Type "Model" [])
+                                        )
+                                  )
+                                ]
+                        , exposedConstructors = Dict.empty
+                        , exposedAliases =
+                            [ { name = "Model"
+                              , comment = ""
+                              , args = []
+                              , tipe =
+                                    Record
+                                        [ ( "name", Type "String" [] ) ]
+                                        Nothing
+                              }
+                            ]
+                        , exposedUnions =
+                            [ { name = "Msg"
+                              , comment = ""
+                              , args = []
+                              , tags = []
                               }
                             ]
                         }
