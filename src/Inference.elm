@@ -168,45 +168,33 @@ inferFunction typeAliases range function =
         (Node _ declaration) =
             function.declaration
 
-        inferHelp args argTypes schemes =
-            case args of
-                [] ->
-                    inEnvs schemes
-                        (infer range declaration.expression
-                            |> andThen
-                                (\tipe ->
-                                    let
-                                        inferedType =
-                                            returnType argTypes tipe
-                                    in
-                                    case function.signature of
-                                        Nothing ->
-                                            return inferedType
+        inferBody ( types, schemes ) =
+            inEnvs (List.concat schemes)
+                (infer range declaration.expression
+                    |> andThen (returnType types)
+                )
 
-                                        Just (Node _ signature) ->
-                                            addConstraint
-                                                ( inferedType
-                                                , signature.typeAnnotation
-                                                    |> Type.fromTypeAnnotation
-                                                    |> Type.normalize typeAliases
-                                                )
-                                                |> map (\_ -> inferedType)
-                                )
+        returnType types tipe =
+            let
+                inferedType =
+                    List.foldl Lambda tipe types
+            in
+            case function.signature of
+                Nothing ->
+                    return inferedType
+
+                Just (Node _ signature) ->
+                    addConstraint
+                        ( inferedType
+                        , signature.typeAnnotation
+                            |> Type.fromTypeAnnotation
+                            |> Type.normalize typeAliases
                         )
-
-                arg :: rest ->
-                    inferPattern arg
-                        |> andThen
-                            (\( argType, newSchemes ) ->
-                                inferHelp rest
-                                    (argType :: argTypes)
-                                    (newSchemes ++ schemes)
-                            )
-
-        returnType vars tipe =
-            List.foldl Lambda tipe vars
+                        |> map (\_ -> inferedType)
     in
-    inferHelp declaration.arguments [] []
+    traverse inferPattern declaration.arguments
+        |> map List.unzip
+        |> andThen inferBody
 
 
 
