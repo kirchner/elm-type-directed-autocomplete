@@ -177,7 +177,7 @@ inferFunction typeAliases range function =
         returnType types tipe =
             let
                 inferedType =
-                    List.foldl Lambda tipe types
+                    List.foldr Lambda tipe types
             in
             case function.signature of
                 Nothing ->
@@ -327,18 +327,9 @@ inferList range elementExprs =
 
 
 inferTuple : Range -> List (Node Expression) -> Infer Type
-inferTuple range allExprs =
-    let
-        inferHelp exprs types =
-            case exprs of
-                [] ->
-                    return (Tuple (List.reverse types))
-
-                firstExpr :: rest ->
-                    infer range firstExpr
-                        |> andThen (\tipe -> inferHelp rest (tipe :: types))
-    in
-    inferHelp allExprs []
+inferTuple range exprs =
+    traverse (infer range) exprs
+        |> map Tuple
 
 
 
@@ -545,7 +536,7 @@ inferCall range exprs =
                 returnType functionType types var =
                     addConstraint
                         ( functionType
-                        , List.foldl Lambda
+                        , List.foldr Lambda
                             (Var var)
                             types
                         )
@@ -1002,7 +993,7 @@ traverseHelp : (a -> Infer b) -> List a -> Infer (List b) -> Infer (List b)
 traverseHelp f listA inferB =
     case listA of
         [] ->
-            inferB
+            map List.reverse inferB
 
         a :: rest ->
             traverseHelp f rest <|
