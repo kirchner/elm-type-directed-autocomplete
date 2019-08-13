@@ -11,7 +11,7 @@ import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Expression(..))
 import Elm.Syntax.Infix exposing (Infix, InfixDirection(..))
-import Elm.Syntax.Node exposing (Node(..))
+import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Pattern exposing (Pattern(..))
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.TypeAnnotation as Src
@@ -193,8 +193,7 @@ inferFunction typeAliases range function =
                         |> map (\_ -> inferedType)
     in
     traverse inferPattern declaration.arguments
-        |> map List.unzip
-        |> andThen inferBody
+        |> andThen (List.unzip >> inferBody)
 
 
 
@@ -313,8 +312,7 @@ inferList range elementExprs =
         firstExpr :: rest ->
             let
                 inferRest firstType =
-                    rest
-                        |> traverse (infer range)
+                    traverse (infer range) rest
                         |> andThen (traverse (Tuple.pair firstType >> addConstraint))
                         |> map (\_ -> Type "List" [ firstType ])
             in
@@ -328,8 +326,7 @@ inferList range elementExprs =
 
 inferTuple : Range -> List (Node Expression) -> Infer Type
 inferTuple range exprs =
-    traverse (infer range) exprs
-        |> map Tuple
+    map Tuple (traverse (infer range) exprs)
 
 
 
@@ -379,23 +376,17 @@ sortOperatorApplications binops finalExpr =
             return (Final finalExpr)
 
         ( expr, name ) :: rest ->
+            let
+                sort ( infix, infixType ) =
+                    sortOperatorApplicationsHelp
+                        (Binop infixType (Final expr))
+                        (Node.value infix.precedence)
+                        (Node.value infix.direction)
+                        rest
+                        finalExpr
+            in
             findInfix name
-                |> andThen
-                    (\( infix, infixType ) ->
-                        let
-                            (Node _ precedence) =
-                                infix.precedence
-
-                            (Node _ associativity) =
-                                infix.direction
-                        in
-                        sortOperatorApplicationsHelp
-                            (Binop infixType (Final expr))
-                            precedence
-                            associativity
-                            rest
-                            finalExpr
-                    )
+                |> andThen sort
 
 
 sortOperatorApplicationsHelp :
@@ -414,11 +405,11 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
             let
                 handlePrecedence ( infix, infixType ) =
                     let
-                        (Node _ precedence) =
-                            infix.precedence
+                        precedence =
+                            Node.value infix.precedence
 
-                        (Node _ associativity) =
-                            infix.direction
+                        associativity =
+                            Node.value infix.direction
                     in
                     if precedence < rootPrecedence then
                         sortOperatorApplicationsHelp
@@ -440,9 +431,7 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
                         case ( rootAssociativity, associativity ) of
                             ( Left, Left ) ->
                                 sortOperatorApplicationsHelp
-                                    (\right ->
-                                        Binop infixType (makeBinop (Final expr)) right
-                                    )
+                                    (Binop infixType (makeBinop (Final expr)))
                                     precedence
                                     associativity
                                     rest
@@ -450,9 +439,7 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
 
                             ( Right, Right ) ->
                                 sortOperatorApplicationsHelp
-                                    (\right ->
-                                        makeBinop (Binop infixType (Final expr) right)
-                                    )
+                                    (makeBinop << Binop infixType (Final expr))
                                     precedence
                                     associativity
                                     rest
@@ -509,8 +496,7 @@ inferLambda range lambda =
             List.foldl Lambda tipe vars
     in
     traverse inferPattern lambda.args
-        |> map List.unzip
-        |> andThen inferBody
+        |> andThen (List.unzip >> inferBody)
 
 
 
@@ -687,8 +673,7 @@ inferUpdate range name recordSetters =
                 )
                 |> map (\_ -> recordType)
     in
-    recordSetters
-        |> traverse inferRecordSetter
+    traverse inferRecordSetter recordSetters
         |> andThen inferRecordType
 
 
@@ -738,12 +723,10 @@ inferPattern (Node _ pattern) =
 
         TuplePattern patterns ->
             traverse inferPattern patterns
-                |> map List.unzip
                 |> map
-                    (\( types, schemes ) ->
-                        ( Tuple types
-                        , List.concat schemes
-                        )
+                    (List.unzip
+                        >> Tuple.mapFirst Tuple
+                        >> Tuple.mapSecond List.concat
                     )
 
         RecordPattern names ->
@@ -754,56 +737,55 @@ inferPattern (Node _ pattern) =
             map2
                 (\fields rest ->
                     ( Record fields (Just rest)
-                    , List.map
-                        (Tuple.mapSecond (ForAll []))
-                        fields
+                    , List.map (Tuple.mapSecond (ForAll [])) fields
                     )
                 )
                 (traverse toField names)
                 freshVar
 
         UnConsPattern firstPattern secondPattern ->
-            inferPattern firstPattern
-                |> andThen
-                    (\( firstType, firstScheme ) ->
-                        inferPattern secondPattern
-                            |> andThen
-                                (\( secondType, secondScheme ) ->
-                                    addConstraint
-                                        ( secondType
-                                        , Type "List" [ firstType ]
-                                        )
-                                        |> map
-                                            (\_ ->
-                                                ( Type "List" [ firstType ]
-                                                , firstScheme ++ secondScheme
-                                                )
-                                            )
+            let
+                inferSecondPattern ( firstType, firstScheme ) =
+                    inferPattern secondPattern
+                        |> andThen (returnType firstType firstScheme)
+
+                returnType firstType firstScheme ( secondType, secondScheme ) =
+                    addConstraint
+                        ( secondType
+                        , Type "List" [ firstType ]
+                        )
+                        |> map
+                            (\_ ->
+                                ( Type "List" [ firstType ]
+                                , firstScheme ++ secondScheme
                                 )
-                    )
+                            )
+            in
+            inferPattern firstPattern
+                |> andThen inferSecondPattern
 
         ListPattern patterns ->
-            traverse inferPattern patterns
-                |> map List.unzip
-                |> andThen
-                    (\( types, schemes ) ->
-                        case types of
-                            [] ->
-                                freshVar
-                                    |> andThen
-                                        (\var ->
-                                            return
-                                                ( Type "List" [ Var var ]
-                                                , []
-                                                )
-                                        )
-
-                            tipe :: _ ->
-                                return
-                                    ( Type "List" [ tipe ]
-                                    , List.concat schemes
+            let
+                returnType ( types, schemes ) =
+                    case types of
+                        [] ->
+                            freshVar
+                                |> andThen
+                                    (\var ->
+                                        return
+                                            ( Type "List" [ Var var ]
+                                            , []
+                                            )
                                     )
-                    )
+
+                        tipe :: _ ->
+                            return
+                                ( Type "List" [ tipe ]
+                                , List.concat schemes
+                                )
+            in
+            traverse inferPattern patterns
+                |> andThen (List.unzip >> returnType)
 
         VarPattern name ->
             freshVar
@@ -863,10 +845,7 @@ findValue name =
             case TypeEnv.lookup name env of
                 Nothing ->
                     State.state
-                        ( []
-                        , []
-                        , Err (UnboundVariable name)
-                        )
+                        ( [], [], Err (UnboundVariable name) )
 
                 Just scheme ->
                     let
@@ -883,22 +862,16 @@ findInfix name =
             case Dict.get name binops of
                 Nothing ->
                     State.state
-                        ( []
-                        , []
-                        , Err (UnknownInfix name)
-                        )
+                        ( [], [], Err (UnknownInfix name) )
 
                 Just ( infix, infixType ) ->
                     let
                         (Infer run) =
                             instantiate <|
                                 ForAll (Set.toList (Type.freeTypeVars infixType)) infixType
-
-                        mapThird f ( a, b, c ) =
-                            ( a, b, f c )
                     in
                     run binops env
-                        |> State.map (mapThird (Result.map (Tuple.pair infix)))
+                        |> State.map (Triple.mapThird (Result.map (Tuple.pair infix)))
 
 
 freshVar : Infer String
@@ -912,13 +885,6 @@ freshVar =
                     )
 
 
-inEnv : ( String, Scheme ) -> Infer a -> Infer a
-inEnv ( var, scheme ) (Infer run) =
-    Infer <|
-        \binops env ->
-            run binops (TypeEnv.extend var scheme env)
-
-
 inEnvs : List ( String, Scheme ) -> Infer a -> Infer a
 inEnvs newSchemes (Infer run) =
     Infer <|
@@ -928,6 +894,54 @@ inEnvs newSchemes (Infer run) =
                     TypeEnv.extend name scheme
             in
             run binops (List.foldl extend env newSchemes)
+
+
+
+---- INSTANTIATE AND GENERALIZE
+
+
+instantiate : Scheme -> Infer Type
+instantiate (ForAll vars tipe) =
+    Infer <|
+        \_ _ ->
+            instantiateHelp vars Dict.empty
+                |> State.map
+                    (\subst ->
+                        ( [], [], Ok (Type.apply subst tipe) )
+                    )
+
+
+instantiateHelp : List String -> Dict String Type -> State Int (Dict String Type)
+instantiateHelp vars subst =
+    case vars of
+        [] ->
+            State.state subst
+
+        var :: rest ->
+            State.andThen (instantiateHelp rest) <|
+                State.advance <|
+                    \count ->
+                        ( Dict.insert var
+                            (Var ("a" ++ String.fromInt count))
+                            subst
+                        , count + 1
+                        )
+
+
+generalize : TypeEnv -> Type -> Scheme
+generalize env tipe =
+    let
+        subst =
+            Set.toList <|
+                Set.diff
+                    (Type.freeTypeVars tipe)
+                    (TypeEnv.freeTypeVars env)
+    in
+    ForAll subst tipe
+
+
+
+---- GENERAL HELPER
 
 
 return : a -> Infer a
@@ -998,50 +1012,3 @@ traverseHelp f listA inferB =
         a :: rest ->
             traverseHelp f rest <|
                 map2 (::) (f a) inferB
-
-
-
----- INSTANTIATE AND GENERALIZE
-
-
-instantiate : Scheme -> Infer Type
-instantiate (ForAll vars tipe) =
-    Infer <|
-        \_ _ ->
-            instantiateHelp vars Dict.empty
-                |> State.map
-                    (\subst ->
-                        ( []
-                        , []
-                        , Ok (Type.apply subst tipe)
-                        )
-                    )
-
-
-instantiateHelp : List String -> Dict String Type -> State Int (Dict String Type)
-instantiateHelp vars subst =
-    case vars of
-        [] ->
-            State.state subst
-
-        var :: rest ->
-            State.andThen (instantiateHelp rest) <|
-                State.advance <|
-                    \count ->
-                        ( Dict.insert var
-                            (Var ("a" ++ String.fromInt count))
-                            subst
-                        , count + 1
-                        )
-
-
-generalize : TypeEnv -> Type -> Scheme
-generalize env tipe =
-    let
-        subst =
-            Set.toList <|
-                Set.diff
-                    (Type.freeTypeVars tipe)
-                    (TypeEnv.freeTypeVars env)
-    in
-    ForAll subst tipe
