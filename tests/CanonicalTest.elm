@@ -5,6 +5,7 @@ import Dict exposing (Dict)
 import Elm.Interface
 import Elm.Parser
 import Elm.Processing
+import Elm.RawFile exposing (RawFile)
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import Test exposing (..)
@@ -13,7 +14,129 @@ import Test exposing (..)
 suite : Test
 suite =
     concat
-        [ test "module without imports exposing everything" <|
+        [ test "store" <|
+            \_ ->
+                let
+                    rawList =
+                        parse """module List exposing ((::), List, concat)
+
+infix right 5 (::) = cons
+
+cons : a -> List a -> List a
+cons =
+    Elm.Kernel.List.cons
+
+
+type List a =
+    List a
+
+
+concat : List (List a) -> List a
+concat =
+    Debug.todo ""
+"""
+
+                    rawListExtra =
+                        parse """module List.Extra exposing (find)
+
+import List exposing (List)
+
+find : a -> List a -> a
+find =
+    Debug.todo ""
+"""
+                in
+                Canonical.emptyStore
+                    |> Canonical.add
+                        { name = "List"
+                        , fileName = "src/List.elm"
+                        , file = Elm.Processing.process Elm.Processing.init rawList
+                        , imports = Elm.RawFile.imports rawList
+                        , interface = Elm.Interface.build rawList
+                        }
+                    |> Canonical.add
+                        { name = "List.Extra"
+                        , fileName = "src/List/Extra.elm"
+                        , file = Elm.Processing.process Elm.Processing.init rawListExtra
+                        , imports = Elm.RawFile.imports rawListExtra
+                        , interface = Elm.Interface.build rawListExtra
+                        }
+                    |> Expect.equal
+                        { done =
+                            Dict.fromList
+                                [ ( "List"
+                                  , { aliases = Dict.fromList []
+                                    , binops =
+                                        Dict.fromList
+                                            [ ( "::"
+                                              , { associativity = Right
+                                                , function = "cons"
+                                                , precedence = 5
+                                                , tipe =
+                                                    Lambda
+                                                        (Var "a")
+                                                        (Lambda
+                                                            (Type "List" "List" [ Var "a" ])
+                                                            (Type "List" "List" [ Var "a" ])
+                                                        )
+                                                }
+                                              )
+                                            ]
+                                    , exposed =
+                                        [ "::"
+                                        , "List"
+                                        , "concat"
+                                        ]
+                                    , unions =
+                                        Dict.fromList
+                                            [ ( "List"
+                                              , { constructors =
+                                                    Dict.fromList
+                                                        [ ( "List", [ Var "a" ] ) ]
+                                                , vars = [ "a" ]
+                                                }
+                                              )
+                                            ]
+                                    , values =
+                                        Dict.fromList
+                                            [ ( "concat"
+                                              , Lambda
+                                                    (Type "List" "List" <|
+                                                        [ Type "List" "List" [ Var "a" ] ]
+                                                    )
+                                                    (Type "List" "List" [ Var "a" ])
+                                              )
+                                            , ( "cons"
+                                              , Lambda (Var "a")
+                                                    (Lambda
+                                                        (Type "List" "List" [ Var "a" ])
+                                                        (Type "List" "List" [ Var "a" ])
+                                                    )
+                                              )
+                                            ]
+                                    }
+                                  )
+                                , ( "List.Extra"
+                                  , { aliases = Dict.fromList []
+                                    , binops = Dict.fromList []
+                                    , exposed = [ "find" ]
+                                    , unions = Dict.fromList []
+                                    , values =
+                                        Dict.fromList
+                                            [ ( "find"
+                                              , Lambda (Var "a")
+                                                    (Lambda
+                                                        (Type "List.Extra" "List" [ Var "a" ])
+                                                        (Var "a")
+                                                    )
+                                              )
+                                            ]
+                                    }
+                                  )
+                                ]
+                        , todo = []
+                        }
+        , test "module without imports exposing everything" <|
             \_ ->
                 canonicalizeModuleHelp Dict.empty
                     "Foo.Bar"
@@ -254,3 +377,13 @@ canonicalizeModuleHelp importedModules name src =
                     Elm.Interface.build rawFile
             in
             Canonical.canonicalizeModule importedModules name file interface
+
+
+parse : String -> RawFile
+parse src =
+    case Elm.Parser.parse src of
+        Err error ->
+            Debug.todo ("Could not parse src:\n" ++ src)
+
+        Ok rawFile ->
+            rawFile

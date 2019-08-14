@@ -3,9 +3,12 @@ module Canonical exposing
     , Associativity(..)
     , Binop
     , Module
+    , Store
     , Type(..)
     , Union
+    , add
     , canonicalizeModule
+    , emptyStore
     )
 
 import Dict exposing (Dict)
@@ -19,6 +22,7 @@ import Elm.Syntax.Module
 import Elm.Syntax.Node as Node exposing (Node)
 import Elm.Syntax.TypeAnnotation as Src
 import List.Extra as List
+import Set exposing (Set)
 
 
 
@@ -501,3 +505,112 @@ collectExposedValue qualifier actualModuleName name currentImports =
                     Just (Dict.insert name actualModuleName imports)
         )
         currentImports
+
+
+
+---- BUILD
+
+
+type alias ModuleData =
+    { name : String
+    , fileName : String
+    , file : File
+    , imports : List Import
+    , interface : Interface
+    }
+
+
+type alias Store =
+    { todo : List TodoItem
+    , done : Dict String Module
+    }
+
+
+emptyStore : Store
+emptyStore =
+    { todo = []
+    , done = Dict.empty
+    }
+
+
+type alias TodoItem =
+    { blockedBy : Set String
+    , moduleData : ModuleData
+    }
+
+
+add : ModuleData -> Store -> Store
+add moduleData store =
+    { store | todo = TodoItem (requiredModules moduleData store) moduleData :: store.todo }
+        |> canonicalizeTodo Set.empty
+
+
+canonicalizeTodo : Set String -> Store -> Store
+canonicalizeTodo nowDone store =
+    let
+        ( newlyDone, newTodo ) =
+            List.foldl
+                (\{ blockedBy, moduleData } ( done, todo ) ->
+                    let
+                        newBlockers =
+                            Set.diff blockedBy nowDone
+                    in
+                    if Set.isEmpty newBlockers then
+                        ( Dict.insert moduleData.name
+                            (canonicalizeModule
+                                done
+                                moduleData.name
+                                moduleData.file
+                                moduleData.interface
+                            )
+                            done
+                        , todo
+                        )
+
+                    else
+                        ( done
+                        , { blockedBy = newBlockers
+                          , moduleData = moduleData
+                          }
+                            :: todo
+                        )
+                )
+                ( Dict.empty, [] )
+                store.todo
+
+        newStore =
+            { store
+                | todo = newTodo
+                , done = Dict.union store.done newlyDone
+            }
+    in
+    if Dict.isEmpty newlyDone then
+        newStore
+
+    else
+        canonicalizeTodo (Dict.keys newlyDone |> Set.fromList) newStore
+
+
+
+-- REQUIRED MODULES
+
+
+requiredModules : ModuleData -> Store -> Set String
+requiredModules moduleData store =
+    let
+        needed =
+            List.map (.moduleName >> Node.value) moduleData.imports
+                |> List.filter (not << isNative)
+                |> List.map (String.join ".")
+                |> Set.fromList
+
+        isNative =
+            List.head
+                >> Maybe.map ((==) "Native")
+                >> Maybe.withDefault False
+
+        availableModules =
+            Dict.keys store.done
+                |> Set.fromList
+    in
+    Set.diff needed availableModules
