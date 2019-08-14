@@ -19,7 +19,8 @@ import Elm.Syntax.File exposing (File)
 import Elm.Syntax.Import exposing (Import)
 import Elm.Syntax.Infix as Src
 import Elm.Syntax.Module
-import Elm.Syntax.Node as Node exposing (Node)
+import Elm.Syntax.Node as Node exposing (Node(..))
+import Elm.Syntax.Range exposing (emptyRange)
 import Elm.Syntax.TypeAnnotation as Src
 import List.Extra as List
 import Set exposing (Set)
@@ -97,7 +98,12 @@ canonicalizeModule importedModules name file interface =
             }
 
         imports =
-            collectImports importedModules file.imports
+            if Set.member name defaultImportModules then
+                collectImports importedModules file.imports
+
+            else
+                collectImports importedModules
+                    (file.imports ++ defaultImports)
 
         exposingList =
             Elm.Syntax.Module.exposingList (Node.value file.moduleDefinition)
@@ -614,3 +620,131 @@ requiredModules moduleData store =
                 |> Set.fromList
     in
     Set.diff needed availableModules
+
+
+
+---- DEFAULT IMPORTS
+
+
+defaultImportModules : Set String
+defaultImportModules =
+    Set.fromList
+        [ "Basics"
+        , "List"
+        , "Maybe"
+        , "Result"
+        , "String"
+        , "Char"
+        , "Tuple"
+        , "Debug"
+        , "Platform"
+        , "Platform.Cmd"
+        , "Platform.Sub"
+        ]
+
+
+defaultImports : List (Node Import)
+defaultImports =
+    -- import Basics exposing (..)
+    -- import List exposing (List, (::))
+    -- import Maybe exposing (Maybe(..))
+    -- import Result exposing (Result(..))
+    -- import String exposing (String)
+    -- import Char exposing (Char)
+    -- import Tuple
+    --
+    -- import Debug
+    --
+    -- import Platform exposing ( Program )
+    -- import Platform.Cmd as Cmd exposing ( Cmd )
+    -- import Platform.Sub as Sub exposing ( Sub )
+    [ { moduleName = Node emptyRange [ "Basics" ]
+      , moduleAlias = Nothing
+      , exposingList = Just (Node emptyRange (All emptyRange))
+      }
+    , { moduleName = Node emptyRange [ "List" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "List")
+                        , Node emptyRange (InfixExpose "(::)")
+                        ]
+      }
+    , { moduleName = Node emptyRange [ "Maybe" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange <|
+                            TypeExpose
+                                { name = "Maybe"
+                                , open = Just emptyRange
+                                }
+                        ]
+      }
+    , { moduleName = Node emptyRange [ "Result" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange <|
+                            TypeExpose
+                                { name = "Result"
+                                , open = Just emptyRange
+                                }
+                        ]
+      }
+    , { moduleName = Node emptyRange [ "String" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "String") ]
+      }
+    , { moduleName = Node emptyRange [ "Char" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Char") ]
+      }
+    , { moduleName = Node emptyRange [ "Tuple" ]
+      , moduleAlias = Nothing
+      , exposingList = Nothing
+      }
+    , { moduleName = Node emptyRange [ "Debug" ]
+      , moduleAlias = Nothing
+      , exposingList = Nothing
+      }
+    , { moduleName = Node emptyRange [ "Platform" ]
+      , moduleAlias = Nothing
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Platform") ]
+      }
+    , { moduleName = Node emptyRange [ "Platform", "Cmd" ]
+      , moduleAlias = Just (Node emptyRange [ "Cmd" ])
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Cmd") ]
+      }
+    , { moduleName = Node emptyRange [ "Platform", "Sub" ]
+      , moduleAlias = Just (Node emptyRange [ "Sub" ])
+      , exposingList =
+            Just <|
+                Node emptyRange <|
+                    Explicit
+                        [ Node emptyRange (TypeOrAliasExpose "Sub") ]
+      }
+    ]
+        |> List.map (Node emptyRange)
