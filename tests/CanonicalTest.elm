@@ -1,6 +1,8 @@
 module CanonicalTest exposing (suite)
 
-import Canonical exposing (Associativity(..), Module, Type(..))
+import Canonical exposing (Associativity(..), Module)
+import Canonical.Annotation exposing (Annotation(..))
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
 import Elm.Interface
 import Elm.Parser
@@ -65,7 +67,8 @@ find =
                         { done =
                             Dict.fromList
                                 [ ( "List"
-                                  , { aliases = Dict.fromList []
+                                  , { imports = Dict.empty
+                                    , aliases = Dict.fromList []
                                     , binops =
                                         Dict.fromList
                                             [ ( "::"
@@ -73,12 +76,13 @@ find =
                                                 , function = "cons"
                                                 , precedence = 5
                                                 , tipe =
-                                                    Lambda
-                                                        (Var "a")
-                                                        (Lambda
-                                                            (Type "List" "List" [ Var "a" ])
-                                                            (Type "List" "List" [ Var "a" ])
-                                                        )
+                                                    ForAll [ "a" ] <|
+                                                        Lambda
+                                                            (Var "a")
+                                                            (Lambda
+                                                                (Type "List" "List" [ Var "a" ])
+                                                                (Type "List" "List" [ Var "a" ])
+                                                            )
                                                 }
                                               )
                                             ]
@@ -117,7 +121,8 @@ find =
                                     }
                                   )
                                 , ( "List.Extra"
-                                  , { aliases = Dict.fromList []
+                                  , { imports = Dict.empty
+                                    , aliases = Dict.fromList []
                                     , binops = Dict.fromList []
                                     , exposed = [ "find" ]
                                     , unions = Dict.fromList []
@@ -162,7 +167,8 @@ add =
     Elm.Kernel.Basics.add
 """
                     |> Expect.equal
-                        { exposed =
+                        { imports = Dict.empty
+                        , exposed =
                             [ "add"
                             , "func"
                             , "Msg"
@@ -212,12 +218,13 @@ add =
                                 [ ( "+"
                                   , { function = "add"
                                     , tipe =
-                                        Lambda
-                                            (Var "number")
-                                            (Lambda
+                                        ForAll [ "number" ] <|
+                                            Lambda
                                                 (Var "number")
-                                                (Var "number")
-                                            )
+                                                (Lambda
+                                                    (Var "number")
+                                                    (Var "number")
+                                                )
                                     , precedence = 6
                                     , associativity = Left
                                     }

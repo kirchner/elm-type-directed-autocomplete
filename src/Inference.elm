@@ -4,45 +4,45 @@ module Inference exposing
     , inferHole
     )
 
+import Canonical exposing (Alias, Associativity(..), Binop, Imports, Union)
+import Canonical.Annotation exposing (Annotation(..))
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
-import Elm.Docs exposing (Alias)
-import Elm.Parser
-import Elm.Processing
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Expression(..))
-import Elm.Syntax.Infix exposing (Infix, InfixDirection(..))
+import Elm.Syntax.Infix exposing (Infix)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Pattern exposing (Pattern(..))
 import Elm.Syntax.Range exposing (Range)
 import Elm.Syntax.TypeAnnotation as Src
-import Elm.Type exposing (Type(..))
-import Scheme exposing (Scheme(..))
 import Set exposing (Set)
 import Solver
 import Src
 import State exposing (State)
 import Triple
-import Type
-import TypeEnv exposing (TypeEnv)
 
 
 inferHole :
     { function : Elm.Syntax.Expression.Function
     , range : Range
-    , binops : Dict String ( Infix, Type )
-    , values : Dict String Type
-    , aliases : List Alias
+    , moduleName : String
+    , imports : Imports
+    , binops : Dict String Binop
+    , values : Dict String Annotation
     }
     -> Result Error ( Type, Dict String Type )
-inferHole { binops, aliases, values, range, function } =
+inferHole { moduleName, imports, binops, values, range, function } =
     let
         ( constraints, holes, result ) =
-            runInfer aliases binops initialEnv range function
+            runInfer env range function
 
-        initialEnv =
-            values
-                |> Dict.toList
-                |> TypeEnv.fromValues
+        env =
+            { moduleName = moduleName
+            , imports = imports
+            , binops = binops
+            , values = values
+            , qualifiedValues = Dict.empty
+            }
     in
     case result of
         Err error ->
@@ -50,20 +50,21 @@ inferHole { binops, aliases, values, range, function } =
 
         Ok _ ->
             let
-                solve ( _, tipe, env ) =
+                solve ( _, tipe, newEnv ) =
                     Solver.run constraints
                         |> Result.mapError CouldNotSolve
-                        |> Result.map (substitute tipe env)
+                        |> Result.map (substitute tipe newEnv)
 
-                substitute tipe env subst =
+                substitute tipe newEnv subst =
                     let
                         substEnv =
-                            TypeEnv.apply subst env
+                            Dict.map
+                                (\_ -> Canonical.Annotation.apply subst)
+                                newEnv.values
                     in
-                    ( Type.apply subst tipe
-                    , TypeEnv.diff substEnv initialEnv
-                        |> TypeEnv.toValues
-                        |> Dict.fromList
+                    ( Canonical.Type.apply subst tipe
+                    , Dict.diff substEnv values
+                        |> Dict.map (\_ (ForAll _ t) -> t)
                     )
             in
             holes
@@ -116,21 +117,26 @@ errorToString error =
 
 
 type Infer a
-    = Infer (Binops -> TypeEnv -> State Int ( List Constraint, List Hole, Result Error a ))
+    = Infer (Env -> State Int ( List Constraint, List Hole, Result Error a ))
 
 
-type alias Binops =
-    Dict String ( Infix, Type )
+type alias Env =
+    { moduleName : String
+    , imports : Imports
+    , binops : Dict String Binop
+    , values : Dict String Annotation
+    , qualifiedValues : Dict String (Dict String Annotation)
+    }
 
 
 type alias Hole =
-    ( String, Type, TypeEnv )
+    ( String, Type, Env )
 
 
 storeHole : String -> Type -> Infer ()
 storeHole name tipe =
     Infer <|
-        \_ env ->
+        \env ->
             State.state ( [], [ ( name, tipe, env ) ], Ok () )
 
 
@@ -140,36 +146,34 @@ type alias Constraint =
 
 addConstraint : Constraint -> Infer ()
 addConstraint constraint =
-    Infer (\_ _ -> State.state ( [ constraint ], [], Ok () ))
+    Infer (\_ -> State.state ( [ constraint ], [], Ok () ))
 
 
 runInfer :
-    List Alias
-    -> Binops
-    -> TypeEnv
+    Env
     -> Range
     -> Elm.Syntax.Expression.Function
     -> ( List Constraint, List Hole, Result Error Type )
-runInfer typeAliases binops env range expr =
+runInfer env range expr =
     let
         (Infer run) =
-            inferFunction typeAliases range expr
+            inferFunction range expr
     in
-    State.finalValue 0 (run binops env)
+    State.finalValue 0 (run env)
 
 
 
 ---- INFER TOP-LEVEL FUNCTIONS
 
 
-inferFunction : List Alias -> Range -> Elm.Syntax.Expression.Function -> Infer Type
-inferFunction typeAliases range function =
+inferFunction : Range -> Elm.Syntax.Expression.Function -> Infer Type
+inferFunction range function =
     let
         (Node _ declaration) =
             function.declaration
 
-        inferBody ( types, schemes ) =
-            inEnvs (List.concat schemes)
+        inferBody ( types, annotations ) =
+            inEnvs (List.concat annotations)
                 (infer range declaration.expression
                     |> andThen (returnType types)
                 )
@@ -184,12 +188,8 @@ inferFunction typeAliases range function =
                     return inferedType
 
                 Just (Node _ signature) ->
-                    addConstraint
-                        ( inferedType
-                        , signature.typeAnnotation
-                            |> Type.fromTypeAnnotation
-                            |> Type.normalize typeAliases
-                        )
+                    instantiateTypeAnnotation signature.typeAnnotation
+                        |> andThen (addConstraint << Tuple.pair inferedType)
                         |> map (\_ -> inferedType)
     in
     traverse inferPattern declaration.arguments
@@ -209,10 +209,10 @@ infer range (Node currentRange expr) =
                     |> map (\_ -> Var name)
 
             else if name == "True" then
-                return (Type "Bool" [])
+                return Canonical.Type.bool
 
             else if name == "False" then
-                return (Type "Bool" [])
+                return Canonical.Type.bool
 
             else
                 findValue (Src.qualifiedName moduleName name)
@@ -233,19 +233,19 @@ infer range (Node currentRange expr) =
                 )
 
         Literal _ ->
-            return (Type "String" [])
+            return Canonical.Type.string
 
         CharLiteral _ ->
-            return (Type "Char" [])
+            return Canonical.Type.char
 
         Integer _ ->
-            return (Type "Int" [])
+            return Canonical.Type.int
 
         Hex _ ->
-            return (Type "Int" [])
+            return Canonical.Type.int
 
         Floatable _ ->
-            return (Type "Float" [])
+            return Canonical.Type.float
 
         UnitExpr ->
             return (Tuple [])
@@ -295,7 +295,7 @@ infer range (Node currentRange expr) =
 
         GLSLExpression _ ->
             -- TODO implement properly
-            map (Type "Shader") <|
+            map Canonical.Type.shader <|
                 traverse (map Var) [ freshVar, freshVar, freshVar ]
 
 
@@ -314,7 +314,7 @@ inferList range elementExprs =
                 inferRest firstType =
                     traverse (infer range) rest
                         |> andThen (traverse (Tuple.pair firstType >> addConstraint))
-                        |> map (\_ -> Type "List" [ firstType ])
+                        |> map (\_ -> Canonical.Type.list firstType)
             in
             infer range firstExpr
                 |> andThen inferRest
@@ -336,10 +336,10 @@ inferTuple range exprs =
 inferBinops : Range -> String -> Node Expression -> Node Expression -> Infer Type
 inferBinops range name exprA exprB =
     let
-        ( binops, finalExpr ) =
+        ( binopApplications, finalExpr ) =
             collectOperatorApplications [] name exprA exprB
     in
-    sortOperatorApplications binops finalExpr
+    sortOperatorApplications binopApplications finalExpr
         |> andThen (inferBinop range)
 
 
@@ -361,27 +361,27 @@ collectOperatorApplications collected name exprA exprB =
             ( List.reverse (( exprA, name ) :: collected), exprB )
 
 
-type Binop
-    = Binop Type Binop Binop
+type BinopApp
+    = BinopApp Type BinopApp BinopApp
     | Final (Node Expression)
 
 
 sortOperatorApplications :
     List ( Node Expression, String )
     -> Node Expression
-    -> Infer Binop
-sortOperatorApplications binops finalExpr =
-    case binops of
+    -> Infer BinopApp
+sortOperatorApplications binopApps finalExpr =
+    case binopApps of
         [] ->
             return (Final finalExpr)
 
         ( expr, name ) :: rest ->
             let
-                sort ( infix, infixType ) =
+                sort ( binop, infixType ) =
                     sortOperatorApplicationsHelp
-                        (Binop infixType (Final expr))
-                        (Node.value infix.precedence)
-                        (Node.value infix.direction)
+                        (BinopApp infixType (Final expr))
+                        binop.precedence
+                        binop.associativity
                         rest
                         finalExpr
             in
@@ -390,12 +390,12 @@ sortOperatorApplications binops finalExpr =
 
 
 sortOperatorApplicationsHelp :
-    (Binop -> Binop)
+    (BinopApp -> BinopApp)
     -> Int
-    -> InfixDirection
+    -> Canonical.Associativity
     -> List ( Node Expression, String )
     -> Node Expression
-    -> Infer Binop
+    -> Infer BinopApp
 sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle finalExpr =
     case middle of
         [] ->
@@ -403,45 +403,38 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
 
         ( expr, name ) :: rest ->
             let
-                handlePrecedence ( infix, infixType ) =
-                    let
-                        precedence =
-                            Node.value infix.precedence
-
-                        associativity =
-                            Node.value infix.direction
-                    in
-                    if precedence < rootPrecedence then
+                handlePrecedence ( binop, infixType ) =
+                    if binop.precedence < rootPrecedence then
                         sortOperatorApplicationsHelp
-                            (makeBinop << Binop infixType (Final expr))
-                            precedence
-                            associativity
+                            (makeBinop << BinopApp infixType (Final expr))
+                            binop.precedence
+                            binop.associativity
                             rest
                             finalExpr
 
-                    else if precedence > rootPrecedence then
+                    else if binop.precedence > rootPrecedence then
                         sortOperatorApplicationsHelp
-                            (Binop infixType (makeBinop (Final expr)))
-                            precedence
-                            associativity
+                            (BinopApp infixType (makeBinop (Final expr)))
+                            binop.precedence
+                            binop.associativity
                             rest
                             finalExpr
 
                     else
-                        case ( rootAssociativity, associativity ) of
+                        case ( rootAssociativity, binop.associativity ) of
                             ( Left, Left ) ->
                                 sortOperatorApplicationsHelp
-                                    (Binop infixType (makeBinop (Final expr)))
-                                    precedence
-                                    associativity
+                                    (BinopApp infixType (makeBinop (Final expr)))
+                                    binop.precedence
+                                    binop.associativity
                                     rest
                                     finalExpr
 
                             ( Right, Right ) ->
                                 sortOperatorApplicationsHelp
-                                    (makeBinop << Binop infixType (Final expr))
-                                    precedence
-                                    associativity
+                                    (makeBinop << BinopApp infixType (Final expr))
+                                    binop.precedence
+                                    binop.associativity
                                     rest
                                     finalExpr
 
@@ -452,13 +445,13 @@ sortOperatorApplicationsHelp makeBinop rootPrecedence rootAssociativity middle f
                 |> andThen handlePrecedence
 
 
-inferBinop : Range -> Binop -> Infer Type
+inferBinop : Range -> BinopApp -> Infer Type
 inferBinop range binop =
     case binop of
         Final expr ->
             infer range expr
 
-        Binop infixType binopA binopB ->
+        BinopApp infixType binopA binopB ->
             let
                 inferBinopB typeA =
                     inferBinop range binopB
@@ -486,8 +479,8 @@ inferBinop range binop =
 inferLambda : Range -> Elm.Syntax.Expression.Lambda -> Infer Type
 inferLambda range lambda =
     let
-        inferBody ( types, schemes ) =
-            inEnvs (List.concat schemes)
+        inferBody ( types, annotations ) =
+            inEnvs (List.concat annotations)
                 (infer range lambda.expression
                     |> map (returnType types)
                 )
@@ -544,7 +537,7 @@ inferIf range exprCond exprFirst exprSecond =
                 |> andThen inferFirst
 
         inferFirst typeCond =
-            addConstraint ( typeCond, Type "Bool" [] )
+            addConstraint ( typeCond, Canonical.Type.bool )
                 |> andThen (\_ -> infer range exprFirst)
                 |> andThen (inferSecond typeCond)
 
@@ -586,12 +579,12 @@ inferCase range caseBlock =
 inferCaseBranch : Range -> Type -> Elm.Syntax.Expression.Case -> Infer Type
 inferCaseBranch range exprType ( pattern, expr ) =
     let
-        addConstraintHelp ( tipe, schemes ) =
+        addConstraintHelp ( tipe, annotations ) =
             addConstraint ( exprType, tipe )
-                |> andThen (inferBody schemes)
+                |> andThen (inferBody annotations)
 
-        inferBody schemes _ =
-            inEnvs schemes
+        inferBody annotations _ =
+            inEnvs annotations
                 (infer range expr)
     in
     inferPattern pattern
@@ -696,7 +689,7 @@ inferRecord range recordSetters =
 ---- INFER PATTERNS
 
 
-inferPattern : Node Pattern -> Infer ( Type, List ( String, Scheme ) )
+inferPattern : Node Pattern -> Infer ( Type, List ( String, Annotation ) )
 inferPattern (Node _ pattern) =
     case pattern of
         AllPattern ->
@@ -707,19 +700,19 @@ inferPattern (Node _ pattern) =
             return ( Tuple [], [] )
 
         CharPattern _ ->
-            return ( Type "Char" [], [] )
+            return ( Canonical.Type.char, [] )
 
         StringPattern _ ->
-            return ( Type "String" [], [] )
+            return ( Canonical.Type.string, [] )
 
         IntPattern _ ->
-            return ( Type "Int" [], [] )
+            return ( Canonical.Type.int, [] )
 
         HexPattern _ ->
-            return ( Type "Int" [], [] )
+            return ( Canonical.Type.int, [] )
 
         FloatPattern _ ->
-            return ( Type "Float" [], [] )
+            return ( Canonical.Type.float, [] )
 
         TuplePattern patterns ->
             traverse inferPattern patterns
@@ -745,19 +738,19 @@ inferPattern (Node _ pattern) =
 
         UnConsPattern firstPattern secondPattern ->
             let
-                inferSecondPattern ( firstType, firstScheme ) =
+                inferSecondPattern ( firstType, firstAnnotation ) =
                     inferPattern secondPattern
-                        |> andThen (returnType firstType firstScheme)
+                        |> andThen (returnType firstType firstAnnotation)
 
-                returnType firstType firstScheme ( secondType, secondScheme ) =
+                returnType firstType firstAnnotation ( secondType, secondAnnotation ) =
                     addConstraint
                         ( secondType
-                        , Type "List" [ firstType ]
+                        , Canonical.Type.list firstType
                         )
                         |> map
                             (\_ ->
-                                ( Type "List" [ firstType ]
-                                , firstScheme ++ secondScheme
+                                ( Canonical.Type.list firstType
+                                , firstAnnotation ++ secondAnnotation
                                 )
                             )
             in
@@ -766,22 +759,22 @@ inferPattern (Node _ pattern) =
 
         ListPattern patterns ->
             let
-                returnType ( types, schemes ) =
+                returnType ( types, annotations ) =
                     case types of
                         [] ->
                             freshVar
                                 |> andThen
                                     (\var ->
                                         return
-                                            ( Type "List" [ Var var ]
+                                            ( Canonical.Type.list (Var var)
                                             , []
                                             )
                                     )
 
                         tipe :: _ ->
                             return
-                                ( Type "List" [ tipe ]
-                                , List.concat schemes
+                                ( Canonical.Type.list tipe
+                                , List.concat annotations
                                 )
             in
             traverse inferPattern patterns
@@ -806,7 +799,7 @@ inferPattern (Node _ pattern) =
                                     traverse inferPattern patterns
                                         |> map List.unzip
                                         |> andThen
-                                            (\( types, schemes ) ->
+                                            (\( types, annotations ) ->
                                                 addConstraint
                                                     ( constructorType
                                                     , List.foldl Lambda (Var var) types
@@ -814,7 +807,7 @@ inferPattern (Node _ pattern) =
                                                     |> map
                                                         (\_ ->
                                                             ( Var var
-                                                            , List.concat schemes
+                                                            , List.concat annotations
                                                             )
                                                         )
                                             )
@@ -824,9 +817,9 @@ inferPattern (Node _ pattern) =
         AsPattern subPattern (Node _ name) ->
             inferPattern subPattern
                 |> map
-                    (\( tipe, schemes ) ->
+                    (\( tipe, annotations ) ->
                         ( tipe
-                        , ( name, ForAll [] tipe ) :: schemes
+                        , ( name, ForAll [] tipe ) :: annotations
                         )
                     )
 
@@ -841,43 +834,42 @@ inferPattern (Node _ pattern) =
 findValue : String -> Infer Type
 findValue name =
     Infer <|
-        \binops env ->
-            case TypeEnv.lookup name env of
+        \env ->
+            case Dict.get name env.values of
                 Nothing ->
                     State.state
                         ( [], [], Err (UnboundVariable name) )
 
-                Just scheme ->
+                Just annotation ->
                     let
                         (Infer run) =
-                            instantiate scheme
+                            instantiate annotation
                     in
-                    run binops env
+                    run env
 
 
-findInfix : String -> Infer ( Infix, Type )
+findInfix : String -> Infer ( Binop, Type )
 findInfix name =
     Infer <|
-        \binops env ->
-            case Dict.get name binops of
+        \env ->
+            case Dict.get name env.binops of
                 Nothing ->
                     State.state
                         ( [], [], Err (UnknownInfix name) )
 
-                Just ( infix, infixType ) ->
+                Just binop ->
                     let
                         (Infer run) =
-                            instantiate <|
-                                ForAll (Set.toList (Type.freeTypeVars infixType)) infixType
+                            instantiate binop.tipe
                     in
-                    run binops env
-                        |> State.map (Triple.mapThird (Result.map (Tuple.pair infix)))
+                    run env
+                        |> State.map (Triple.mapThird (Result.map (Tuple.pair binop)))
 
 
 freshVar : Infer String
 freshVar =
     Infer <|
-        \_ _ ->
+        \_ ->
             State.advance <|
                 \count ->
                     ( ( [], [], Ok ("a" ++ String.fromInt count) )
@@ -885,40 +877,58 @@ freshVar =
                     )
 
 
-inEnvs : List ( String, Scheme ) -> Infer a -> Infer a
-inEnvs newSchemes (Infer run) =
+inEnvs : List ( String, Annotation ) -> Infer a -> Infer a
+inEnvs newAnnotations (Infer run) =
     Infer <|
-        \binops env ->
+        \env ->
             let
-                extend ( name, scheme ) =
-                    TypeEnv.extend name scheme
+                extend ( name, annotation ) =
+                    Dict.insert name annotation
             in
-            run binops (List.foldl extend env newSchemes)
+            run
+                { env | values = List.foldl extend env.values newAnnotations }
 
 
 
 ---- INSTANTIATE AND GENERALIZE
 
 
-instantiate : Scheme -> Infer Type
+instantiateTypeAnnotation : Node Src.TypeAnnotation -> Infer Type
+instantiateTypeAnnotation typeAnnotation =
+    let
+        annotation =
+            Infer <|
+                \env ->
+                    State.state
+                        ( []
+                        , []
+                        , typeAnnotation
+                            |> Canonical.canonicalizeTypeAnnotation env.imports env.moduleName
+                            |> Canonical.Annotation.fromType
+                            |> Ok
+                        )
+    in
+    annotation
+        |> andThen instantiate
+
+
+instantiate : Annotation -> Infer Type
 instantiate (ForAll vars tipe) =
     Infer <|
-        \_ _ ->
-            instantiateHelp vars Dict.empty
-                |> State.map
-                    (\subst ->
-                        ( [], [], Ok (Type.apply subst tipe) )
-                    )
+        \_ ->
+            State.map
+                (\subst -> ( [], [], Ok (Canonical.Type.apply subst tipe) ))
+                (freshVars vars Dict.empty)
 
 
-instantiateHelp : List String -> Dict String Type -> State Int (Dict String Type)
-instantiateHelp vars subst =
+freshVars : List String -> Dict String Type -> State Int (Dict String Type)
+freshVars vars subst =
     case vars of
         [] ->
             State.state subst
 
         var :: rest ->
-            State.andThen (instantiateHelp rest) <|
+            State.andThen (freshVars rest) <|
                 State.advance <|
                     \count ->
                         ( Dict.insert var
@@ -928,16 +938,34 @@ instantiateHelp vars subst =
                         )
 
 
-generalize : TypeEnv -> Type -> Scheme
+generalize : Env -> Type -> Annotation
 generalize env tipe =
     let
-        subst =
+        newVars =
             Set.toList <|
                 Set.diff
-                    (Type.freeTypeVars tipe)
-                    (TypeEnv.freeTypeVars env)
+                    (Canonical.Type.freeTypeVars tipe)
+                    envFreeTypeVars
+
+        envFreeTypeVars =
+            Set.union
+                (Dict.foldl
+                    (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
+                    Set.empty
+                    env.values
+                )
+                (Dict.foldl
+                    (\_ values freeVars ->
+                        Dict.foldl
+                            (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
+                            freeVars
+                            values
+                    )
+                    Set.empty
+                    env.qualifiedValues
+                )
     in
-    ForAll subst tipe
+    ForAll newVars tipe
 
 
 
@@ -946,23 +974,23 @@ generalize env tipe =
 
 return : a -> Infer a
 return a =
-    Infer (\_ _ -> State.state ( [], [], Ok a ))
+    Infer (\_ -> State.state ( [], [], Ok a ))
 
 
 throwError : Error -> Infer a
 throwError error =
-    Infer (\_ _ -> State.state ( [], [], Err error ))
+    Infer (\_ -> State.state ( [], [], Err error ))
 
 
 map : (a -> b) -> Infer a -> Infer b
 map f (Infer run) =
-    Infer (\binops env -> State.map (Triple.mapThird (Result.map f)) (run binops env))
+    Infer (\env -> State.map (Triple.mapThird (Result.map f)) (run env))
 
 
 map2 : (a -> b -> c) -> Infer a -> Infer b -> Infer c
 map2 f (Infer runA) (Infer runB) =
     Infer <|
-        \binops env ->
+        \env ->
             State.map2
                 (\( logsA, holesA, resultA ) ( logsB, holesB, resultB ) ->
                     ( logsA ++ logsB
@@ -970,15 +998,15 @@ map2 f (Infer runA) (Infer runB) =
                     , Result.map2 f resultA resultB
                     )
                 )
-                (runA binops env)
-                (runB binops env)
+                (runA env)
+                (runB env)
 
 
 andThen : (a -> Infer b) -> Infer a -> Infer b
 andThen f (Infer runA) =
     Infer <|
-        \binops env ->
-            runA binops env
+        \env ->
+            runA env
                 |> State.andThen
                     (\( logsA, holesA, resultA ) ->
                         case resultA of
@@ -990,7 +1018,7 @@ andThen f (Infer runA) =
                                     (Infer runB) =
                                         f a
                                 in
-                                runB binops env
+                                runB env
                                     |> State.map
                                         (Triple.mapSecond (List.append holesA)
                                             >> Triple.mapFirst (List.append logsA)

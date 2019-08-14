@@ -2,15 +2,21 @@ module Canonical exposing
     ( Alias
     , Associativity(..)
     , Binop
+    , Imports
     , Module
+    , ModuleData
     , Store
-    , Type(..)
     , Union
     , add
     , canonicalizeModule
+    , canonicalizeTypeAnnotation
+    , collectImports
     , emptyStore
+    , replace
     )
 
+import Canonical.Annotation exposing (Annotation(..))
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
 import Elm.Interface exposing (Interface)
 import Elm.Syntax.Declaration exposing (Declaration(..))
@@ -31,21 +37,13 @@ import Set exposing (Set)
 
 
 type alias Module =
-    { exposed : List String
+    { imports : Imports
+    , exposed : List String
     , values : Dict String Type
     , unions : Dict String Union
     , aliases : Dict String Alias
     , binops : Dict String Binop
     }
-
-
-type Type
-    = Lambda Type Type
-    | Var String
-    | Type String String (List Type)
-    | Record (List ( String, Type )) (Maybe String)
-    | Unit
-    | Tuple (List Type)
 
 
 type alias Union =
@@ -62,7 +60,7 @@ type alias Alias =
 
 type alias Binop =
     { function : String
-    , tipe : Type
+    , tipe : Annotation
     , precedence : Int
     , associativity : Associativity
     }
@@ -90,7 +88,8 @@ canonicalizeModule : Dict String Module -> String -> File -> Interface -> Module
 canonicalizeModule importedModules name file interface =
     let
         initialModule =
-            { exposed = []
+            { imports = imports
+            , exposed = []
             , values = Dict.empty
             , unions = Dict.empty
             , aliases = Dict.empty
@@ -244,7 +243,7 @@ canonicalizeDeclaration declarations imports homeModuleName declaration currentM
                                     Dict.insert
                                         (Node.value i.operator)
                                         { function = function
-                                        , tipe = tipe
+                                        , tipe = Canonical.Annotation.fromType tipe
                                         , precedence = Node.value i.precedence
                                         , associativity = associativity
                                         }
@@ -548,6 +547,15 @@ type alias TodoItem =
 add : ModuleData -> Store -> Store
 add moduleData store =
     { store | todo = TodoItem (requiredModules moduleData store) moduleData :: store.todo }
+        |> canonicalizeTodo Set.empty
+
+
+replace : ModuleData -> Store -> Store
+replace moduleData store =
+    { store
+        | todo = TodoItem (requiredModules moduleData store) moduleData :: store.todo
+        , done = Dict.remove moduleData.name store.done
+    }
         |> canonicalizeTodo Set.empty
 
 

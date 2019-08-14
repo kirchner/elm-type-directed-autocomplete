@@ -1,14 +1,14 @@
 module InferenceTest exposing (suite)
 
+import Canonical exposing (Associativity(..), Binop)
+import Canonical.Annotation exposing (Annotation(..))
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
-import Elm.Docs exposing (Alias)
 import Elm.Parser
 import Elm.Processing
 import Elm.Syntax.Expression exposing (Function)
-import Elm.Syntax.Infix exposing (Infix, InfixDirection(..))
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Range exposing (Range, emptyRange)
-import Elm.Type exposing (Type(..))
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import Inference
@@ -33,13 +33,12 @@ bar num =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "num", Type "Int" [] ) ]
+                                [ ( "num", Canonical.Type.int ) ]
                             )
                         )
         , test "tuple" <|
@@ -56,13 +55,12 @@ bar num =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "num", Type "Int" [] ) ]
+                                [ ( "num", Canonical.Type.int ) ]
                             )
                         )
         , test "infix operator" <|
@@ -79,25 +77,24 @@ bar num =
                         }
                     , binops =
                         Dict.singleton "::"
-                            ( { direction = Node emptyRange Right
-                              , precedence = Node emptyRange 5
-                              , operator = Node emptyRange "::"
-                              , function = Node emptyRange "cons"
-                              }
-                            , Lambda (Var "a")
-                                (Lambda
-                                    (Type "List" [ Var "a" ])
-                                    (Type "List" [ Var "a" ])
-                                )
-                            )
+                            { function = "cons"
+                            , tipe =
+                                ForAll [ "a" ] <|
+                                    Lambda (Var "a")
+                                        (Lambda
+                                            (Canonical.Type.list (Var "a"))
+                                            (Canonical.Type.list (Var "a"))
+                                        )
+                            , precedence = 5
+                            , associativity = Right
+                            }
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "List" [ Type "Int" [] ]
+                            ( Canonical.Type.list Canonical.Type.int
                             , Dict.fromList
-                                [ ( "num", Type "Int" [] ) ]
+                                [ ( "num", Canonical.Type.int ) ]
                             )
                         )
         , test "two infix operators" <|
@@ -115,41 +112,40 @@ bar numA numB =
                     , binops =
                         Dict.fromList
                             [ ( "+"
-                              , ( { direction = Node emptyRange Left
-                                  , precedence = Node emptyRange 6
-                                  , operator = Node emptyRange "+"
-                                  , function = Node emptyRange "add"
-                                  }
-                                , Lambda (Type "Int" [])
-                                    (Lambda
-                                        (Type "Int" [])
-                                        (Type "Int" [])
-                                    )
-                                )
+                              , { function = "add"
+                                , tipe =
+                                    ForAll [] <|
+                                        Lambda Canonical.Type.int
+                                            (Lambda
+                                                Canonical.Type.int
+                                                Canonical.Type.int
+                                            )
+                                , precedence = 6
+                                , associativity = Left
+                                }
                               )
                             , ( "*"
-                              , ( { direction = Node emptyRange Left
-                                  , precedence = Node emptyRange 7
-                                  , operator = Node emptyRange "*"
-                                  , function = Node emptyRange "mul"
-                                  }
-                                , Lambda (Type "Int" [])
-                                    (Lambda
-                                        (Type "Int" [])
-                                        (Type "Int" [])
-                                    )
-                                )
+                              , { function = "mul"
+                                , tipe =
+                                    ForAll [] <|
+                                        Lambda Canonical.Type.int
+                                            (Lambda
+                                                Canonical.Type.int
+                                                Canonical.Type.int
+                                            )
+                                , precedence = 7
+                                , associativity = Left
+                                }
                               )
                             ]
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "Int" []
+                            ( Canonical.Type.int
                             , Dict.fromList
-                                [ ( "numA", Type "Int" [] )
-                                , ( "numB", Type "Int" [] )
+                                [ ( "numA", Canonical.Type.int )
+                                , ( "numB", Canonical.Type.int )
                                 ]
                             )
                         )
@@ -167,15 +163,14 @@ bar int =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
-                                (Type "Int" [])
-                                (Type "String" [])
+                                Canonical.Type.int
+                                Canonical.Type.string
                             , Dict.fromList
-                                [ ( "int", Type "Int" [] )
+                                [ ( "int", Canonical.Type.int )
                                 ]
                             )
                         )
@@ -193,32 +188,28 @@ bar int =
                         , end = { column = 15, row = 4 }
                         }
                     , binops =
-                        Dict.fromList
-                            [ ( "|>"
-                              , ( { direction = Node emptyRange Left
-                                  , precedence = Node emptyRange 0
-                                  , operator = Node emptyRange "|>"
-                                  , function = Node emptyRange "apR"
-                                  }
-                                , Lambda
-                                    (Var "a")
-                                    (Lambda
-                                        (Lambda (Var "a") (Var "b"))
-                                        (Var "b")
-                                    )
-                                )
-                              )
-                            ]
+                        Dict.singleton "|>"
+                            { function = "apR"
+                            , tipe =
+                                ForAll [ "a", "b" ] <|
+                                    Lambda
+                                        (Var "a")
+                                        (Lambda
+                                            (Lambda (Var "a") (Var "b"))
+                                            (Var "b")
+                                        )
+                            , precedence = 0
+                            , associativity = Left
+                            }
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
-                                (Type "Int" [])
-                                (Type "String" [])
+                                Canonical.Type.int
+                                Canonical.Type.string
                             , Dict.fromList
-                                [ ( "int", Type "Int" [] )
+                                [ ( "int", Canonical.Type.int )
                                 ]
                             )
                         )
@@ -237,37 +228,33 @@ bar int =
                         , end = { column = 15, row = 5 }
                         }
                     , binops =
-                        Dict.fromList
-                            [ ( "|>"
-                              , ( { direction = Node emptyRange Left
-                                  , precedence = Node emptyRange 0
-                                  , operator = Node emptyRange "|>"
-                                  , function = Node emptyRange "apR"
-                                  }
-                                , Lambda
-                                    (Var "a")
-                                    (Lambda
-                                        (Lambda (Var "a") (Var "b"))
-                                        (Var "b")
-                                    )
-                                )
-                              )
-                            ]
+                        Dict.singleton "|>"
+                            { function = "apR"
+                            , tipe =
+                                ForAll [ "a", "b" ] <|
+                                    Lambda
+                                        (Var "a")
+                                        (Lambda
+                                            (Lambda (Var "a") (Var "b"))
+                                            (Var "b")
+                                        )
+                            , precedence = 0
+                            , associativity = Left
+                            }
                     , values =
                         Dict.fromList
                             [ ( "toFloat"
-                              , Lambda (Type "Int" []) (Type "Float" [])
+                              , ForAll [] (Lambda Canonical.Type.int Canonical.Type.float)
                               )
                             ]
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
-                                (Type "Float" [])
-                                (Type "String" [])
+                                Canonical.Type.float
+                                Canonical.Type.string
                             , Dict.fromList
-                                [ ( "int", Type "Int" [] )
+                                [ ( "int", Canonical.Type.int )
                                 ]
                             )
                         )
@@ -287,47 +274,45 @@ bar ints =
                         , end = { column = 15, row = 6 }
                         }
                     , binops =
-                        Dict.fromList
-                            [ ( "|>"
-                              , ( { direction = Node emptyRange Left
-                                  , precedence = Node emptyRange 0
-                                  , operator = Node emptyRange "|>"
-                                  , function = Node emptyRange "apR"
-                                  }
-                                , Lambda
-                                    (Var "a")
-                                    (Lambda
-                                        (Lambda (Var "a") (Var "b"))
-                                        (Var "b")
-                                    )
-                                )
-                              )
-                            ]
+                        Dict.singleton "|>"
+                            { function = "apR"
+                            , tipe =
+                                ForAll [ "a", "b" ] <|
+                                    Lambda
+                                        (Var "a")
+                                        (Lambda
+                                            (Lambda (Var "a") (Var "b"))
+                                            (Var "b")
+                                        )
+                            , precedence = 0
+                            , associativity = Left
+                            }
                     , values =
                         Dict.fromList
                             [ ( "toFloat"
-                              , Lambda (Type "Int" []) (Type "Float" [])
+                              , ForAll [] (Lambda Canonical.Type.int Canonical.Type.float)
                               )
                             , ( "identity"
-                              , Lambda (Var "a") (Var "a")
+                              , ForAll [ "a" ] (Lambda (Var "a") (Var "a"))
                               )
                             , ( "List.map"
-                              , Lambda (Lambda (Var "a") (Var "b"))
-                                    (Lambda
-                                        (Type "List" [ Var "a" ])
-                                        (Type "List" [ Var "b" ])
+                              , ForAll [ "a", "b" ]
+                                    (Lambda (Lambda (Var "a") (Var "b"))
+                                        (Lambda
+                                            (Canonical.Type.list (Var "a"))
+                                            (Canonical.Type.list (Var "b"))
+                                        )
                                     )
                               )
                             ]
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
-                                (Type "List" [ Type "Float" [] ])
-                                (Type "List" [ Type "String" [] ])
+                                (Canonical.Type.list Canonical.Type.float)
+                                (Canonical.Type.list Canonical.Type.string)
                             , Dict.fromList
-                                [ ( "ints", Type "List" [ Type "Int" [] ] )
+                                [ ( "ints", Canonical.Type.list Canonical.Type.int )
                                 ]
                             )
                         )
@@ -347,13 +332,12 @@ bar num =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "num", Type "Int" [] ) ]
+                                [ ( "num", Canonical.Type.int ) ]
                             )
                         )
         , test "record update" <|
@@ -370,16 +354,15 @@ bar data =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
                                 [ ( "data"
                                   , Record
-                                        [ ( "name", Type "String" [] )
-                                        , ( "count", Type "Int" [] )
+                                        [ ( "name", Canonical.Type.string )
+                                        , ( "count", Canonical.Type.int )
                                         ]
                                         Nothing
                                   )
@@ -406,14 +389,13 @@ foo int =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "int", Type "Int" [] )
-                                , ( "float", Type "Float" [] )
+                                [ ( "int", Canonical.Type.int )
+                                , ( "float", Canonical.Type.float )
                                 ]
                             )
                         )
@@ -434,13 +416,12 @@ foo bool =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "bool", Type "Bool" [] ) ]
+                                [ ( "bool", Canonical.Type.bool ) ]
                             )
                         )
         , test "with known value" <|
@@ -459,68 +440,71 @@ foo int =
                     , values =
                         Dict.fromList
                             [ ( "String.repeat"
-                              , Lambda (Type "Int" []) <|
-                                    Lambda (Type "String" []) <|
-                                        Type "String" []
+                              , ForAll []
+                                    (Lambda Canonical.Type.int <|
+                                        Lambda
+                                            Canonical.Type.string
+                                            Canonical.Type.string
+                                    )
                               )
                             ]
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "int", Type "Int" [] ) ]
+                                [ ( "int", Canonical.Type.int ) ]
                             )
                         )
-        , test "record accessor" <|
-            \_ ->
-                inferHelp
-                    { src =
-                        """update : Msg -> Model -> Model
-update msg model =
-    case msg of
-        NoOp ->
-            { model | count = model.count }
 
-        NameChanged ->
-            foo
-"""
-                    , range =
-                        { start = { column = 13, row = 8 }
-                        , end = { column = 16, row = 8 }
-                        }
-                    , binops = Dict.empty
-                    , values =
-                        Dict.fromList
-                            [ ( "msg", Type "Msg" [] )
-                            , ( "model", Type "Model" [] )
-                            , ( "NoOp", Type "Msg" [] )
-                            , ( "NameChanged", Type "Msg" [] )
-                            ]
-                    , aliases =
-                        [ { name = "Model"
-                          , comment = ""
-                          , args = []
-                          , tipe =
-                                Record
-                                    [ ( "count", Type "Int" [] )
-                                    , ( "name", Type "String" [] )
-                                    ]
-                                    Nothing
-                          }
-                        ]
-                    }
-                    |> Expect.equal
-                        (Ok
-                            ( Record
-                                [ ( "count", Type "Int" [] )
-                                , ( "name", Type "String" [] )
-                                ]
-                                Nothing
-                            , Dict.empty
-                            )
-                        )
+        --        , test "record accessor" <|
+        --            \_ ->
+        --                inferHelp
+        --                    { src =
+        --                        """update : Msg -> Model -> Model
+        --update msg model =
+        --    case msg of
+        --        NoOp ->
+        --            { model | count = model.count }
+        --
+        --        NameChanged ->
+        --            foo
+        --"""
+        --                    , range =
+        --                        { start = { column = 13, row = 8 }
+        --                        , end = { column = 16, row = 8 }
+        --                        }
+        --                    , binops = Dict.empty
+        --                    , values =
+        --                        Dict.fromList
+        --                            [ ( "msg", Type "Msg" [] )
+        --                            , ( "model", Type "Model" [] )
+        --                            , ( "NoOp", Type "Msg" [] )
+        --                            , ( "NameChanged", Type "Msg" [] )
+        --                            ]
+        --                    , aliases =
+        --                        [ { name = "Model"
+        --                          , comment = ""
+        --                          , args = []
+        --                          , tipe =
+        --                                Record
+        --                                    [ ( "count", Canonical.Type.int )
+        --                                    , ( "name", Canonical.Type.string )
+        --                                    ]
+        --                                    Nothing
+        --                          }
+        --                        ]
+        --                    }
+        --                    |> Expect.equal
+        --                        (Ok
+        --                            ( Record
+        --                                [ ( "count", Canonical.Type.int )
+        --                                , ( "name", Canonical.Type.string )
+        --                                ]
+        --                                Nothing
+        --                            , Dict.empty
+        --                            )
+        --                        )
         , test "empty list pattern" <|
             \_ ->
                 inferHelp
@@ -537,13 +521,12 @@ bar nums =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "nums", Type "List" [ Type "Int" [] ] )
+                                [ ( "nums", Canonical.Type.list Canonical.Type.int )
                                 ]
                             )
                         )
@@ -563,15 +546,14 @@ bar nums =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Type "String" []
+                            ( Canonical.Type.string
                             , Dict.fromList
-                                [ ( "first", Type "Int" [] )
-                                , ( "nums", Type "List" [ Type "Int" [] ] )
-                                , ( "rest", Type "List" [ Type "Int" [] ] )
+                                [ ( "first", Canonical.Type.int )
+                                , ( "nums", Canonical.Type.list Canonical.Type.int )
+                                , ( "rest", Canonical.Type.list Canonical.Type.int )
                                 ]
                             )
                         )
@@ -589,13 +571,12 @@ bar { count } =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
-                            ( Lambda (Type "Int" []) (Type "String" [])
+                            ( Lambda Canonical.Type.int Canonical.Type.string
                             , Dict.fromList
-                                [ ( "count", Type "Int" [] )
+                                [ ( "count", Canonical.Type.int )
                                 ]
                             )
                         )
@@ -613,24 +594,23 @@ bar ({ count } as stuff) =
                         }
                     , binops = Dict.empty
                     , values = Dict.empty
-                    , aliases = []
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
                                 (Record
-                                    [ ( "count", Type "Int" [] ) ]
+                                    [ ( "count", Canonical.Type.int ) ]
                                     Nothing
                                 )
                                 (Lambda
-                                    (Type "Int" [])
-                                    (Type "String" [])
+                                    Canonical.Type.int
+                                    Canonical.Type.string
                                 )
                             , Dict.fromList
-                                [ ( "count", Type "Int" [] )
+                                [ ( "count", Canonical.Type.int )
                                 , ( "stuff"
                                   , Record
-                                        [ ( "count", Type "Int" [] ) ]
+                                        [ ( "count", Canonical.Type.int ) ]
                                         Nothing
                                   )
                                 ]
@@ -642,12 +622,11 @@ bar ({ count } as stuff) =
 inferHelp :
     { src : String
     , range : Range
-    , binops : Dict String ( Infix, Type )
-    , values : Dict String Type
-    , aliases : List Alias
+    , binops : Dict String Binop
+    , values : Dict String Annotation
     }
     -> Result Inference.Error ( Type, Dict String Type )
-inferHelp { src, range, binops, values, aliases } =
+inferHelp { src, range, binops, values } =
     let
         actualSrc =
             "module Main exposing (..)\n" ++ src
@@ -680,7 +659,19 @@ inferHelp { src, range, binops, values, aliases } =
                     Inference.inferHole
                         { function = function
                         , range = actualRange
+                        , moduleName = "Main"
+                        , imports =
+                            Dict.fromList
+                                [ ( ""
+                                  , Dict.fromList
+                                        [ ( "Int", "Basics" )
+                                        , ( "Float", "Basics" )
+                                        , ( "String", "String" )
+                                        , ( "List", "List" )
+                                        , ( "Bool", "Basics" )
+                                        ]
+                                  )
+                                ]
                         , binops = binops
                         , values = values
-                        , aliases = aliases
                         }

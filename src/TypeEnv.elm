@@ -11,8 +11,8 @@ module TypeEnv exposing
     , toValues
     )
 
+import Canonical exposing (Type)
 import Dict exposing (Dict)
-import Elm.Type exposing (Type)
 import Scheme exposing (Scheme(..))
 import Set exposing (Set)
 import Type

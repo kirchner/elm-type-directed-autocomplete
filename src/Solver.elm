@@ -1,9 +1,8 @@
 module Solver exposing (Constraint, Error(..), errorToString, run)
 
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
-import Elm.Type exposing (Type(..))
 import Set
-import Type
 
 
 type alias Constraint =
@@ -21,24 +20,34 @@ errorToString : Error -> String
 errorToString error =
     case error of
         InfiniteType name tipe ->
-            "Infinite type: " ++ name ++ " : " ++ Type.toString tipe
+            String.concat
+                [ "Infinite type: "
+                , name
+                , " : "
+                , Canonical.Type.toString tipe
+                ]
 
         UnificationFail typeA typeB ->
-            "Cannot unify " ++ Type.toString typeA ++ " and " ++ Type.toString typeB
+            String.concat
+                [ "Cannot unify "
+                , Canonical.Type.toString typeA
+                , " and "
+                , Canonical.Type.toString typeB
+                ]
 
         UnificationMismatch typesA typesB ->
             String.concat
                 [ "Cannot unify [ "
-                , String.join ", " (List.map Type.toString typesA)
+                , String.join ", " (List.map Canonical.Type.toString typesA)
                 , " ] and [ "
-                , String.join ", " (List.map Type.toString typesB)
+                , String.join ", " (List.map Canonical.Type.toString typesB)
                 , " ]"
                 ]
 
         RecordUnificationMismatch fieldsA fieldsB ->
             let
                 fieldToString ( fieldName, fieldType ) =
-                    fieldName ++ " : " ++ Type.toString fieldType
+                    fieldName ++ " : " ++ Canonical.Type.toString fieldType
             in
             String.concat
                 [ "Cannot unify record types { "
@@ -68,8 +77,8 @@ solver ( subst, constraints ) =
                         solver
                             ( compose newSubst subst
                             , List.map
-                                (Tuple.mapFirst (Type.apply newSubst)
-                                    >> Tuple.mapSecond (Type.apply newSubst)
+                                (Tuple.mapFirst (Canonical.Type.apply newSubst)
+                                    >> Tuple.mapSecond (Canonical.Type.apply newSubst)
                                 )
                                 rest
                             )
@@ -93,8 +102,8 @@ unifyOne typeA typeB =
             ( _, Var varB ) ->
                 bind varB typeA
 
-            ( Type nameA subTypesA, Type nameB subTypesB ) ->
-                if nameA == nameB then
+            ( Type qualifierA nameA subTypesA, Type qualifierB nameB subTypesB ) ->
+                if (qualifierA == qualifierB) && (nameA == nameB) then
                     unifyMany subTypesA subTypesB
 
                 else
@@ -128,8 +137,8 @@ unifyMany typeAs typeBs =
                 |> Result.andThen
                     (\subst ->
                         unifyMany
-                            (List.map (Type.apply subst) restA)
-                            (List.map (Type.apply subst) restB)
+                            (List.map (Canonical.Type.apply subst) restA)
+                            (List.map (Canonical.Type.apply subst) restB)
                             |> Result.map
                                 (\newSubst ->
                                     compose newSubst subst
@@ -242,7 +251,7 @@ bind var tipe =
     if isVar then
         Ok Dict.empty
 
-    else if Set.member var (Type.freeTypeVars tipe) then
+    else if Set.member var (Canonical.Type.freeTypeVars tipe) then
         Err (InfiniteType var tipe)
 
     else
@@ -255,4 +264,4 @@ bind var tipe =
 
 compose : Dict String Type -> Dict String Type -> Dict String Type
 compose substA substB =
-    Dict.union substA (Dict.map (\_ -> Type.apply substA) substB)
+    Dict.union substA (Dict.map (\_ -> Canonical.Type.apply substA) substB)

@@ -1,7 +1,9 @@
-module Scheme exposing
-    ( Scheme(..)
+module Canonical.Annotation exposing
+    ( Annotation(..)
     , apply
     , freeTypeVars
+    , fromType
+    , toString
     )
 
 import Canonical.Type exposing (Type)
@@ -10,18 +12,18 @@ import Set exposing (Set)
 import Type
 
 
-type Scheme
+type Annotation
     = ForAll (List String) Type
 
 
-freeTypeVars : Scheme -> Set String
+freeTypeVars : Annotation -> Set String
 freeTypeVars (ForAll subst tipe) =
     Set.diff
         (Canonical.Type.freeTypeVars tipe)
         (Set.fromList subst)
 
 
-apply : Dict String Type -> Scheme -> Scheme
+apply : Dict String Type -> Annotation -> Annotation
 apply subst (ForAll vars tipe) =
     let
         freeSubst =
@@ -29,3 +31,15 @@ apply subst (ForAll vars tipe) =
     in
     ForAll vars <|
         Canonical.Type.apply freeSubst tipe
+
+
+fromType : Type -> Annotation
+fromType tipe =
+    ForAll
+        (Set.toList (Canonical.Type.freeTypeVars tipe))
+        tipe
+
+
+toString : Annotation -> String
+toString (ForAll _ tipe) =
+    Canonical.Type.toString tipe
