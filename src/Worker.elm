@@ -27,6 +27,7 @@ import List.Extra as List
 import Module
 import Parser
 import Set exposing (Set)
+import Src
 
 
 type alias InFile =
@@ -240,6 +241,30 @@ update msg model =
                                         ]
 
                                 Just currentModule ->
+                                    let
+                                        globalValues =
+                                            Dict.foldl
+                                                (\qualifier values allValues ->
+                                                    Dict.union allValues
+                                                        (values
+                                                            |> Dict.toList
+                                                            |> List.filterMap (qualify qualifier)
+                                                            |> Dict.fromList
+                                                        )
+                                                )
+                                                Dict.empty
+                                                currentModule.qualifiedValues
+
+                                        qualify qualifier ( name, annotation ) =
+                                            if name == "always" then
+                                                Nothing
+
+                                            else if name == "identity" then
+                                                Nothing
+
+                                            else
+                                                Just ( Src.qualifiedName qualifier name, annotation )
+                                    in
                                     case
                                         Inference.inferHole
                                             { function = function
@@ -257,7 +282,7 @@ update msg model =
                                                 )
                                             |> Result.map
                                                 (generateCompletions range
-                                                    [ currentModule.values ]
+                                                    [ currentModule.values, globalValues ]
                                                     currentModule.aliases
                                                     currentModule.unions
                                                 )
