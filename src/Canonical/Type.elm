@@ -1,6 +1,7 @@
 module Canonical.Type exposing
     ( Type(..)
     , apply
+    , result
     , bool
     , char
     , float
@@ -246,6 +247,11 @@ string =
 list : Type -> Type
 list a =
     Type "List" "List" [ a ]
+
+
+result : Type -> Type -> Type
+result err ok =
+    Type "Result" "Result" [ err, ok ]
 
 
 shader : List Type -> Type

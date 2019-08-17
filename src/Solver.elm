@@ -1,4 +1,12 @@
-module Solver exposing (Constraint, Error(..), errorToString, run)
+module Solver exposing
+    ( Comparability(..)
+    , Constraint
+    , Error(..)
+    , Unifiability(..)
+    , errorToString
+    , run
+    , unifiability
+    )
 
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
@@ -11,6 +19,8 @@ type alias Constraint =
 
 type Error
     = InfiniteType String Type
+    | NotNumberType Type
+    | NotComparableType Type
     | UnificationFail Type Type
     | UnificationMismatch (List Type) (List Type)
     | RecordUnificationMismatch (List ( String, Type )) (List ( String, Type ))
@@ -24,6 +34,18 @@ errorToString error =
                 [ "Infinite type: "
                 , name
                 , " : "
+                , Canonical.Type.toString tipe
+                ]
+
+        NotNumberType tipe ->
+            String.concat
+                [ "Not a number type: "
+                , Canonical.Type.toString tipe
+                ]
+
+        NotComparableType tipe ->
+            String.concat
+                [ "Not a comparable type: "
                 , Canonical.Type.toString tipe
                 ]
 
@@ -71,43 +93,71 @@ solver ( subst, constraints ) =
             Ok subst
 
         ( typeA, typeB ) :: rest ->
-            unifyOne typeA typeB
-                |> Result.andThen
-                    (\newSubst ->
-                        solver
-                            ( compose newSubst subst
-                            , List.map
-                                (Tuple.mapFirst (Canonical.Type.apply newSubst)
-                                    >> Tuple.mapSecond (Canonical.Type.apply newSubst)
-                                )
-                                rest
+            case unifyOne typeA typeB of
+                NotUnifiable error ->
+                    Err error
+
+                Unifiable _ newSubst ->
+                    solver
+                        ( compose newSubst subst
+                        , List.map
+                            (Tuple.mapFirst (Canonical.Type.apply newSubst)
+                                >> Tuple.mapSecond (Canonical.Type.apply newSubst)
                             )
-                    )
+                            rest
+                        )
 
 
 
 ---- UNIFICATION
 
 
-unifyOne : Type -> Type -> Result Error (Dict String Type)
+type Unifiability
+    = NotUnifiable Error
+    | Unifiable Comparability (Dict String Type)
+
+
+type Comparability
+    = NotComparable
+    | TypesAreEqual
+    | TypeAIsMoreGeneral
+    | TypeBIsMoreGeneral
+
+
+unifiability : { typeA : Type, typeB : Type } -> Unifiability
+unifiability { typeA, typeB } =
+    unifyOne typeA typeB
+
+
+unifyOne : Type -> Type -> Unifiability
 unifyOne typeA typeB =
     if typeA == typeB then
-        Ok Dict.empty
+        Unifiable TypesAreEqual Dict.empty
 
     else
         case ( typeA, typeB ) of
             ( Var varA, _ ) ->
-                bind varA typeB
+                case bind varA typeB of
+                    Err error ->
+                        NotUnifiable error
+
+                    Ok substitutions ->
+                        Unifiable TypeAIsMoreGeneral substitutions
 
             ( _, Var varB ) ->
-                bind varB typeA
+                case bind varB typeA of
+                    Err error ->
+                        NotUnifiable error
+
+                    Ok substitutions ->
+                        Unifiable TypeBIsMoreGeneral substitutions
 
             ( Type qualifierA nameA subTypesA, Type qualifierB nameB subTypesB ) ->
                 if (qualifierA == qualifierB) && (nameA == nameB) then
                     unifyMany subTypesA subTypesB
 
                 else
-                    Err (UnificationFail typeA typeB)
+                    NotUnifiable (UnificationFail typeA typeB)
 
             ( Lambda fromA toA, Lambda fromB toB ) ->
                 unifyMany [ fromA, toA ] [ fromB, toB ]
@@ -123,30 +173,49 @@ unifyOne typeA typeB =
                     (List.sortBy Tuple.first fieldsB)
 
             _ ->
-                Err (UnificationFail typeA typeB)
+                NotUnifiable (UnificationFail typeA typeB)
 
 
-unifyMany : List Type -> List Type -> Result Error (Dict String Type)
+unifyMany : List Type -> List Type -> Unifiability
 unifyMany typeAs typeBs =
     case ( typeAs, typeBs ) of
         ( [], [] ) ->
-            Ok Dict.empty
+            Unifiable TypesAreEqual Dict.empty
 
         ( typeA :: restA, typeB :: restB ) ->
-            unifyOne typeA typeB
-                |> Result.andThen
-                    (\subst ->
+            case unifyOne typeA typeB of
+                NotUnifiable error ->
+                    NotUnifiable error
+
+                Unifiable comparability subst ->
+                    case
                         unifyMany
                             (List.map (Canonical.Type.apply subst) restA)
                             (List.map (Canonical.Type.apply subst) restB)
-                            |> Result.map
-                                (\newSubst ->
-                                    compose newSubst subst
-                                )
-                    )
+                    of
+                        NotUnifiable restError ->
+                            NotUnifiable restError
+
+                        Unifiable restComparability restSubst ->
+                            case ( comparability, restComparability ) of
+                                ( TypesAreEqual, TypesAreEqual ) ->
+                                    Unifiable comparability (compose restSubst subst)
+
+                                ( _, TypesAreEqual ) ->
+                                    Unifiable comparability (compose restSubst subst)
+
+                                ( TypesAreEqual, _ ) ->
+                                    Unifiable restComparability (compose restSubst subst)
+
+                                _ ->
+                                    if comparability == restComparability then
+                                        Unifiable comparability (compose restSubst subst)
+
+                                    else
+                                        Unifiable NotComparable (compose restSubst subst)
 
         _ ->
-            Err (UnificationMismatch typeAs typeBs)
+            NotUnifiable (UnificationMismatch typeAs typeBs)
 
 
 unifyFields :
@@ -155,7 +224,7 @@ unifyFields :
     -> Maybe String
     -> List ( String, Type )
     -> List ( String, Type )
-    -> Result Error (Dict String Type)
+    -> Unifiability
 unifyFields collectedFields maybeVarA maybeVarB fieldsA fieldsB =
     case fieldsA of
         ( nameA, typeA ) :: restA ->
@@ -169,7 +238,7 @@ unifyFields collectedFields maybeVarA maybeVarB fieldsA fieldsB =
                 [] ->
                     case maybeVarB of
                         Nothing ->
-                            Err (RecordUnificationMismatch fieldsA fieldsB)
+                            NotUnifiable (RecordUnificationMismatch fieldsA fieldsB)
 
                         Just varB ->
                             if maybeVarB /= maybeVarA then
@@ -181,26 +250,50 @@ unifyFields collectedFields maybeVarA maybeVarB fieldsA fieldsB =
                                     fieldsB
 
                             else
-                                Err (RecordUnificationMismatch fieldsA fieldsB)
+                                NotUnifiable (RecordUnificationMismatch fieldsA fieldsB)
 
                 ( _, typeB ) :: [] ->
-                    unifyOne typeA typeB
-                        |> Result.andThen
-                            (\subst ->
+                    case unifyOne typeA typeB of
+                        NotUnifiable error ->
+                            NotUnifiable error
+
+                        Unifiable comparability subst ->
+                            case
                                 unifyFields
                                     collectedFields
                                     maybeVarA
                                     maybeVarB
                                     restA
                                     otherFields
-                                    |> Result.map
-                                        (\newSubst ->
-                                            compose newSubst subst
-                                        )
-                            )
+                            of
+                                NotUnifiable restError ->
+                                    NotUnifiable restError
+
+                                Unifiable restComparability restSubst ->
+                                    case ( comparability, restComparability ) of
+                                        ( TypesAreEqual, TypesAreEqual ) ->
+                                            Unifiable comparability
+                                                (compose restSubst subst)
+
+                                        ( _, TypesAreEqual ) ->
+                                            Unifiable comparability
+                                                (compose restSubst subst)
+
+                                        ( TypesAreEqual, _ ) ->
+                                            Unifiable restComparability
+                                                (compose restSubst subst)
+
+                                        _ ->
+                                            if comparability == restComparability then
+                                                Unifiable comparability
+                                                    (compose restSubst subst)
+
+                                            else
+                                                Unifiable NotComparable
+                                                    (compose restSubst subst)
 
                 _ ->
-                    Err (RecordUnificationMismatch fieldsA fieldsB)
+                    NotUnifiable (RecordUnificationMismatch fieldsA fieldsB)
 
         [] ->
             case fieldsB of
@@ -210,31 +303,39 @@ unifyFields collectedFields maybeVarA maybeVarB fieldsA fieldsB =
                             Nothing ->
                                 case maybeVarB of
                                     Nothing ->
-                                        Ok Dict.empty
+                                        Unifiable TypesAreEqual Dict.empty
 
                                     Just varB ->
-                                        Ok (Dict.singleton varB (Record [] Nothing))
+                                        Unifiable TypeBIsMoreGeneral
+                                            (Dict.singleton varB (Record [] Nothing))
 
                             Just varA ->
-                                Ok (Dict.singleton varA (Record [] maybeVarB))
+                                case maybeVarB of
+                                    Nothing ->
+                                        Unifiable TypeAIsMoreGeneral
+                                            (Dict.singleton varA (Record [] Nothing))
+
+                                    Just varB ->
+                                        Unifiable NotComparable
+                                            (Dict.singleton varA (Record [] maybeVarB))
 
                     else
                         case maybeVarB of
                             Nothing ->
-                                Err (RecordUnificationMismatch fieldsA fieldsB)
+                                NotUnifiable (RecordUnificationMismatch fieldsA fieldsB)
 
                             Just varB ->
-                                Ok <|
-                                    Dict.singleton varB
-                                        (Record collectedFields Nothing)
+                                Unifiable TypeBIsMoreGeneral
+                                    (Dict.singleton varB (Record collectedFields Nothing))
 
                 _ ->
                     case maybeVarA of
                         Nothing ->
-                            Err (RecordUnificationMismatch fieldsA fieldsB)
+                            NotUnifiable (RecordUnificationMismatch fieldsA fieldsB)
 
                         Just varA ->
-                            Ok (Dict.singleton varA (Record fieldsB maybeVarB))
+                            Unifiable TypeAIsMoreGeneral
+                                (Dict.singleton varA (Record fieldsB maybeVarB))
 
 
 bind : String -> Type -> Result Error (Dict String Type)
@@ -254,8 +355,56 @@ bind var tipe =
     else if Set.member var (Canonical.Type.freeTypeVars tipe) then
         Err (InfiniteType var tipe)
 
+    else if String.startsWith "number" var && not (isNumber tipe) then
+        Err (NotNumberType tipe)
+
+    else if String.startsWith "comparable" var && not (isComparable tipe) then
+        Err (NotComparableType tipe)
+
     else
         Ok (Dict.singleton var tipe)
+
+
+isNumber : Type -> Bool
+isNumber tipe =
+    case tipe of
+        Var name ->
+            String.startsWith "number" name
+
+        Type "Basics" "Int" [] ->
+            True
+
+        Type "Basics" "Float" [] ->
+            True
+
+        _ ->
+            False
+
+
+isComparable : Type -> Bool
+isComparable tipe =
+    if isNumber tipe then
+        True
+
+    else
+        case tipe of
+            Var name ->
+                String.startsWith "comparable" name
+
+            Type "Char" "Char" [] ->
+                True
+
+            Type "String" "String" [] ->
+                True
+
+            Type "List" "List" [ elementType ] ->
+                isComparable elementType
+
+            Tuple types ->
+                List.all isComparable types
+
+            _ ->
+                False
 
 
 
