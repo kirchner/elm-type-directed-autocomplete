@@ -330,19 +330,19 @@ casesTest =
             )
             [ ( Canonical.Type.int
               , [ """case msg of
-    NewFloat newFloat ->
-        int
-
     NewInt newInt ->
         newInt
+
+    NewFloat newFloat ->
+        int
 
     NewString newString ->
         int"""
                 , """case msg of
-    NewFloat newFloat ->
+    NewInt newInt ->
         int
 
-    NewInt newInt ->
+    NewFloat newFloat ->
         int
 
     NewString newString ->
@@ -633,19 +633,19 @@ takeValuesTest =
             )
             [ ( Canonical.Type.int
               , [ """case msg of
-    NewFloat newFloat ->
-        int
-
     NewInt newInt ->
         newInt
+
+    NewFloat newFloat ->
+        int
 
     NewString newString ->
         int"""
                 , """case msg of
-    NewFloat newFloat ->
+    NewInt newInt ->
         int
 
-    NewInt newInt ->
+    NewFloat newFloat ->
         int
 
     NewString newString ->
@@ -673,19 +673,19 @@ takeValuesTest =
                     [ ( "int", Canonical.Type.int ) ]
                     Nothing
               , [ """case msg of
-    NewFloat newFloat ->
-        intRecord
-
     NewInt newInt ->
         { intRecord | int = newInt }
+
+    NewFloat newFloat ->
+        intRecord
 
     NewString newString ->
         intRecord"""
                 , """case msg of
-    NewFloat newFloat ->
+    NewInt newInt ->
         intRecord
 
-    NewInt newInt ->
+    NewFloat newFloat ->
         intRecord
 
     NewString newString ->
