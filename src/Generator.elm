@@ -568,11 +568,10 @@ cases generator =
                         BranchedState.map (Tuple.pair union.constructors) <|
                             stuffMatched.generate
                                 { config | values = stuffMatched.transform config.values }
-                                (Type "" name (List.map Var union.vars))
+                                (Type [] name (List.map Var union.vars))
 
                     generateCase ( constructors, matched ) =
                         constructors
-                            |> Dict.toList
                             |> BranchedState.combine generateBranch
                             |> BranchedState.map (Case matched)
 

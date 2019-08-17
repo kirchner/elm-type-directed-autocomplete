@@ -16,6 +16,7 @@ module Canonical.Type exposing
     )
 
 import Dict exposing (Dict)
+import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node)
 import Elm.Syntax.TypeAnnotation as Src
 import Set exposing (Set)
@@ -24,7 +25,7 @@ import Set exposing (Set)
 type Type
     = Lambda Type Type
     | Var String
-    | Type String String (List Type)
+    | Type ModuleName String (List Type)
     | Record (List ( String, Type )) (Maybe String)
     | Unit
     | Tuple (List Type)
@@ -123,10 +124,7 @@ fromTypeAnnotation typeAnnotation =
                 ( moduleName, name ) =
                     Node.value qualifiedName
             in
-            Type
-                (String.join "." moduleName)
-                name
-                (List.map fromTypeAnnotation typeAnnotations)
+            Type moduleName name (List.map fromTypeAnnotation typeAnnotations)
 
         Src.Unit ->
             Unit
@@ -189,14 +187,10 @@ toString tipe =
                 , " )"
                 ]
 
-        Type qualifier name tipes ->
+        Type moduleName name tipes ->
             let
                 qualifiedName =
-                    if qualifier == "" then
-                        name
-
-                    else
-                        qualifier ++ "." ++ name
+                    String.join "." (moduleName ++ [ name ])
             in
             String.join " " (qualifiedName :: List.map toString tipes)
 
@@ -222,44 +216,44 @@ toString tipe =
 
 bool : Type
 bool =
-    Type "Basics" "Bool" []
+    Type [ "Basics" ] "Bool" []
 
 
 int : Type
 int =
-    Type "Basics" "Int" []
+    Type [ "Basics" ] "Int" []
 
 
 float : Type
 float =
-    Type "Basics" "Float" []
+    Type [ "Basics" ] "Float" []
 
 
 char : Type
 char =
-    Type "Char" "Char" []
+    Type [ "Char" ] "Char" []
 
 
 string : Type
 string =
-    Type "String" "String" []
+    Type [ "String" ] "String" []
 
 
 list : Type -> Type
 list a =
-    Type "List" "List" [ a ]
+    Type [ "List" ] "List" [ a ]
 
 
 set : Type -> Type
 set a =
-    Type "Set" "Set" [ a ]
+    Type [ "Set" ] "Set" [ a ]
 
 
 result : Type -> Type -> Type
 result err ok =
-    Type "Result" "Result" [ err, ok ]
+    Type [ "Result" ] "Result" [ err, ok ]
 
 
 shader : List Type -> Type
 shader =
-    Type "WebGL" "Shader"
+    Type [ "WebGL" ] "Shader"

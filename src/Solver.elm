@@ -371,10 +371,10 @@ isNumber tipe =
         Var name ->
             String.startsWith "number" name
 
-        Type "Basics" "Int" [] ->
+        Type [ "Basics" ] "Int" [] ->
             True
 
-        Type "Basics" "Float" [] ->
+        Type [ "Basics" ] "Float" [] ->
             True
 
         _ ->
@@ -391,13 +391,13 @@ isComparable tipe =
             Var name ->
                 String.startsWith "comparable" name
 
-            Type "Char" "Char" [] ->
+            Type [ "Char" ] "Char" [] ->
                 True
 
-            Type "String" "String" [] ->
+            Type [ "String" ] "String" [] ->
                 True
 
-            Type "List" "List" [ elementType ] ->
+            Type [ "List" ] "List" [ elementType ] ->
                 isComparable elementType
 
             Tuple types ->

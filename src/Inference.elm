@@ -4,13 +4,14 @@ module Inference exposing
     , inferHole
     )
 
-import Canonical exposing (Alias, Associativity(..), Binop, Imports, Union)
+import Canonical exposing (Alias, Associativity(..), Binop, Imports, Module, Union)
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
 import Elm.Syntax.Declaration exposing (Declaration(..))
 import Elm.Syntax.Expression exposing (Expression(..))
 import Elm.Syntax.Infix exposing (Infix)
+import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Pattern exposing (Pattern(..))
 import Elm.Syntax.Range exposing (Range)
@@ -25,23 +26,19 @@ import Triple
 inferHole :
     { function : Elm.Syntax.Expression.Function
     , range : Range
-    , moduleName : String
-    , imports : Imports
-    , binops : Dict String Binop
-    , values : Dict String Annotation
+    , moduleName : ModuleName
+    , currentModule : Module
     }
     -> Result Error ( Type, Dict String Type )
-inferHole { moduleName, imports, binops, values, range, function } =
+inferHole { function, range, moduleName, currentModule } =
     let
         ( constraints, holes, result ) =
             runInfer env range function
 
         env =
             { moduleName = moduleName
-            , imports = imports
-            , binops = binops
-            , values = values
-            , qualifiedValues = Dict.empty
+            , currentModule = currentModule
+            , values = Dict.empty
             }
     in
     case result of
@@ -63,7 +60,7 @@ inferHole { moduleName, imports, binops, values, range, function } =
                                 newEnv.values
                     in
                     ( Canonical.Type.apply subst tipe
-                    , Dict.diff substEnv values
+                    , substEnv
                         |> Dict.map (\_ (ForAll _ t) -> t)
                     )
             in
@@ -121,11 +118,9 @@ type Infer a
 
 
 type alias Env =
-    { moduleName : String
-    , imports : Imports
-    , binops : Dict String Binop
+    { moduleName : ModuleName
+    , currentModule : Module
     , values : Dict String Annotation
-    , qualifiedValues : Dict String (Dict String Annotation)
     }
 
 
@@ -215,7 +210,7 @@ infer range (Node currentRange expr) =
                 return Canonical.Type.bool
 
             else
-                findValue (Src.qualifiedName moduleName name)
+                findValue moduleName name
 
         PrefixOperator _ ->
             -- TODO implement properly
@@ -652,7 +647,7 @@ inferUpdate range name recordSetters =
                 |> map (Tuple.pair fieldName)
 
         inferRecordType fieldTypes =
-            findValue name
+            findValue [] name
                 |> andThen (getFreshVar fieldTypes)
 
         getFreshVar fieldTypes recordType =
@@ -793,7 +788,7 @@ inferPattern (Node _ pattern) =
             freshVar
                 |> andThen
                     (\var ->
-                        findValue (Src.qualifiedName moduleName name)
+                        findValue moduleName name
                             |> andThen
                                 (\constructorType ->
                                     traverse inferPattern patterns
@@ -831,28 +826,63 @@ inferPattern (Node _ pattern) =
 ---- HELPER
 
 
-findValue : String -> Infer Type
-findValue name =
+findValue : ModuleName -> String -> Infer Type
+findValue moduleName name =
     Infer <|
         \env ->
-            case Dict.get name env.values of
-                Nothing ->
-                    State.state
-                        ( [], [], Err (UnboundVariable name) )
+            if List.isEmpty moduleName then
+                case Dict.get name env.values of
+                    Nothing ->
+                        case
+                            Dict.get [] env.currentModule.qualifiedValues
+                                |> Maybe.andThen (\values -> Dict.get name values)
+                        of
+                            Nothing ->
+                                State.state
+                                    ( [], [], Err (UnboundVariable name) )
 
-                Just annotation ->
-                    let
-                        (Infer run) =
-                            instantiate annotation
-                    in
-                    run env
+                            Just annotation ->
+                                let
+                                    (Infer run) =
+                                        instantiate annotation
+                                in
+                                run env
+
+                    Just annotation ->
+                        let
+                            (Infer run) =
+                                instantiate annotation
+                        in
+                        run env
+
+            else
+                case
+                    Dict.get moduleName env.currentModule.qualifiedValues
+                        |> Maybe.andThen (\values -> Dict.get name values)
+                of
+                    Nothing ->
+                        State.state
+                            ( []
+                            , []
+                            , Err
+                                (UnboundVariable
+                                    (Src.qualifiedName moduleName name)
+                                )
+                            )
+
+                    Just annotation ->
+                        let
+                            (Infer run) =
+                                instantiate annotation
+                        in
+                        run env
 
 
 findInfix : String -> Infer ( Binop, Type )
 findInfix name =
     Infer <|
         \env ->
-            case Dict.get name env.binops of
+            case Dict.get name env.currentModule.binops of
                 Nothing ->
                     State.state
                         ( [], [], Err (UnknownInfix name) )
@@ -902,12 +932,13 @@ instantiateTypeAnnotation typeAnnotation =
                     State.state
                         ( []
                         , []
-                        , typeAnnotation
-                            |> Canonical.canonicalizeTypeAnnotation
-                                env.imports
-                                env.moduleName
-                            |> Canonical.Annotation.fromType
-                            |> Ok
+                        , Ok
+                            (Canonical.Annotation.fromType <|
+                                Canonical.canonicalizeTypeAnnotation
+                                    env.moduleName
+                                    env.currentModule
+                                    typeAnnotation
+                            )
                         )
     in
     annotation
@@ -950,22 +981,10 @@ generalize env tipe =
                     envFreeTypeVars
 
         envFreeTypeVars =
-            Set.union
-                (Dict.foldl
-                    (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
-                    Set.empty
-                    env.values
-                )
-                (Dict.foldl
-                    (\_ values freeVars ->
-                        Dict.foldl
-                            (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
-                            freeVars
-                            values
-                    )
-                    Set.empty
-                    env.qualifiedValues
-                )
+            Dict.foldl
+                (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
+                Set.empty
+                env.values
     in
     ForAll newVars tipe
 

@@ -25,6 +25,7 @@ import Elm.Syntax.File exposing (File)
 import Elm.Syntax.Import exposing (Import)
 import Elm.Syntax.Infix as Src
 import Elm.Syntax.Module
+import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Range exposing (emptyRange)
 import Elm.Syntax.TypeAnnotation as Src
@@ -37,18 +38,22 @@ import Set exposing (Set)
 
 
 type alias Module =
-    { imports : Imports
-    , exposed : List String
-    , values : Dict String Type
+    { exposedValues : Dict String Annotation
+    , exposedUnions : Dict String Union
+    , exposedBinops : Dict String Binop
+    , values : Dict String Annotation
     , unions : Dict String Union
     , aliases : Dict String Alias
     , binops : Dict String Binop
+    , qualifiedValues : Dict ModuleName (Dict String Annotation)
+    , qualifiedUnions : Dict ModuleName (Dict String Union)
     }
 
 
 type alias Union =
-    { vars : List String
-    , constructors : Dict String (List Type)
+    { moduleName : ModuleName
+    , vars : List String
+    , constructors : List ( String, List Type )
     }
 
 
@@ -73,59 +78,64 @@ type Associativity
 
 
 
----- IMPORTS
-
-
-type alias Imports =
-    Dict String (Dict String String)
-
-
-
 ---- CANONICALIZE
 
 
-canonicalizeModule : Dict String Module -> String -> File -> Interface -> Module
-canonicalizeModule importedModules name file interface =
+canonicalizeModule : Dict ModuleName Module -> ModuleName -> File -> Interface -> Module
+canonicalizeModule importedModules moduleName file interface =
     let
         initialModule =
-            { imports = imports
-            , exposed = []
+            { exposedValues = Dict.empty
+            , exposedUnions =
+                if moduleName == [ "List" ] then
+                    Dict.singleton "List"
+                        { moduleName = [ "List" ]
+                        , vars = [ "a" ]
+                        , constructors = []
+                        }
+
+                else
+                    Dict.empty
+            , exposedBinops = Dict.empty
             , values = Dict.empty
-            , unions = Dict.empty
+            , unions =
+                if moduleName == [ "List" ] then
+                    Dict.singleton "List"
+                        { moduleName = [ "List" ]
+                        , vars = [ "a" ]
+                        , constructors = []
+                        }
+
+                else
+                    Dict.empty
             , aliases = Dict.empty
-            , binops = Dict.empty
+            , binops = binops
+            , qualifiedValues = qualifiedValues
+            , qualifiedUnions = qualifiedUnions
             }
 
-        imports =
-            if Set.member name defaultImportModules then
+        { binops, qualifiedValues, qualifiedUnions } =
+            if Set.member moduleName defaultImportModules then
                 collectImports importedModules file.imports
 
             else
-                collectImports importedModules
-                    (file.imports ++ defaultImports)
+                collectImports importedModules (file.imports ++ defaultImports)
 
         exposingList =
             Elm.Syntax.Module.exposingList (Node.value file.moduleDefinition)
     in
     file.declarations
-        |> List.foldl
-            (canonicalizeDeclaration
-                file.declarations
-                imports
-                name
-            )
-            initialModule
+        |> List.foldl (canonicalizeDeclaration moduleName file.declarations) initialModule
         |> computeExposed exposingList
 
 
 canonicalizeDeclaration :
-    List (Node Declaration)
-    -> Imports
-    -> String
+    ModuleName
+    -> List (Node Declaration)
     -> Node Declaration
     -> Module
     -> Module
-canonicalizeDeclaration declarations imports homeModuleName declaration currentModule =
+canonicalizeDeclaration moduleName declarations declaration currentModule =
     case Node.value declaration of
         FunctionDeclaration f ->
             case f.signature of
@@ -144,23 +154,26 @@ canonicalizeDeclaration declarations imports homeModuleName declaration currentM
                             signature
                                 |> Node.value
                                 |> .typeAnnotation
-                                |> canonicalizeTypeAnnotation imports homeModuleName
+                                |> canonicalizeTypeAnnotation moduleName currentModule
                     in
                     { currentModule
-                        | values = Dict.insert name tipe currentModule.values
+                        | values =
+                            Dict.insert name
+                                (Canonical.Annotation.fromType tipe)
+                                currentModule.values
                     }
 
         AliasDeclaration a ->
+            let
+                tipe =
+                    canonicalizeTypeAnnotation moduleName currentModule a.typeAnnotation
+            in
             { currentModule
                 | aliases =
                     Dict.insert
                         (Node.value a.name)
                         { vars = List.map Node.value a.generics
-                        , tipe =
-                            canonicalizeTypeAnnotation
-                                imports
-                                homeModuleName
-                                a.typeAnnotation
+                        , tipe = tipe
                         }
                         currentModule.aliases
             }
@@ -170,7 +183,7 @@ canonicalizeDeclaration declarations imports homeModuleName declaration currentM
                 toConstructor valueConstructor =
                     ( Node.value valueConstructor.name
                     , List.map
-                        (canonicalizeTypeAnnotation imports homeModuleName)
+                        (canonicalizeTypeAnnotation moduleName currentModule)
                         valueConstructor.arguments
                     )
             in
@@ -178,10 +191,10 @@ canonicalizeDeclaration declarations imports homeModuleName declaration currentM
                 | unions =
                     Dict.insert
                         (Node.value c.name)
-                        { vars = List.map Node.value c.generics
+                        { moduleName = moduleName
+                        , vars = List.map Node.value c.generics
                         , constructors =
                             List.map (Node.value >> toConstructor) c.constructors
-                                |> Dict.fromList
                         }
                         currentModule.unions
             }
@@ -236,7 +249,9 @@ canonicalizeDeclaration declarations imports homeModuleName declaration currentM
                                     signature
                                         |> Node.value
                                         |> .typeAnnotation
-                                        |> canonicalizeTypeAnnotation imports homeModuleName
+                                        |> canonicalizeTypeAnnotation
+                                            moduleName
+                                            currentModule
                             in
                             { currentModule
                                 | binops =
@@ -257,8 +272,8 @@ canonicalizeDeclaration declarations imports homeModuleName declaration currentM
             currentModule
 
 
-canonicalizeTypeAnnotation : Imports -> String -> Node Src.TypeAnnotation -> Type
-canonicalizeTypeAnnotation imports homeModuleName typeAnnotation =
+canonicalizeTypeAnnotation : ModuleName -> Module -> Node Src.TypeAnnotation -> Type
+canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
     case Node.value typeAnnotation of
         Src.GenericType var ->
             Var var
@@ -268,22 +283,23 @@ canonicalizeTypeAnnotation imports homeModuleName typeAnnotation =
                 ( qualifier, name ) =
                     Node.value qualifiedName
             in
-            case lookupModuleName imports (String.join "." qualifier) name of
+            case lookupUnion currentModule qualifier name of
                 Nothing ->
-                    Type
-                        homeModuleName
-                        name
-                        (List.map
-                            (canonicalizeTypeAnnotation imports homeModuleName)
-                            typeAnnotations
-                        )
-
-                Just moduleName ->
+                    -- TODO we just assume its a localy defined type here
                     Type
                         moduleName
                         name
                         (List.map
-                            (canonicalizeTypeAnnotation imports homeModuleName)
+                            (canonicalizeTypeAnnotation moduleName currentModule)
+                            typeAnnotations
+                        )
+
+                Just union ->
+                    Type
+                        union.moduleName
+                        name
+                        (List.map
+                            (canonicalizeTypeAnnotation moduleName currentModule)
                             typeAnnotations
                         )
 
@@ -293,38 +309,50 @@ canonicalizeTypeAnnotation imports homeModuleName typeAnnotation =
         Src.Tupled typeAnnotations ->
             Tuple
                 (List.map
-                    (canonicalizeTypeAnnotation imports homeModuleName)
+                    (canonicalizeTypeAnnotation moduleName currentModule)
                     typeAnnotations
                 )
 
         Src.Record recordFields ->
             Record
-                (List.map (canonicalizeRecordField imports homeModuleName) recordFields)
+                (List.map (canonicalizeRecordField moduleName currentModule) recordFields)
                 Nothing
 
         Src.GenericRecord var recordFields ->
             Record
                 (List.map
-                    (canonicalizeRecordField imports homeModuleName)
+                    (canonicalizeRecordField moduleName currentModule)
                     (Node.value recordFields)
                 )
                 (Just (Node.value var))
 
         Src.FunctionTypeAnnotation from to ->
             Lambda
-                (canonicalizeTypeAnnotation imports homeModuleName from)
-                (canonicalizeTypeAnnotation imports homeModuleName to)
+                (canonicalizeTypeAnnotation moduleName currentModule from)
+                (canonicalizeTypeAnnotation moduleName currentModule to)
 
 
-canonicalizeRecordField : Imports -> String -> Node Src.RecordField -> ( String, Type )
-canonicalizeRecordField imports homeModuleName recordField =
+canonicalizeRecordField : ModuleName -> Module -> Node Src.RecordField -> ( String, Type )
+canonicalizeRecordField moduleName currentModule recordField =
     let
         ( name, annotation ) =
             Node.value recordField
     in
     ( Node.value name
-    , canonicalizeTypeAnnotation imports homeModuleName annotation
+    , canonicalizeTypeAnnotation moduleName currentModule annotation
     )
+
+
+lookupValue : Module -> ModuleName -> String -> Maybe Annotation
+lookupValue currentModule moduleName name =
+    Dict.get moduleName currentModule.qualifiedValues
+        |> Maybe.andThen (Dict.get name)
+
+
+lookupUnion : Module -> ModuleName -> String -> Maybe Union
+lookupUnion currentModule moduleName name =
+    Dict.get moduleName currentModule.qualifiedUnions
+        |> Maybe.andThen (Dict.get name)
 
 
 computeExposed : Exposing -> Module -> Module
@@ -332,184 +360,338 @@ computeExposed exposingList currentModule =
     case exposingList of
         All _ ->
             { currentModule
-                | exposed =
-                    List.concat
-                        [ Dict.keys currentModule.values
-                        , Dict.keys currentModule.unions
-                        , Dict.values currentModule.unions
-                            |> List.concatMap (.constructors >> Dict.keys)
-                        , Dict.keys currentModule.aliases
-                        , Dict.keys currentModule.binops
-                        ]
+                | exposedValues = currentModule.values
+                , exposedUnions = currentModule.unions
             }
 
         Explicit topLevelExposes ->
-            { currentModule
-                | exposed =
-                    List.concatMap
-                        (Node.value >> computeTopLevelExpose currentModule.unions)
-                        topLevelExposes
-            }
+            List.foldl
+                computeTopLevelExpose
+                currentModule
+                topLevelExposes
 
 
-computeTopLevelExpose : Dict String Union -> TopLevelExpose -> List String
-computeTopLevelExpose unions topLevelExpose =
-    case topLevelExpose of
+computeTopLevelExpose : Node TopLevelExpose -> Module -> Module
+computeTopLevelExpose topLevelExpose currentModule =
+    case Node.value topLevelExpose of
         InfixExpose name ->
-            [ name ]
+            case Dict.get name currentModule.binops of
+                Nothing ->
+                    currentModule
+
+                Just binop ->
+                    { currentModule
+                        | exposedBinops =
+                            Dict.insert name binop currentModule.exposedBinops
+                    }
 
         FunctionExpose name ->
-            [ name ]
+            case Dict.get name currentModule.values of
+                Nothing ->
+                    currentModule
+
+                Just annotation ->
+                    { currentModule
+                        | exposedValues =
+                            Dict.insert name annotation currentModule.exposedValues
+                    }
 
         TypeOrAliasExpose name ->
-            [ name ]
+            case Dict.get name currentModule.unions of
+                Nothing ->
+                    currentModule
+
+                Just union ->
+                    { currentModule
+                        | exposedUnions =
+                            Dict.insert name union currentModule.exposedUnions
+                    }
 
         TypeExpose exposedType ->
             case exposedType.open of
                 Nothing ->
-                    [ exposedType.name ]
-
-                Just _ ->
-                    case Dict.get exposedType.name unions of
+                    case Dict.get exposedType.name currentModule.unions of
                         Nothing ->
-                            []
+                            currentModule
 
                         Just union ->
-                            exposedType.name
-                                :: Dict.keys union.constructors
+                            { currentModule
+                                | exposedUnions =
+                                    Dict.insert exposedType.name
+                                        union
+                                        currentModule.exposedUnions
+                            }
 
+                Just _ ->
+                    case Dict.get exposedType.name currentModule.unions of
+                        Nothing ->
+                            currentModule
 
-
----- LOOKUP
-
-
-lookupModuleName : Imports -> String -> String -> Maybe String
-lookupModuleName imports qualifier name =
-    Dict.get qualifier imports
-        |> Maybe.andThen (Dict.get name)
+                        Just union ->
+                            { currentModule
+                                | exposedUnions =
+                                    Dict.insert exposedType.name
+                                        union
+                                        currentModule.exposedUnions
+                            }
 
 
 
 ---- COLLECT IMPORTS
 
 
-collectImports : Dict String Module -> List (Node Import) -> Imports
+type alias Imports =
+    { binops : Dict String Binop
+    , qualifiedValues : Dict ModuleName (Dict String Annotation)
+    , qualifiedUnions : Dict ModuleName (Dict String Union)
+    }
+
+
+collectImports :
+    Dict ModuleName Module
+    -> List (Node Import)
+    -> Imports
 collectImports importedModules imports =
     let
         initialImports =
-            Dict.empty
+            { binops = Dict.empty
+            , qualifiedValues = Dict.empty
+            , qualifiedUnions = Dict.empty
+            }
     in
     List.foldl
-        (\import_ currentImports ->
+        (\import_ imports_ ->
             let
                 moduleName =
                     import_
                         |> Node.value
                         |> .moduleName
                         |> Node.value
-                        |> String.join "."
             in
             case Dict.get moduleName importedModules of
                 Nothing ->
-                    currentImports
+                    imports_
 
                 Just importedModule ->
-                    collectExposed importedModule (Node.value import_) currentImports
+                    let
+                        qualifier =
+                            moduleAlias
+                                |> Maybe.map Node.value
+                                |> Maybe.withDefault moduleName
+
+                        { moduleAlias, exposingList } =
+                            Node.value import_
+                    in
+                    imports_
+                        |> collectQualifiedExposed importedModule qualifier
+                        |> collectExposed
+                            importedModule
+                            qualifier
+                            moduleName
+                            exposingList
         )
         initialImports
         imports
 
 
-collectExposed : Module -> Import -> Imports -> Imports
-collectExposed importedModule { moduleName, moduleAlias, exposingList } currentImports =
-    let
-        qualifier =
-            moduleAlias
-                |> Maybe.withDefault moduleName
-                |> Node.value
-                |> String.join "."
+collectQualifiedExposed : Module -> ModuleName -> Imports -> Imports
+collectQualifiedExposed importedModule qualifier imports =
+    { imports
+        | qualifiedValues =
+            Dict.update qualifier
+                (\maybeValues ->
+                    case maybeValues of
+                        Nothing ->
+                            Just importedModule.exposedValues
 
-        actualModuleName =
-            moduleName
-                |> Node.value
-                |> String.join "."
-    in
+                        Just values ->
+                            Just <|
+                                Dict.union values
+                                    importedModule.exposedValues
+                )
+                imports.qualifiedValues
+        , qualifiedUnions =
+            Dict.update qualifier
+                (\maybeUnions ->
+                    case maybeUnions of
+                        Nothing ->
+                            Just importedModule.exposedUnions
+
+                        Just unions ->
+                            Just <|
+                                Dict.union unions
+                                    importedModule.exposedUnions
+                )
+                imports.qualifiedUnions
+    }
+
+
+collectExposed :
+    Module
+    -> ModuleName
+    -> ModuleName
+    -> Maybe (Node Exposing)
+    -> Imports
+    -> Imports
+collectExposed importedModule qualifier actualModuleName exposingList imports =
     case exposingList of
         Nothing ->
-            List.foldl
-                (collectExposedValue qualifier actualModuleName)
-                currentImports
-                importedModule.exposed
+            imports
 
         Just exposing_ ->
             case Node.value exposing_ of
                 All _ ->
-                    List.foldl
-                        (collectExposedValue "" actualModuleName)
-                        currentImports
-                        importedModule.exposed
+                    { imports
+                        | qualifiedValues =
+                            Dict.update []
+                                (\maybeValues ->
+                                    case maybeValues of
+                                        Nothing ->
+                                            Just importedModule.exposedValues
+
+                                        Just values ->
+                                            Just <|
+                                                Dict.union values
+                                                    importedModule.exposedValues
+                                )
+                                imports.qualifiedValues
+                        , qualifiedUnions =
+                            Dict.update []
+                                (\maybeUnions ->
+                                    case maybeUnions of
+                                        Nothing ->
+                                            Just importedModule.exposedUnions
+
+                                        Just unions ->
+                                            Just <|
+                                                Dict.union unions
+                                                    importedModule.exposedUnions
+                                )
+                                imports.qualifiedUnions
+                        , binops = Dict.union imports.binops importedModule.exposedBinops
+                    }
 
                 Explicit topLevelExposes ->
                     List.foldl
-                        (collectTopLevelExpose importedModule.unions "" actualModuleName)
-                        currentImports
+                        (collectTopLevelExpose
+                            importedModule
+                            []
+                            actualModuleName
+                        )
+                        imports
                         topLevelExposes
 
 
 collectTopLevelExpose :
-    Dict String Union
-    -> String
-    -> String
+    Module
+    -> ModuleName
+    -> ModuleName
     -> Node TopLevelExpose
     -> Imports
     -> Imports
-collectTopLevelExpose unions qualifier actualModuleName topLevelExpose currentImports =
+collectTopLevelExpose importedModule qualifier moduleName topLevelExpose currentImports =
     case Node.value topLevelExpose of
         InfixExpose name ->
-            collectExposedValue qualifier actualModuleName name currentImports
+            let
+                actualName =
+                    String.dropLeft 1 (String.dropRight 1 name)
+            in
+            case Dict.get actualName importedModule.exposedBinops of
+                Nothing ->
+                    currentImports
+
+                Just binop ->
+                    { currentImports
+                        | binops = Dict.insert actualName binop currentImports.binops
+                    }
 
         FunctionExpose name ->
-            collectExposedValue qualifier actualModuleName name currentImports
+            collectExposedValue importedModule.values
+                qualifier
+                moduleName
+                name
+                currentImports
 
         TypeOrAliasExpose name ->
-            collectExposedValue qualifier actualModuleName name currentImports
+            case Dict.get name importedModule.unions of
+                Nothing ->
+                    currentImports
+
+                Just union ->
+                    let
+                        newQualifiedUnions =
+                            Dict.update qualifier
+                                (\maybeImports ->
+                                    case maybeImports of
+                                        Nothing ->
+                                            Just (Dict.singleton name union)
+
+                                        Just imports ->
+                                            Just (Dict.insert name union imports)
+                                )
+                                currentImports.qualifiedUnions
+                    in
+                    { currentImports | qualifiedUnions = newQualifiedUnions }
 
         TypeExpose exposedType ->
-            let
-                importsWithType =
-                    collectExposedValue qualifier
-                        actualModuleName
-                        exposedType.name
-                        currentImports
-            in
-            case exposedType.open of
+            case Dict.get exposedType.name importedModule.unions of
                 Nothing ->
-                    importsWithType
+                    currentImports
 
-                Just _ ->
-                    case Dict.get exposedType.name unions of
+                Just union ->
+                    let
+                        newQualifiedUnions =
+                            Dict.update qualifier
+                                (\maybeImports ->
+                                    case maybeImports of
+                                        Nothing ->
+                                            Just (Dict.singleton exposedType.name union)
+
+                                        Just imports ->
+                                            Just
+                                                (Dict.insert exposedType.name
+                                                    union
+                                                    imports
+                                                )
+                                )
+                                currentImports.qualifiedUnions
+                    in
+                    case exposedType.open of
                         Nothing ->
-                            currentImports
+                            { currentImports | qualifiedUnions = newQualifiedUnions }
 
-                        Just union ->
-                            List.foldl
-                                (collectExposedValue qualifier actualModuleName)
-                                importsWithType
-                                (Dict.keys union.constructors)
+                        Just _ ->
+                            -- TODO collect constructors
+                            { currentImports | qualifiedUnions = newQualifiedUnions }
 
 
-collectExposedValue : String -> String -> String -> Imports -> Imports
-collectExposedValue qualifier actualModuleName name currentImports =
-    Dict.update qualifier
-        (\maybeImports ->
-            case maybeImports of
-                Nothing ->
-                    Just (Dict.singleton name actualModuleName)
+collectExposedValue :
+    Dict String Annotation
+    -> ModuleName
+    -> ModuleName
+    -> String
+    -> Imports
+    -> Imports
+collectExposedValue values qualifer moduleName name imports =
+    case Dict.get name values of
+        Nothing ->
+            imports
 
-                Just imports ->
-                    Just (Dict.insert name actualModuleName imports)
-        )
-        currentImports
+        Just annotation ->
+            { imports
+                | qualifiedValues =
+                    Dict.update
+                        qualifer
+                        (\maybeValues ->
+                            case maybeValues of
+                                Nothing ->
+                                    Just (Dict.singleton name annotation)
+
+                                Just values_ ->
+                                    Just (Dict.insert name annotation values_)
+                        )
+                        imports.qualifiedValues
+            }
 
 
 
@@ -517,7 +699,7 @@ collectExposedValue qualifier actualModuleName name currentImports =
 
 
 type alias ModuleData =
-    { name : String
+    { moduleName : ModuleName
     , fileName : String
     , file : File
     , imports : List Import
@@ -527,7 +709,7 @@ type alias ModuleData =
 
 type alias Store =
     { todo : List TodoItem
-    , done : Dict String Module
+    , done : Dict ModuleName Module
     }
 
 
@@ -539,7 +721,7 @@ emptyStore =
 
 
 type alias TodoItem =
-    { blockedBy : Set String
+    { blockedBy : Set ModuleName
     , moduleData : ModuleData
     }
 
@@ -554,12 +736,12 @@ replace : ModuleData -> Store -> Store
 replace moduleData store =
     { store
         | todo = TodoItem (requiredModules moduleData store) moduleData :: store.todo
-        , done = Dict.remove moduleData.name store.done
+        , done = Dict.remove moduleData.moduleName store.done
     }
         |> canonicalizeTodo Set.empty
 
 
-canonicalizeTodo : Set String -> Store -> Store
+canonicalizeTodo : Set ModuleName -> Store -> Store
 canonicalizeTodo nowDone store =
     let
         ( newlyDone, newTodo ) =
@@ -570,10 +752,10 @@ canonicalizeTodo nowDone store =
                             Set.diff blockedBy nowDone
                     in
                     if Set.isEmpty newBlockers then
-                        ( Dict.insert moduleData.name
+                        ( Dict.insert moduleData.moduleName
                             (canonicalizeModule
                                 (Dict.union store.done done)
-                                moduleData.name
+                                moduleData.moduleName
                                 moduleData.file
                                 moduleData.interface
                             )
@@ -611,19 +793,24 @@ canonicalizeTodo nowDone store =
 -- REQUIRED MODULES
 
 
-requiredModules : ModuleData -> Store -> Set String
+requiredModules : ModuleData -> Store -> Set ModuleName
 requiredModules moduleData store =
     let
         needed =
             List.map (.moduleName >> Node.value) moduleData.imports
                 |> List.filter (not << isNative)
-                |> List.map (String.join ".")
                 |> Set.fromList
 
-        isNative =
-            List.head
-                >> Maybe.map ((==) "Native")
-                >> Maybe.withDefault False
+        isNative moduleName =
+            case moduleName of
+                "Native" :: _ ->
+                    True
+
+                "Elm" :: "Kernel" :: _ ->
+                    True
+
+                _ ->
+                    False
 
         availableModules =
             Dict.keys store.done
@@ -636,20 +823,20 @@ requiredModules moduleData store =
 ---- DEFAULT IMPORTS
 
 
-defaultImportModules : Set String
+defaultImportModules : Set ModuleName
 defaultImportModules =
     Set.fromList
-        [ "Basics"
-        , "List"
-        , "Maybe"
-        , "Result"
-        , "String"
-        , "Char"
-        , "Tuple"
-        , "Debug"
-        , "Platform"
-        , "Platform.Cmd"
-        , "Platform.Sub"
+        [ [ "Basics" ]
+        , [ "List" ]
+        , [ "Maybe" ]
+        , [ "Result" ]
+        , [ "String" ]
+        , [ "Char" ]
+        , [ "Tuple" ]
+        , [ "Debug" ]
+        , [ "Platform" ]
+        , [ "Platform", "Cmd" ]
+        , [ "Platform", "Sub" ]
         ]
 
 

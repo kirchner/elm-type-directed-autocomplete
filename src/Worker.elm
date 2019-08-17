@@ -77,7 +77,7 @@ toModuleData fileName rawFile =
         file =
             Processing.process Processing.init rawFile
     in
-    { name = String.join "." (RawFile.moduleName rawFile)
+    { moduleName = RawFile.moduleName rawFile
     , fileName = fileName
     , file = file
     , imports = List.map Node.value file.imports
@@ -155,7 +155,6 @@ update msg model =
                     , Cmd.batch
                         [ store file data
                         , toJS (Encode.string ("reparsed " ++ file.fileName))
-                        , logStore newStore
                         ]
                     )
 
@@ -172,10 +171,7 @@ update msg model =
                             Canonical.add moduleData model.store
                     in
                     ( { model | store = newStore }
-                    , Cmd.batch
-                        [ toJS (Encode.string ("restored " ++ cached.fileName))
-                        , logStore newStore
-                        ]
+                    , toJS (Encode.string ("restored " ++ cached.fileName))
                     )
 
                 Err e ->
@@ -236,91 +232,45 @@ update msg model =
                                 ]
 
                         Just function ->
-                            let
-                                values =
-                                    Dict.get currentModuleData.name model.store.done
-                                        |> Maybe.map .values
-                                        |> Maybe.withDefault Dict.empty
-                                        |> Dict.map (\_ -> Canonical.Annotation.fromType)
-
-                                imports =
-                                    Dict.get currentModuleData.name model.store.done
-                                        |> Maybe.map .imports
-                                        |> Maybe.withDefault Dict.empty
-
-                                unions =
-                                    Dict.get currentModuleData.name model.store.done
-                                        |> Maybe.map .unions
-                                        |> Maybe.withDefault Dict.empty
-
-                                aliases =
-                                    Dict.get currentModuleData.name model.store.done
-                                        |> Maybe.map .aliases
-                                        |> Maybe.withDefault Dict.empty
-                            in
-                            case
-                                Inference.inferHole
-                                    { function = function
-                                    , range = range
-                                    , moduleName = currentModuleData.name
-                                    , imports = imports
-                                    , binops = Dict.empty
-                                    , values = values
-                                    }
-                                    |> Result.mapError
-                                        (inferenceErrorToString
-                                            values
-                                            aliases
-                                            unions
-                                            range
-                                            function
-                                        )
-                                    |> Result.map
-                                        (generateCompletions range
-                                            [ values ]
-                                            aliases
-                                            unions
-                                        )
-                            of
-                                Err error ->
+                            case Dict.get currentModuleData.moduleName model.store.done of
+                                Nothing ->
                                     Cmd.batch
-                                        [ toJS (Encode.string error)
+                                        [ toJS (Encode.string "no module found")
                                         , completions []
                                         ]
 
-                                Ok cmd ->
-                                    cmd
+                                Just currentModule ->
+                                    case
+                                        Inference.inferHole
+                                            { function = function
+                                            , range = range
+                                            , moduleName = currentModuleData.moduleName
+                                            , currentModule = currentModule
+                                            }
+                                            |> Result.mapError
+                                                (inferenceErrorToString
+                                                    currentModule.values
+                                                    currentModule.aliases
+                                                    currentModule.unions
+                                                    range
+                                                    function
+                                                )
+                                            |> Result.map
+                                                (generateCompletions range
+                                                    [ currentModule.values ]
+                                                    currentModule.aliases
+                                                    currentModule.unions
+                                                )
+                                    of
+                                        Err error ->
+                                            Cmd.batch
+                                                [ toJS (Encode.string error)
+                                                , completions []
+                                                ]
+
+                                        Ok cmd ->
+                                            cmd
                     )
-
-
-logStore newStore =
-    if List.isEmpty newStore.todo then
-        newStore.done
-            |> Dict.map
-                (\moduleName { values } ->
-                    toJS
-                        (Encode.string
-                            (String.concat
-                                [ "MODULE "
-                                , moduleName
-                                , "\n  VALUES\n"
-                                , String.join "\n    "
-                                    (Dict.keys values)
-                                ]
-                            )
-                        )
-                )
-            |> Dict.values
-            |> Cmd.batch
-
-    else
-        toJS <|
-            Encode.string <|
-                String.concat
-                    [ "TODO "
-                    , String.join " "
-                        (List.map (.moduleData >> .name) newStore.todo)
-                    ]
 
 
 inferenceErrorToString :
@@ -338,7 +288,6 @@ inferenceErrorToString values aliases unions range function error =
                 [ String.join " " (name :: union.vars)
                 , " = "
                 , union.constructors
-                    |> Dict.toList
                     |> List.map constructorToString
                     |> String.join " | "
                 ]
@@ -401,7 +350,7 @@ generateCompletions range globalValues aliases unions ( tipe, localValues ) =
     in
     Generator.default
         |> addValues
-        --|> Generator.addValues localValues
+        |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
         |> Generator.addUnions unions
         --|> Generator.for (Type.normalize aliases tipe)
         |> Generator.for tipe

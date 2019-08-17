@@ -1,15 +1,20 @@
 module InferenceTest exposing (suite)
 
-import Canonical exposing (Associativity(..), Binop)
+import Canonical exposing (Associativity(..), Binop, Store)
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
+import Elm.Interface
 import Elm.Parser
 import Elm.Processing
+import Elm.RawFile exposing (RawFile)
 import Elm.Syntax.Expression exposing (Function)
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Range exposing (Range, emptyRange)
 import Expect exposing (Expectation)
+import Fixtures.Basics
+import Fixtures.List
+import Fixtures.Maybe
 import Fuzz exposing (Fuzzer)
 import Inference
 import Module
@@ -23,7 +28,7 @@ suite =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : Int -> String
+                        """bar : Float -> Int
 bar num =
     foo
 """
@@ -31,21 +36,19 @@ bar num =
                         { start = { column = 5, row = 3 }
                         , end = { column = 8, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.int
                             , Dict.fromList
-                                [ ( "num", Canonical.Type.int ) ]
+                                [ ( "num", Canonical.Type.float ) ]
                             )
                         )
         , test "tuple" <|
             \_ ->
                 inferHelp
                     { src =
-                        """bar : Int -> ( String, Int )
+                        """bar : Int -> ( Float, Int )
 bar num =
     ( foo, 123 )
 """
@@ -53,12 +56,10 @@ bar num =
                         { start = { column = 7, row = 3 }
                         , end = { column = 10, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "num", Canonical.Type.int ) ]
                             )
@@ -75,20 +76,6 @@ bar num =
                         { start = { column = 12, row = 3 }
                         , end = { column = 15, row = 3 }
                         }
-                    , binops =
-                        Dict.singleton "::"
-                            { function = "cons"
-                            , tipe =
-                                ForAll [ "a" ] <|
-                                    Lambda (Var "a")
-                                        (Lambda
-                                            (Canonical.Type.list (Var "a"))
-                                            (Canonical.Type.list (Var "a"))
-                                        )
-                            , precedence = 5
-                            , associativity = Right
-                            }
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
@@ -109,36 +96,6 @@ bar numA numB =
                         { start = { column = 19, row = 3 }
                         , end = { column = 22, row = 3 }
                         }
-                    , binops =
-                        Dict.fromList
-                            [ ( "+"
-                              , { function = "add"
-                                , tipe =
-                                    ForAll [] <|
-                                        Lambda Canonical.Type.int
-                                            (Lambda
-                                                Canonical.Type.int
-                                                Canonical.Type.int
-                                            )
-                                , precedence = 6
-                                , associativity = Left
-                                }
-                              )
-                            , ( "*"
-                              , { function = "mul"
-                                , tipe =
-                                    ForAll [] <|
-                                        Lambda Canonical.Type.int
-                                            (Lambda
-                                                Canonical.Type.int
-                                                Canonical.Type.int
-                                            )
-                                , precedence = 7
-                                , associativity = Left
-                                }
-                              )
-                            ]
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
@@ -153,7 +110,7 @@ bar numA numB =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : Int -> String
+                        """bar : Int -> Float
 bar int =
     foo int
 """
@@ -161,14 +118,12 @@ bar int =
                         { start = { column = 5, row = 3 }
                         , end = { column = 8, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
                                 Canonical.Type.int
-                                Canonical.Type.string
+                                Canonical.Type.float
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 ]
@@ -178,7 +133,7 @@ bar int =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : Int -> String
+                        """bar : Int -> Float
 bar int =
     int
         |> foo
@@ -187,27 +142,12 @@ bar int =
                         { start = { column = 12, row = 4 }
                         , end = { column = 15, row = 4 }
                         }
-                    , binops =
-                        Dict.singleton "|>"
-                            { function = "apR"
-                            , tipe =
-                                ForAll [ "a", "b" ] <|
-                                    Lambda
-                                        (Var "a")
-                                        (Lambda
-                                            (Lambda (Var "a") (Var "b"))
-                                            (Var "b")
-                                        )
-                            , precedence = 0
-                            , associativity = Left
-                            }
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
                                 Canonical.Type.int
-                                Canonical.Type.string
+                                Canonical.Type.float
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 ]
@@ -217,7 +157,7 @@ bar int =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : Int -> String
+                        """bar : Int -> Float
 bar int =
     int
         |> toFloat
@@ -227,32 +167,12 @@ bar int =
                         { start = { column = 12, row = 5 }
                         , end = { column = 15, row = 5 }
                         }
-                    , binops =
-                        Dict.singleton "|>"
-                            { function = "apR"
-                            , tipe =
-                                ForAll [ "a", "b" ] <|
-                                    Lambda
-                                        (Var "a")
-                                        (Lambda
-                                            (Lambda (Var "a") (Var "b"))
-                                            (Var "b")
-                                        )
-                            , precedence = 0
-                            , associativity = Left
-                            }
-                    , values =
-                        Dict.fromList
-                            [ ( "toFloat"
-                              , ForAll [] (Lambda Canonical.Type.int Canonical.Type.float)
-                              )
-                            ]
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
                                 Canonical.Type.float
-                                Canonical.Type.string
+                                Canonical.Type.float
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 ]
@@ -262,7 +182,7 @@ bar int =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : List Int -> List String
+                        """bar : List Int -> List Float
 bar ints =
     ints
         |> List.map toFloat
@@ -273,44 +193,12 @@ bar ints =
                         { start = { column = 12, row = 6 }
                         , end = { column = 15, row = 6 }
                         }
-                    , binops =
-                        Dict.singleton "|>"
-                            { function = "apR"
-                            , tipe =
-                                ForAll [ "a", "b" ] <|
-                                    Lambda
-                                        (Var "a")
-                                        (Lambda
-                                            (Lambda (Var "a") (Var "b"))
-                                            (Var "b")
-                                        )
-                            , precedence = 0
-                            , associativity = Left
-                            }
-                    , values =
-                        Dict.fromList
-                            [ ( "toFloat"
-                              , ForAll [] (Lambda Canonical.Type.int Canonical.Type.float)
-                              )
-                            , ( "identity"
-                              , ForAll [ "a" ] (Lambda (Var "a") (Var "a"))
-                              )
-                            , ( "List.map"
-                              , ForAll [ "a", "b" ]
-                                    (Lambda (Lambda (Var "a") (Var "b"))
-                                        (Lambda
-                                            (Canonical.Type.list (Var "a"))
-                                            (Canonical.Type.list (Var "b"))
-                                        )
-                                    )
-                              )
-                            ]
                     }
                     |> Expect.equal
                         (Ok
                             ( Lambda
                                 (Canonical.Type.list Canonical.Type.float)
-                                (Canonical.Type.list Canonical.Type.string)
+                                (Canonical.Type.list Canonical.Type.float)
                             , Dict.fromList
                                 [ ( "ints", Canonical.Type.list Canonical.Type.int )
                                 ]
@@ -320,7 +208,7 @@ bar ints =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : Int -> { name : String, count : Int }
+                        """bar : Int -> { name : Float, count : Int }
 bar num =
     { name = foo
     , count = 1
@@ -330,12 +218,10 @@ bar num =
                         { start = { column = 14, row = 3 }
                         , end = { column = 17, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "num", Canonical.Type.int ) ]
                             )
@@ -344,7 +230,7 @@ bar num =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : { name : String, count : Int } -> { name : String, count : Int }
+                        """bar : { name : Float, count : Int } -> { name : Float, count : Int }
 bar data =
     { data | name = foo }
 """
@@ -352,16 +238,14 @@ bar data =
                         { start = { column = 21, row = 3 }
                         , end = { column = 24, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "data"
                                   , Record
-                                        [ ( "name", Canonical.Type.string )
+                                        [ ( "name", Canonical.Type.float )
                                         , ( "count", Canonical.Type.int )
                                         ]
                                         Nothing
@@ -373,7 +257,7 @@ bar data =
             \_ ->
                 inferHelp
                     { src =
-                        """foo : Int -> Float -> ( Int, String )
+                        """foo : Int -> Float -> ( Int, Float )
 foo int =
     \\float ->
         case int of
@@ -381,18 +265,16 @@ foo int =
                 ( 1, bar )
 
             _ ->
-                ( 2, "foo" )
+                ( 2, 0.5 )
 """
                     , range =
                         { start = { column = 22, row = 6 }
                         , end = { column = 25, row = 6 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 , ( "float", Canonical.Type.float )
@@ -403,23 +285,21 @@ foo int =
             \_ ->
                 inferHelp
                     { src =
-                        """foo : Bool -> String
+                        """foo : Bool -> Float
 foo bool =
     if bool then
         bar
     else
-        "bar"
+        0.5
 """
                     , range =
                         { start = { column = 9, row = 4 }
                         , end = { column = 12, row = 4 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "bool", Canonical.Type.bool ) ]
                             )
@@ -428,30 +308,18 @@ foo bool =
             \_ ->
                 inferHelp
                     { src =
-                        """foo : Int -> String
+                        """foo : Int -> List Float
 foo int =
-    String.repeat int bar
+    List.repeat int bar
 """
                     , range =
-                        { start = { column = 23, row = 3 }
-                        , end = { column = 26, row = 3 }
+                        { start = { column = 21, row = 3 }
+                        , end = { column = 24, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values =
-                        Dict.fromList
-                            [ ( "String.repeat"
-                              , ForAll []
-                                    (Lambda Canonical.Type.int <|
-                                        Lambda
-                                            Canonical.Type.string
-                                            Canonical.Type.string
-                                    )
-                              )
-                            ]
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int ) ]
                             )
@@ -509,7 +377,7 @@ foo int =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : List Int -> String
+                        """bar : List Int -> Float
 bar nums =
     case nums of
         [] ->
@@ -519,12 +387,10 @@ bar nums =
                         { start = { column = 13, row = 5 }
                         , end = { column = 16, row = 5 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "nums", Canonical.Type.list Canonical.Type.int )
                                 ]
@@ -534,7 +400,7 @@ bar nums =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : List Int -> String
+                        """bar : List Int -> Float
 bar nums =
     case nums of
         first :: rest ->
@@ -544,12 +410,10 @@ bar nums =
                         { start = { column = 13, row = 5 }
                         , end = { column = 16, row = 5 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Canonical.Type.string
+                            ( Canonical.Type.float
                             , Dict.fromList
                                 [ ( "first", Canonical.Type.int )
                                 , ( "nums", Canonical.Type.list Canonical.Type.int )
@@ -561,7 +425,7 @@ bar nums =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : { count : Int } -> String
+                        """bar : { count : Int } -> Float
 bar { count } =
     foo count
 """
@@ -569,12 +433,10 @@ bar { count } =
                         { start = { column = 5, row = 3 }
                         , end = { column = 8, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
-                            ( Lambda Canonical.Type.int Canonical.Type.string
+                            ( Lambda Canonical.Type.int Canonical.Type.float
                             , Dict.fromList
                                 [ ( "count", Canonical.Type.int )
                                 ]
@@ -584,7 +446,7 @@ bar { count } =
             \_ ->
                 inferHelp
                     { src =
-                        """bar : { count : Int } -> String
+                        """bar : { count : Int } -> Float
 bar ({ count } as stuff) =
     foo stuff count
 """
@@ -592,8 +454,6 @@ bar ({ count } as stuff) =
                         { start = { column = 5, row = 3 }
                         , end = { column = 8, row = 3 }
                         }
-                    , binops = Dict.empty
-                    , values = Dict.empty
                     }
                     |> Expect.equal
                         (Ok
@@ -604,7 +464,7 @@ bar ({ count } as stuff) =
                                 )
                                 (Lambda
                                     Canonical.Type.int
-                                    Canonical.Type.string
+                                    Canonical.Type.float
                                 )
                             , Dict.fromList
                                 [ ( "count", Canonical.Type.int )
@@ -622,11 +482,9 @@ bar ({ count } as stuff) =
 inferHelp :
     { src : String
     , range : Range
-    , binops : Dict String Binop
-    , values : Dict String Annotation
     }
     -> Result Inference.Error ( Type, Dict String Type )
-inferHelp { src, range, binops, values } =
+inferHelp { src, range } =
     let
         actualSrc =
             "module Main exposing (..)\n" ++ src
@@ -650,28 +508,85 @@ inferHelp { src, range, binops, values } =
                         , row = range.end.row + 1
                         }
                     }
+
+                actualStore =
+                    Canonical.add
+                        { moduleName = [ "Main" ]
+                        , fileName = "Main.elm"
+                        , file = file
+                        , imports = Elm.RawFile.imports rawFile
+                        , interface = Elm.Interface.build rawFile
+                        }
+                        store
             in
             case Module.functionDeclarationAt actualRange file of
                 Nothing ->
                     Debug.todo "No function declaration at the specified range"
 
                 Just function ->
-                    Inference.inferHole
-                        { function = function
-                        , range = actualRange
-                        , moduleName = "Main"
-                        , imports =
-                            Dict.fromList
-                                [ ( ""
-                                  , Dict.fromList
-                                        [ ( "Int", "Basics" )
-                                        , ( "Float", "Basics" )
-                                        , ( "String", "String" )
-                                        , ( "List", "List" )
-                                        , ( "Bool", "Basics" )
-                                        ]
-                                  )
-                                ]
-                        , binops = binops
-                        , values = values
-                        }
+                    case Dict.get [ "Main" ] actualStore.done of
+                        Nothing ->
+                            Debug.todo "Main module is not done"
+
+                        Just mainModule ->
+                            Inference.inferHole
+                                { function = function
+                                , range = actualRange
+                                , moduleName = [ "Main" ]
+                                , currentModule = mainModule
+                                }
+
+
+
+---- FIXTURES
+
+
+store : Store
+store =
+    Canonical.emptyStore
+        |> Canonical.add
+            { moduleName = [ "Basics" ]
+            , fileName = "Basics.elm"
+            , file = Elm.Processing.process Elm.Processing.init rawBasics
+            , imports = Elm.RawFile.imports rawBasics
+            , interface = Elm.Interface.build rawBasics
+            }
+        |> Canonical.add
+            { moduleName = [ "Maybe" ]
+            , fileName = "Maybe.elm"
+            , file = Elm.Processing.process Elm.Processing.init rawMaybe
+            , imports = Elm.RawFile.imports rawMaybe
+            , interface = Elm.Interface.build rawMaybe
+            }
+        |> Canonical.add
+            { moduleName = [ "List" ]
+            , fileName = "List.elm"
+            , file = Elm.Processing.process Elm.Processing.init rawList
+            , imports = Elm.RawFile.imports rawList
+            , interface = Elm.Interface.build rawList
+            }
+
+
+rawBasics : RawFile
+rawBasics =
+    parse Fixtures.Basics.src
+
+
+rawList : RawFile
+rawList =
+    parse Fixtures.List.src
+
+
+rawMaybe : RawFile
+rawMaybe =
+    parse Fixtures.Maybe.src
+
+
+parse : String -> RawFile
+parse src =
+    case Elm.Parser.parse src of
+        Err error ->
+            Debug.todo ("Could not parse src:\n" ++ src)
+
+        Ok rawFile ->
+            rawFile

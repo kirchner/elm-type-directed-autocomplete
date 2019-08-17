@@ -708,7 +708,7 @@ b =
 
 msg : Type
 msg =
-    Type "" "Msg" []
+    Type [ "Main" ] "Msg" []
 
 
 values : Dict String Annotation
@@ -774,13 +774,13 @@ unions : Dict String Union
 unions =
     Dict.fromList
         [ ( "Msg"
-          , { vars = []
+          , { moduleName = [ "Main" ]
+            , vars = []
             , constructors =
-                Dict.fromList
-                    [ ( "NewInt", [ Canonical.Type.int ] )
-                    , ( "NewFloat", [ Canonical.Type.float ] )
-                    , ( "NewString", [ Canonical.Type.string ] )
-                    ]
+                [ ( "NewInt", [ Canonical.Type.int ] )
+                , ( "NewFloat", [ Canonical.Type.float ] )
+                , ( "NewString", [ Canonical.Type.string ] )
+                ]
             }
           )
         ]
@@ -808,16 +808,11 @@ typeToString tipe =
         Var name ->
             name
 
-        Type scope name subTypes ->
-            if scope == "" then
-                String.join " " (name :: List.map typeToString subTypes)
-
-            else
-                String.concat
-                    [ scope
-                    , "."
-                    , String.join " " (name :: List.map typeToString subTypes)
-                    ]
+        Type moduleName name subTypes ->
+            String.join " "
+                (String.join "." (moduleName ++ [ name ])
+                    :: List.map typeToString subTypes
+                )
 
         Lambda from to ->
             String.join " "
