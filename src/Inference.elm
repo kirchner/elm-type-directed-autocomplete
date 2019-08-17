@@ -903,7 +903,9 @@ instantiateTypeAnnotation typeAnnotation =
                         ( []
                         , []
                         , typeAnnotation
-                            |> Canonical.canonicalizeTypeAnnotation env.imports env.moduleName
+                            |> Canonical.canonicalizeTypeAnnotation
+                                env.imports
+                                env.moduleName
                             |> Canonical.Annotation.fromType
                             |> Ok
                         )

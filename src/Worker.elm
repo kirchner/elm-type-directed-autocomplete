@@ -1,10 +1,9 @@
 port module Worker exposing (main)
 
-import Canonical exposing (ModuleData, Store)
+import Canonical exposing (Alias, ModuleData, Store, Union)
 import Canonical.Annotation exposing (Annotation)
-import Canonical.Type exposing (Type)
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
-import Elm.Docs exposing (Alias, Union)
 import Elm.Interface as Interface exposing (Interface)
 import Elm.Parser as Parser
 import Elm.Processing as Processing
@@ -28,7 +27,6 @@ import List.Extra as List
 import Module
 import Parser
 import Set exposing (Set)
-import Type
 
 
 type alias InFile =
@@ -149,10 +147,15 @@ update msg model =
         Parse file ->
             case parse file of
                 Ok ( moduleData, data ) ->
-                    ( { model | store = Canonical.add moduleData model.store }
+                    let
+                        newStore =
+                            Canonical.add moduleData model.store
+                    in
+                    ( { model | store = newStore }
                     , Cmd.batch
                         [ store file data
                         , toJS (Encode.string ("reparsed " ++ file.fileName))
+                        , logStore newStore
                         ]
                     )
 
@@ -164,8 +167,15 @@ update msg model =
         Restore cached ->
             case parseCached cached of
                 Ok moduleData ->
-                    ( { model | store = Canonical.add moduleData model.store }
-                    , toJS (Encode.string ("restored " ++ cached.fileName))
+                    let
+                        newStore =
+                            Canonical.add moduleData model.store
+                    in
+                    ( { model | store = newStore }
+                    , Cmd.batch
+                        [ toJS (Encode.string ("restored " ++ cached.fileName))
+                        , logStore newStore
+                        ]
                     )
 
                 Err e ->
@@ -237,6 +247,16 @@ update msg model =
                                     Dict.get currentModuleData.name model.store.done
                                         |> Maybe.map .imports
                                         |> Maybe.withDefault Dict.empty
+
+                                unions =
+                                    Dict.get currentModuleData.name model.store.done
+                                        |> Maybe.map .unions
+                                        |> Maybe.withDefault Dict.empty
+
+                                aliases =
+                                    Dict.get currentModuleData.name model.store.done
+                                        |> Maybe.map .aliases
+                                        |> Maybe.withDefault Dict.empty
                             in
                             case
                                 Inference.inferHole
@@ -249,13 +269,18 @@ update msg model =
                                     }
                                     |> Result.mapError
                                         (inferenceErrorToString
-                                            Dict.empty
-                                            []
-                                            []
+                                            values
+                                            aliases
+                                            unions
                                             range
                                             function
                                         )
-                                    |> Result.map (generateCompletions range [] [] [])
+                                    |> Result.map
+                                        (generateCompletions range
+                                            [ values ]
+                                            aliases
+                                            unions
+                                        )
                             of
                                 Err error ->
                                     Cmd.batch
@@ -268,27 +293,59 @@ update msg model =
                     )
 
 
+logStore newStore =
+    if List.isEmpty newStore.todo then
+        newStore.done
+            |> Dict.map
+                (\moduleName { values } ->
+                    toJS
+                        (Encode.string
+                            (String.concat
+                                [ "MODULE "
+                                , moduleName
+                                , "\n  VALUES\n"
+                                , String.join "\n    "
+                                    (Dict.keys values)
+                                ]
+                            )
+                        )
+                )
+            |> Dict.values
+            |> Cmd.batch
+
+    else
+        toJS <|
+            Encode.string <|
+                String.concat
+                    [ "TODO "
+                    , String.join " "
+                        (List.map (.moduleData >> .name) newStore.todo)
+                    ]
+
+
 inferenceErrorToString :
     Dict String Annotation
-    -> List Alias
-    -> List Union
+    -> Dict String Alias
+    -> Dict String Union
     -> Range
     -> Function
     -> Inference.Error
     -> String
 inferenceErrorToString values aliases unions range function error =
     let
-        unionToString union =
+        unionToString ( name, union ) =
             String.concat
-                [ String.join " " (union.name :: union.args)
+                [ String.join " " (name :: union.vars)
                 , " = "
-                , List.map tagToString union.tags
+                , union.constructors
+                    |> Dict.toList
+                    |> List.map constructorToString
                     |> String.join " | "
                 ]
 
-        tagToString ( tagName, tagTypes ) =
-            tagName
-                :: List.map Type.toString tagTypes
+        constructorToString ( name, types ) =
+            name
+                :: List.map Canonical.Type.toString types
                 |> String.join " "
 
         valueToString ( fieldName, fieldAnnotation ) =
@@ -312,7 +369,9 @@ inferenceErrorToString values aliases unions range function error =
         , Inference.errorToString error
         , "."
         , "\n\nUnions:\n"
-        , List.map unionToString unions
+        , unions
+            |> Dict.toList
+            |> List.map unionToString
             |> List.map (\line -> "  " ++ line)
             |> String.join "\n"
         , "\n\nValues:\n"
@@ -325,29 +384,29 @@ inferenceErrorToString values aliases unions range function error =
 generateCompletions :
     Range
     -> List (Dict String Annotation)
-    -> List Alias
-    -> List Union
+    -> Dict String Alias
+    -> Dict String Union
     -> ( Type, Dict String Type )
     -> Cmd Msg
 generateCompletions range globalValues aliases unions ( tipe, localValues ) =
     let
         addValues generator =
-            --List.foldl
-            --    (\values ->
-            --        Generator.addValues (Dict.map (\_ -> Type.normalize aliases) values)
-            --    )
-            --    generator
-            --    globalValues
-            generator
+            List.foldl
+                (\values ->
+                    --Generator.addValues (Dict.map (\_ -> Type.normalize aliases) values)
+                    Generator.addValues values
+                )
+                generator
+                globalValues
     in
-    --Generator.default
-    --    |> addValues
-    --    --|> Generator.addValues localValues
-    --    |> Generator.addUnions unions
-    --    |> Generator.for (Type.normalize aliases tipe)
-    --    |> List.map (completionToString range)
-    --    |> completions
-    Cmd.none
+    Generator.default
+        |> addValues
+        --|> Generator.addValues localValues
+        |> Generator.addUnions unions
+        --|> Generator.for (Type.normalize aliases tipe)
+        |> Generator.for tipe
+        |> List.map (completionToString range)
+        |> completions
 
 
 completionToString : Range -> Expr -> String

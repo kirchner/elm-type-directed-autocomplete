@@ -1,7 +1,6 @@
 module Canonical.Type exposing
     ( Type(..)
     , apply
-    , result
     , bool
     , char
     , float
@@ -9,6 +8,8 @@ module Canonical.Type exposing
     , fromTypeAnnotation
     , int
     , list
+    , result
+    , set
     , shader
     , string
     , toString
@@ -247,6 +248,11 @@ string =
 list : Type -> Type
 list a =
     Type "List" "List" [ a ]
+
+
+set : Type -> Type
+set a =
+    Type "Set" "Set" [ a ]
 
 
 result : Type -> Type -> Type

@@ -572,7 +572,7 @@ canonicalizeTodo nowDone store =
                     if Set.isEmpty newBlockers then
                         ( Dict.insert moduleData.name
                             (canonicalizeModule
-                                done
+                                (Dict.union store.done done)
                                 moduleData.name
                                 moduleData.file
                                 moduleData.interface
@@ -602,7 +602,9 @@ canonicalizeTodo nowDone store =
         newStore
 
     else
-        canonicalizeTodo (Dict.keys newlyDone |> Set.fromList) newStore
+        canonicalizeTodo
+            (Set.fromList (Dict.keys newlyDone))
+            newStore
 
 
 

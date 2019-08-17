@@ -18,9 +18,10 @@ module GeneratorTest exposing (suite)
 
 -}
 
+import Canonical exposing (Alias, Union)
+import Canonical.Annotation exposing (Annotation(..))
+import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
-import Elm.Docs exposing (Union)
-import Elm.Type exposing (Type(..))
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer)
 import Generator
@@ -67,12 +68,15 @@ valueTest =
     testGenerator "value"
         (call []
             |> addValues
-                (Dict.insert "Basics.identity" (Lambda a a) values)
+                (Dict.insert "Basics.identity"
+                    (Canonical.Annotation.fromType (Lambda a a))
+                    values
+                )
         )
-        [ ( int
+        [ ( Canonical.Type.int
           , [ "int" ]
           )
-        , ( Lambda int int
+        , ( Lambda Canonical.Type.int Canonical.Type.int
           , [ "Basics.identity"
             , "Basics.negate"
             ]
@@ -80,9 +84,11 @@ valueTest =
         , ( Lambda a a
           , [ "Basics.identity" ]
           )
-        , ( Lambda a int
-          , []
-          )
+
+        -- TODO fix
+        --, ( Lambda a Canonical.Type.int
+        --  , []
+        --  )
         ]
 
 
@@ -92,9 +98,12 @@ callTest =
         [ testGenerator "value"
             (call [ value ]
                 |> addValues
-                    (Dict.insert "Basics.identity" (Lambda a a) values)
+                    (Dict.insert "Basics.identity"
+                        (Canonical.Annotation.fromType (Lambda a a))
+                        values
+                    )
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "Basics.identity int"
                 , "Basics.negate int"
                 ]
@@ -110,10 +119,10 @@ callTest =
                 ]
                 |> addValues values
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "Basics.modBy int int" ]
               )
-            , ( list string
+            , ( Canonical.Type.list Canonical.Type.string
               , [ "List.map String.fromInt ints"
                 , "List.map String.reverse strings"
                 ]
@@ -121,7 +130,7 @@ callTest =
             , ( a
               , []
               )
-            , ( list a
+            , ( Canonical.Type.list a
               , []
               )
             ]
@@ -131,9 +140,12 @@ callTest =
                 , call [ value ]
                 ]
                 |> addValues
-                    (Dict.insert "Basics.identity" (Lambda a a) values)
+                    (Dict.insert "Basics.identity"
+                        (Canonical.Annotation.fromType (Lambda a a))
+                        values
+                    )
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "Basics.modBy int (Basics.identity int)"
                 , "Basics.modBy int (Basics.negate int)"
                 ]
@@ -150,7 +162,7 @@ callTest =
                 ]
                 |> addValues values
             )
-            [ ( string
+            [ ( Canonical.Type.string
               , [ "List.foldl String.append string strings" ]
               )
             , ( a
@@ -164,14 +176,23 @@ callTest =
                         [ call [] ]
                     ]
                     |> addValues
-                        (Dict.fromList
-                            [ ( "f", Lambda (set a) (list a) )
-                            , ( "g", Lambda string (set string) )
-                            , ( "h", a )
-                            ]
+                        (Dict.map (\_ -> Canonical.Annotation.fromType) <|
+                            Dict.fromList
+                                [ ( "f"
+                                  , Lambda
+                                        (Canonical.Type.set a)
+                                        (Canonical.Type.list a)
+                                  )
+                                , ( "g"
+                                  , Lambda
+                                        Canonical.Type.string
+                                        (Canonical.Type.set Canonical.Type.string)
+                                  )
+                                , ( "h", a )
+                                ]
                         )
                 )
-                [ ( list string
+                [ ( Canonical.Type.list Canonical.Type.string
                   , [ "f (g h)" ]
                   )
                 ]
@@ -181,14 +202,19 @@ callTest =
                         [ call [] ]
                     ]
                     |> addValues
-                        (Dict.fromList
-                            [ ( "f", Lambda (set string) (list string) )
-                            , ( "g", Lambda a (set a) )
-                            , ( "h", string )
-                            ]
+                        (Dict.map (\_ -> Canonical.Annotation.fromType) <|
+                            Dict.fromList
+                                [ ( "f"
+                                  , Lambda
+                                        (Canonical.Type.set Canonical.Type.string)
+                                        (Canonical.Type.list Canonical.Type.string)
+                                  )
+                                , ( "g", Lambda a (Canonical.Type.set a) )
+                                , ( "h", Canonical.Type.string )
+                                ]
                         )
                 )
-                [ ( list string
+                [ ( Canonical.Type.list Canonical.Type.string
                   , [ "f (g h)" ]
                   )
                 ]
@@ -206,16 +232,16 @@ tupleTest =
                 }
                 |> addValues values
             )
-            [ ( Tuple [ int, int ]
+            [ ( Tuple [ Canonical.Type.int, Canonical.Type.int ]
               , [ "( int, int )" ]
               )
             , ( Tuple [ a, a ]
               , []
               )
-            , ( Tuple [ a, int ]
+            , ( Tuple [ a, Canonical.Type.int ]
               , []
               )
-            , ( Tuple [ int, a ]
+            , ( Tuple [ Canonical.Type.int, a ]
               , []
               )
             ]
@@ -225,9 +251,12 @@ tupleTest =
                 , second = call [ value ]
                 }
                 |> addValues
-                    (Dict.insert "Basics.identity" (Lambda a a) values)
+                    (Dict.insert "Basics.identity"
+                        (Canonical.Annotation.fromType (Lambda a a))
+                        values
+                    )
             )
-            [ ( Tuple [ int, int ]
+            [ ( Tuple [ Canonical.Type.int, Canonical.Type.int ]
               , [ "( int, Basics.identity int )"
                 , "( int, Basics.negate int )"
                 ]
@@ -242,17 +271,18 @@ recordTest =
         [ testGenerator "value"
             (record value
                 |> addValues
-                    (Dict.fromList
-                        [ ( "int", int )
-                        , ( "float", float )
-                        , ( "listInt", list int )
-                        ]
+                    (Dict.map (\_ -> Canonical.Annotation.fromType) <|
+                        Dict.fromList
+                            [ ( "int", Canonical.Type.int )
+                            , ( "float", Canonical.Type.float )
+                            , ( "listInt", Canonical.Type.list Canonical.Type.int )
+                            ]
                     )
             )
             [ ( Record
-                    [ ( "int", int )
-                    , ( "float", float )
-                    , ( "listInt", list int )
+                    [ ( "int", Canonical.Type.int )
+                    , ( "float", Canonical.Type.float )
+                    , ( "listInt", Canonical.Type.list Canonical.Type.int )
                     ]
                     Nothing
               , [ """{ int = int
@@ -273,8 +303,8 @@ recordUpdateTest =
                 |> addValues values
             )
             [ ( Record
-                    [ ( "int", int )
-                    , ( "string", string )
+                    [ ( "int", Canonical.Type.int )
+                    , ( "string", Canonical.Type.string )
                     ]
                     Nothing
               , [ "{ record | int = int }"
@@ -298,21 +328,21 @@ casesTest =
                 }
                 |> addValues values
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ """case msg of
-    NewInt newInt ->
-        newInt
-
     NewFloat newFloat ->
         int
+
+    NewInt newInt ->
+        newInt
 
     NewString newString ->
         int"""
                 , """case msg of
-    NewInt newInt ->
+    NewFloat newFloat ->
         int
 
-    NewFloat newFloat ->
+    NewInt newInt ->
         int
 
     NewString newString ->
@@ -328,6 +358,10 @@ casesTest =
 
 allTest : Test
 allTest =
+    let
+        int =
+            Canonical.Annotation.fromType Canonical.Type.int
+    in
     describe "all"
         [ describe "add and take"
             [ testGenerator "add one and take 1"
@@ -335,7 +369,7 @@ allTest =
                     |> addValues (Dict.singleton "int" int)
                     |> takeValues 1
                 )
-                [ ( int
+                [ ( Canonical.Type.int
                   , [ "int" ]
                   )
                 ]
@@ -345,7 +379,7 @@ allTest =
                     |> addValues (Dict.singleton "intB" int)
                     |> takeValues 1
                 )
-                [ ( int
+                [ ( Canonical.Type.int
                   , [ "intB" ]
                   )
                 ]
@@ -356,7 +390,7 @@ allTest =
                     |> takeValues 1
                     |> addValues (Dict.singleton "intC" int)
                 )
-                [ ( int
+                [ ( Canonical.Type.int
                   , [ "intC"
                     , "intB"
                     ]
@@ -373,7 +407,7 @@ allTest =
                 ]
                 |> addValues (Dict.singleton "intA" int)
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "intC"
                 , "intB"
                 , "intA"
@@ -392,7 +426,7 @@ allTest =
                     ]
                     |> addValues (Dict.singleton "intA" int)
                 )
-                [ ( int
+                [ ( Canonical.Type.int
                   , [ "intC" ]
                   )
                 ]
@@ -407,7 +441,7 @@ allTest =
                     ]
                     |> addValues (Dict.singleton "intA" int)
                 )
-                [ ( int
+                [ ( Canonical.Type.int
                   , [ "intC"
                     , "intB"
                     ]
@@ -424,7 +458,7 @@ allTest =
                     |> addValues (Dict.singleton "intA" int)
                     |> takeValues 1
                 )
-                [ ( int
+                [ ( Canonical.Type.int
                   , [ "intC"
                     , "intB"
                     , "intA"
@@ -438,7 +472,7 @@ allTest =
                 |> addValues (Dict.singleton "intB" int)
                 |> addValues (Dict.singleton "intC" int)
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "intC"
                 , "intB"
                 , "intA"
@@ -452,7 +486,7 @@ allTest =
                 |> addValues (Dict.singleton "intC" int)
                 |> takeValues 1
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "intC" ]
               )
             ]
@@ -465,13 +499,14 @@ firstNTest =
         [ testGenerator "only 1 result from 2 possibilities"
             (firstN 1 (call [])
                 |> addValues
-                    (Dict.fromList
-                        [ ( "int1", int )
-                        , ( "int2", int )
-                        ]
+                    (Dict.map (\_ -> Canonical.Annotation.fromType) <|
+                        Dict.fromList
+                            [ ( "int1", Canonical.Type.int )
+                            , ( "int2", Canonical.Type.int )
+                            ]
                     )
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "int1" ]
               )
             ]
@@ -479,15 +514,16 @@ firstNTest =
             (call
                 [ firstN 2 value ]
                 |> addValues
-                    (Dict.fromList
-                        [ ( "int1", int )
-                        , ( "int2", int )
-                        , ( "int3", int )
-                        , ( "func", Lambda int int )
-                        ]
+                    (Dict.map (\_ -> Canonical.Annotation.fromType) <|
+                        Dict.fromList
+                            [ ( "int1", Canonical.Type.int )
+                            , ( "int2", Canonical.Type.int )
+                            , ( "int3", Canonical.Type.int )
+                            , ( "func", Lambda Canonical.Type.int Canonical.Type.int )
+                            ]
                     )
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "func int1"
                 , "func int2"
                 ]
@@ -528,18 +564,18 @@ equivalenceTest =
         )
         [ test "Int" <|
             \_ ->
-                for int generatorA
+                for Canonical.Type.int generatorA
                     |> List.map exprToString
                     |> Expect.equal
-                        (for int generatorB
+                        (for Canonical.Type.int generatorB
                             |> List.map exprToString
                         )
         , test "List Int" <|
             \_ ->
-                for (list int) generatorA
+                for (Canonical.Type.list Canonical.Type.int) generatorA
                     |> List.map exprToString
                     |> Expect.equal
-                        (for (list int) generatorB
+                        (for (Canonical.Type.list Canonical.Type.int) generatorB
                             |> List.map exprToString
                         )
         ]
@@ -553,7 +589,7 @@ takeValuesTest =
                 |> addValues values
                 |> takeValues 0
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , []
               )
             ]
@@ -562,19 +598,22 @@ takeValuesTest =
                 |> addValues values
                 |> takeValues 1
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "int" ]
               )
             ]
         , testGenerator "call value at 0"
             (call
                 [ value
-                    |> addValues (Dict.singleton "newInt" int)
+                    |> addValues
+                        (Dict.singleton "newInt"
+                            (Canonical.Annotation.fromType Canonical.Type.int)
+                        )
                     |> takeValues 1
                 ]
                 |> addValues values
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ "Basics.negate newInt" ]
               )
             ]
@@ -592,21 +631,21 @@ takeValuesTest =
                 }
                 |> addValues values
             )
-            [ ( int
+            [ ( Canonical.Type.int
               , [ """case msg of
-    NewInt newInt ->
-        newInt
-
     NewFloat newFloat ->
         int
+
+    NewInt newInt ->
+        newInt
 
     NewString newString ->
         int"""
                 , """case msg of
-    NewInt newInt ->
+    NewFloat newFloat ->
         int
 
-    NewFloat newFloat ->
+    NewInt newInt ->
         int
 
     NewString newString ->
@@ -631,22 +670,22 @@ takeValuesTest =
                 |> addValues (Dict.remove "int" values)
             )
             [ ( Record
-                    [ ( "int", int ) ]
+                    [ ( "int", Canonical.Type.int ) ]
                     Nothing
               , [ """case msg of
-    NewInt newInt ->
-        { intRecord | int = newInt }
-
     NewFloat newFloat ->
         intRecord
+
+    NewInt newInt ->
+        { intRecord | int = newInt }
 
     NewString newString ->
         intRecord"""
                 , """case msg of
-    NewInt newInt ->
+    NewFloat newFloat ->
         intRecord
 
-    NewFloat newFloat ->
+    NewInt newInt ->
         intRecord
 
     NewString newString ->
@@ -655,21 +694,6 @@ takeValuesTest =
               )
             ]
         ]
-
-
-int : Type
-int =
-    Type "Int" []
-
-
-float : Type
-float =
-    Type "Float" []
-
-
-string : Type
-string =
-    Type "String" []
 
 
 a : Type
@@ -682,74 +706,84 @@ b =
     Var "b"
 
 
-list : Type -> Type
-list tipe =
-    Type "List" [ tipe ]
-
-
-set : Type -> Type
-set tipe =
-    Type "Set" [ tipe ]
-
-
 msg : Type
 msg =
-    Type "Msg" []
+    Type "" "Msg" []
 
 
-values : Dict String Type
+values : Dict String Annotation
 values =
+    Dict.map (\_ -> Canonical.Annotation.fromType) <|
+        Dict.fromList
+            [ ( "int", Canonical.Type.int )
+            , ( "ints", Canonical.Type.list Canonical.Type.int )
+            , ( "float", Canonical.Type.float )
+            , ( "string", Canonical.Type.string )
+            , ( "strings", Canonical.Type.list Canonical.Type.string )
+            , ( "record"
+              , Record
+                    [ ( "int", Canonical.Type.int )
+                    , ( "string", Canonical.Type.string )
+                    ]
+                    Nothing
+              )
+            , ( "intRecord"
+              , Record
+                    [ ( "int", Canonical.Type.int ) ]
+                    Nothing
+              )
+            , ( "msg", msg )
+
+            -- FUNCTIONS WITH ONE ARGUMENT
+            , ( "Basics.negate", Lambda Canonical.Type.int Canonical.Type.int )
+            , ( "String.reverse", Lambda Canonical.Type.string Canonical.Type.string )
+            , ( "String.fromInt", Lambda Canonical.Type.int Canonical.Type.string )
+
+            -- FUNCTIONS WITH TWO ARGUMENTS
+            , ( "Basics.modBy"
+              , Lambda Canonical.Type.int
+                    (Lambda Canonical.Type.int
+                        Canonical.Type.int
+                    )
+              )
+            , ( "List.map"
+              , Lambda (Lambda a b)
+                    (Lambda
+                        (Canonical.Type.list a)
+                        (Canonical.Type.list b)
+                    )
+              )
+            , ( "String.append"
+              , Lambda Canonical.Type.string
+                    (Lambda
+                        Canonical.Type.string
+                        Canonical.Type.string
+                    )
+              )
+
+            -- FUNCTIONS WITH THREE ARGUMENTS
+            , ( "List.foldl"
+              , Lambda
+                    (Lambda a (Lambda b b))
+                    (Lambda b (Lambda (Canonical.Type.list a) b))
+              )
+            ]
+
+
+unions : Dict String Union
+unions =
     Dict.fromList
-        [ ( "int", int )
-        , ( "ints", list int )
-        , ( "float", float )
-        , ( "string", string )
-        , ( "strings", list string )
-        , ( "record"
-          , Record
-                [ ( "int", int )
-                , ( "string", string )
-                ]
-                Nothing
-          )
-        , ( "intRecord"
-          , Record
-                [ ( "int", int ) ]
-                Nothing
-          )
-        , ( "msg", msg )
-
-        -- FUNCTIONS WITH ONE ARGUMENT
-        , ( "Basics.negate", Lambda int int )
-        , ( "String.reverse", Lambda string string )
-        , ( "String.fromInt", Lambda int string )
-
-        -- FUNCTIONS WITH TWO ARGUMENTS
-        , ( "Basics.modBy", Lambda int (Lambda int int) )
-        , ( "List.map", Lambda (Lambda a b) (Lambda (list a) (list b)) )
-        , ( "String.append", Lambda string (Lambda string string) )
-
-        -- FUNCTIONS WITH THREE ARGUMENTS
-        , ( "List.foldl"
-          , Lambda
-                (Lambda a (Lambda b b))
-                (Lambda b (Lambda (list a) b))
+        [ ( "Msg"
+          , { vars = []
+            , constructors =
+                Dict.fromList
+                    [ ( "NewInt", [ Canonical.Type.int ] )
+                    , ( "NewFloat", [ Canonical.Type.float ] )
+                    , ( "NewString", [ Canonical.Type.string ] )
+                    ]
+            }
           )
         ]
-
-
-unions : List Union
-unions =
-    [ { name = "Msg"
-      , comment = ""
-      , args = []
-      , tags =
-            [ ( "NewInt", [ int ] )
-            , ( "NewFloat", [ float ] )
-            , ( "NewString", [ string ] )
-            ]
-      }
-    ]
 
 
 testGenerator : String -> Generator -> List ( Type, List String ) -> Test
@@ -774,8 +808,16 @@ typeToString tipe =
         Var name ->
             name
 
-        Type name subTypes ->
-            String.join " " (name :: List.map typeToString subTypes)
+        Type scope name subTypes ->
+            if scope == "" then
+                String.join " " (name :: List.map typeToString subTypes)
+
+            else
+                String.concat
+                    [ scope
+                    , "."
+                    , String.join " " (name :: List.map typeToString subTypes)
+                    ]
 
         Lambda from to ->
             String.join " "
@@ -790,6 +832,9 @@ typeToString tipe =
                 , String.join ", " (List.map typeToString subTypes)
                 , ")"
                 ]
+
+        Unit ->
+            "()"
 
         Record fields maybeVar ->
             let
