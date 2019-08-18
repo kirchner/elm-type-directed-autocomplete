@@ -273,76 +273,7 @@ infer range (Node currentRange expr) =
             inferCase range caseBlock
 
         LetExpression letBlock ->
-            let
-                inferLets annotations =
-                    inEnvs annotations
-                        (traverse inferLet letBlock.declarations
-                            |> map (List.filterMap identity)
-                            |> andThen
-                                (\newAnnotations ->
-                                    inEnvs newAnnotations
-                                        (infer range letBlock.expression)
-                                        |> andThen
-                                            (\tipe ->
-                                                collectConstraints annotations newAnnotations
-                                                    |> map (\_ -> tipe)
-                                            )
-                                )
-                        )
-
-                collectConstraints annotations newAnnotations =
-                    case ( annotations, newAnnotations ) of
-                        ( ( _, ForAll _ tipe ) :: rest, ( _, ForAll _ newType ) :: newRest ) ->
-                            addConstraint ( tipe, newType )
-                                |> andThen (\_ -> collectConstraints rest newRest)
-
-                        _ ->
-                            return ()
-
-                inferLet declaration =
-                    case Node.value declaration of
-                        LetFunction function ->
-                            let
-                                functionDeclaration =
-                                    Node.value function.declaration
-                            in
-                            inferFunction range function
-                                |> andThen generalize
-                                |> map
-                                    (Tuple.pair (Node.value functionDeclaration.name)
-                                        >> Just
-                                    )
-
-                        LetDestructuring pattern expression ->
-                            return Nothing
-
-                annotationsFromDeclaration declaration =
-                    case Node.value declaration of
-                        LetFunction function ->
-                            let
-                                functionDeclaration =
-                                    Node.value function.declaration
-                            in
-                            traverse (\_ -> freshVar) functionDeclaration.arguments
-                                |> map (List.map Var)
-                                |> andThen (freshReturnVal functionDeclaration)
-
-                        LetDestructuring pattern expression ->
-                            return Nothing
-
-                freshReturnVal functionDeclaration args =
-                    freshVar
-                        |> map (returnAnnotation functionDeclaration args)
-
-                returnAnnotation functionDeclaration args returnVal =
-                    Just
-                        ( Node.value functionDeclaration.name
-                        , List.foldl Lambda (Var returnVal) args
-                            |> Canonical.Annotation.fromType
-                        )
-            in
-            traverse annotationsFromDeclaration letBlock.declarations
-                |> andThen (List.filterMap identity >> inferLets)
+            inferLetBlock range letBlock
 
         RecordAccessFunction name ->
             inferAccessor range name
@@ -652,6 +583,84 @@ inferCaseBranch range exprType ( pattern, expr ) =
     in
     inferPattern pattern
         |> andThen addConstraintHelp
+
+
+
+---- INFER LET EXPRESSIONS
+
+
+inferLetBlock : Range -> Elm.Syntax.Expression.LetBlock -> Infer Type
+inferLetBlock range letBlock =
+    let
+        inferLets annotations =
+            inEnvs annotations
+                (traverse (inferLet range) letBlock.declarations
+                    |> map (List.filterMap identity)
+                    |> andThen (inferBody annotations)
+                )
+
+        inferBody annotations newAnnotations =
+            inEnvs newAnnotations
+                (infer range letBlock.expression
+                    |> andThen (collectConstraints annotations newAnnotations)
+                )
+
+        collectConstraints annotations newAnnotations typeBody =
+            case ( annotations, newAnnotations ) of
+                ( ( _, ForAll _ tipe ) :: rest, ( _, ForAll _ newType ) :: newRest ) ->
+                    addConstraint ( tipe, newType )
+                        |> andThen (\_ -> collectConstraints rest newRest typeBody)
+
+                _ ->
+                    return typeBody
+    in
+    traverse inferLetShallow letBlock.declarations
+        |> map (List.filterMap identity)
+        |> andThen inferLets
+
+
+inferLetShallow : Node Elm.Syntax.Expression.LetDeclaration -> Infer (Maybe ( String, Annotation ))
+inferLetShallow declaration =
+    case Node.value declaration of
+        LetFunction function ->
+            let
+                functionDeclaration =
+                    Node.value function.declaration
+
+                toValue args returnVar =
+                    ( Node.value functionDeclaration.name
+                    , Canonical.Annotation.fromType <|
+                        List.foldl Lambda (Var returnVar) args
+                    )
+            in
+            map Just <|
+                map2 toValue
+                    (traverse (\_ -> map Var freshVar) functionDeclaration.arguments)
+                    freshVar
+
+        LetDestructuring pattern expression ->
+            return Nothing
+
+
+inferLet : Range -> Node Elm.Syntax.Expression.LetDeclaration -> Infer (Maybe ( String, Annotation ))
+inferLet range declaration =
+    case Node.value declaration of
+        LetFunction function ->
+            let
+                functionDeclaration =
+                    Node.value function.declaration
+
+                toValue annotation =
+                    ( Node.value functionDeclaration.name
+                    , annotation
+                    )
+            in
+            inferFunction range function
+                |> andThen generalize
+                |> map (Just << toValue)
+
+        LetDestructuring pattern expression ->
+            return Nothing
 
 
 
