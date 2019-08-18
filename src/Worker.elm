@@ -24,7 +24,6 @@ import Json.Decode as Decode exposing (Decoder)
 import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
 import List.Extra as List
-import Module
 import Parser
 import Set exposing (Set)
 import Src
@@ -225,7 +224,7 @@ update msg model =
                                 |> Maybe.withDefault 1
                     in
                     ( { model | store = newStore }
-                    , case Module.functionDeclarationAt range currentModuleData.file of
+                    , case Src.functionDeclarationAt range currentModuleData.file of
                         Nothing ->
                             Cmd.batch
                                 [ toJS (Encode.string "no function declaration found")

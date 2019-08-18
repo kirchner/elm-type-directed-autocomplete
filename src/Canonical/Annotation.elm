@@ -9,7 +9,6 @@ module Canonical.Annotation exposing
 import Canonical.Type exposing (Type)
 import Dict exposing (Dict)
 import Set exposing (Set)
-import Type
 
 
 type Annotation
