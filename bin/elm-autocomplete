@@ -5,7 +5,6 @@ var child_process = require("child_process"),
     minimist = require("minimist"),
     net = require("net"),
     path = require("path"),
-    readline = require('readline'),
     runner = require("../lib/runner.js");
 
 

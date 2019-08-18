@@ -235,8 +235,37 @@ update msg model =
                         Just function ->
                             case Dict.get currentModuleData.moduleName model.store.done of
                                 Nothing ->
+                                    let
+                                        todoToString todo =
+                                            String.concat
+                                                [ moduleNameToString
+                                                    todo.moduleData.moduleName
+                                                , " blocked by "
+                                                , String.join ", " <|
+                                                    List.map moduleNameToString <|
+                                                        Set.toList todo.blockedBy
+                                                ]
+
+                                        moduleNameToString =
+                                            String.join "."
+                                    in
                                     Cmd.batch
-                                        [ toJS (Encode.string "no module found")
+                                        [ toJS
+                                            (Encode.string <|
+                                                String.concat
+                                                    [ "Could not find module "
+                                                    , moduleNameToString
+                                                        currentModuleData.moduleName
+                                                    , ". The following modules are available:\n\n  "
+                                                    , String.join "\n  " <|
+                                                        List.map moduleNameToString <|
+                                                            Dict.keys model.store.done
+                                                    , "\n\nThe following modules are blocked:\n\n  "
+                                                    , String.join "\n  " <|
+                                                        List.map todoToString <|
+                                                            model.store.todo
+                                                    ]
+                                            )
                                         , completions []
                                         ]
 
