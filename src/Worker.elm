@@ -293,8 +293,26 @@ update msg model =
                                             else if name == "toString" then
                                                 Nothing
 
+                                            else if name == "todo" then
+                                                Nothing
+
                                             else
                                                 Just ( Src.qualifiedName qualifier name, annotation )
+
+                                        standardValues =
+                                            Dict.fromList
+                                                [ ( "[]"
+                                                  , Canonical.Annotation.fromType
+                                                        (Canonical.Type.list (Var "a"))
+                                                  )
+                                                , ( "\"\""
+                                                  , Canonical.Annotation.fromType
+                                                        Canonical.Type.string
+                                                  )
+                                                , ( "0"
+                                                  , Canonical.Annotation.fromType (Var "number")
+                                                  )
+                                                ]
                                     in
                                     case
                                         Inference.inferHole
@@ -305,7 +323,7 @@ update msg model =
                                             }
                                             |> Result.mapError
                                                 (inferenceErrorToString
-                                                    currentModule.values
+                                                    (Dict.union globalValues currentModule.values)
                                                     currentModule.aliases
                                                     currentModule.unions
                                                     range
@@ -313,7 +331,7 @@ update msg model =
                                                 )
                                             |> Result.map
                                                 (generateCompletions range
-                                                    [ currentModule.values, globalValues ]
+                                                    [ currentModule.values, standardValues, globalValues ]
                                                     currentModule.aliases
                                                     currentModule.unions
                                                 )
