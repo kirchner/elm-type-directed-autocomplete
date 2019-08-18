@@ -100,7 +100,7 @@ errorToString error =
             "There is a case without any branches"
 
         UnsupportedUnification ->
-            "Unsuppoerted unification"
+            "Unsupported unification"
 
         CouldNotSolve solverError ->
             "Could not solve constraints: " ++ Solver.errorToString solverError
