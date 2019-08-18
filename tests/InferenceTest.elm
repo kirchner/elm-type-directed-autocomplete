@@ -324,55 +324,36 @@ foo int =
                                 [ ( "int", Canonical.Type.int ) ]
                             )
                         )
+        , test "record accessor" <|
+            \_ ->
+                inferHelp
+                    { src =
+                        """update : Maybe Int -> { count : Int } -> { count : Int }
+update maybeInt model =
+    case maybeInt of
+        Nothing ->
+            { model | count = model.count }
 
-        --        , test "record accessor" <|
-        --            \_ ->
-        --                inferHelp
-        --                    { src =
-        --                        """update : Msg -> Model -> Model
-        --update msg model =
-        --    case msg of
-        --        NoOp ->
-        --            { model | count = model.count }
-        --
-        --        NameChanged ->
-        --            foo
-        --"""
-        --                    , range =
-        --                        { start = { column = 13, row = 8 }
-        --                        , end = { column = 16, row = 8 }
-        --                        }
-        --                    , binops = Dict.empty
-        --                    , values =
-        --                        Dict.fromList
-        --                            [ ( "msg", Type "Msg" [] )
-        --                            , ( "model", Type "Model" [] )
-        --                            , ( "NoOp", Type "Msg" [] )
-        --                            , ( "NameChanged", Type "Msg" [] )
-        --                            ]
-        --                    , aliases =
-        --                        [ { name = "Model"
-        --                          , comment = ""
-        --                          , args = []
-        --                          , tipe =
-        --                                Record
-        --                                    [ ( "count", Canonical.Type.int )
-        --                                    , ( "name", Canonical.Type.string )
-        --                                    ]
-        --                                    Nothing
-        --                          }
-        --                        ]
-        --                    }
-        --                    |> Expect.equal
-        --                        (Ok
-        --                            ( Record
-        --                                [ ( "count", Canonical.Type.int )
-        --                                , ( "name", Canonical.Type.string )
-        --                                ]
-        --                                Nothing
-        --                            , Dict.empty
-        --                            )
-        --                        )
+        Just int ->
+            foo
+"""
+                    , range =
+                        { start = { column = 13, row = 8 }
+                        , end = { column = 16, row = 8 }
+                        }
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Record
+                                [ ( "count", Canonical.Type.int ) ]
+                                Nothing
+                            , Dict.fromList
+                                [ ( "int", Canonical.Type.int )
+                                , ( "maybeInt", Canonical.Type.maybe Canonical.Type.int )
+                                , ( "model", Record [ ( "count", Canonical.Type.int ) ] Nothing )
+                                ]
+                            )
+                        )
         , test "empty list pattern" <|
             \_ ->
                 inferHelp

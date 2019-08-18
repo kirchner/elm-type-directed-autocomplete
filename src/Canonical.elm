@@ -180,23 +180,31 @@ canonicalizeDeclaration moduleName declarations declaration currentModule =
 
         CustomTypeDeclaration c ->
             let
+                typeName =
+                    Node.value c.name
+
+                vars =
+                    List.map Node.value c.generics
+
+                constructors =
+                    List.map (Node.value >> toConstructor) c.constructors
+
                 toConstructor valueConstructor =
                     ( Node.value valueConstructor.name
                     , List.map
                         (canonicalizeTypeAnnotation moduleName currentModule)
                         valueConstructor.arguments
                     )
+
+                union =
+                    { moduleName = moduleName
+                    , vars = vars
+                    , constructors = constructors
+                    }
             in
             { currentModule
-                | unions =
-                    Dict.insert
-                        (Node.value c.name)
-                        { moduleName = moduleName
-                        , vars = List.map Node.value c.generics
-                        , constructors =
-                            List.map (Node.value >> toConstructor) c.constructors
-                        }
-                        currentModule.unions
+                | unions = Dict.insert typeName union currentModule.unions
+                , values = insertConstructors typeName union currentModule.values
             }
 
         PortDeclaration p ->
@@ -433,6 +441,21 @@ computeTopLevelExpose topLevelExpose currentModule =
                                     Dict.insert exposedType.name
                                         union
                                         currentModule.exposedUnions
+                                , exposedValues =
+                                    List.foldl
+                                        (\( name, types ) ->
+                                            Dict.insert name
+                                                (Canonical.Annotation.fromType <|
+                                                    List.foldl Lambda
+                                                        (Type union.moduleName
+                                                            exposedType.name
+                                                            (List.map Var union.vars)
+                                                        )
+                                                        types
+                                                )
+                                        )
+                                        currentModule.exposedValues
+                                        union.constructors
                             }
 
 
@@ -661,8 +684,38 @@ collectTopLevelExpose importedModule qualifier moduleName topLevelExpose current
                             { currentImports | qualifiedUnions = newQualifiedUnions }
 
                         Just _ ->
-                            -- TODO collect constructors
-                            { currentImports | qualifiedUnions = newQualifiedUnions }
+                            { currentImports
+                                | qualifiedUnions = newQualifiedUnions
+                                , qualifiedValues =
+                                    Dict.update qualifier
+                                        (\maybeValues ->
+                                            case maybeValues of
+                                                Nothing ->
+                                                    Just (insertConstructors exposedType.name union Dict.empty)
+
+                                                Just values ->
+                                                    Just (insertConstructors exposedType.name union values)
+                                        )
+                                        currentImports.qualifiedValues
+                            }
+
+
+insertConstructors : String -> Union -> Dict String Annotation -> Dict String Annotation
+insertConstructors typeName union values =
+    List.foldl
+        (\( name, types ) ->
+            Dict.insert name
+                (Canonical.Annotation.fromType <|
+                    List.foldl Lambda
+                        (Type union.moduleName
+                            typeName
+                            (List.map Var union.vars)
+                        )
+                        types
+                )
+        )
+        values
+        union.constructors
 
 
 collectExposedValue :

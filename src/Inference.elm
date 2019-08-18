@@ -830,16 +830,33 @@ findValue : ModuleName -> String -> Infer Type
 findValue moduleName name =
     Infer <|
         \env ->
+            let
+                getQualifiedValue qualifier =
+                    Dict.get qualifier env.currentModule.qualifiedValues
+                        |> Maybe.andThen (\values -> Dict.get name values)
+
+                returnQualifiedError qualifier =
+                    State.state
+                        ( []
+                        , []
+                        , Err (UnboundVariable (Src.qualifiedName qualifier name))
+                        )
+            in
             if List.isEmpty moduleName then
                 case Dict.get name env.values of
                     Nothing ->
-                        case
-                            Dict.get [] env.currentModule.qualifiedValues
-                                |> Maybe.andThen (\values -> Dict.get name values)
-                        of
+                        case Dict.get name env.currentModule.values of
                             Nothing ->
-                                State.state
-                                    ( [], [], Err (UnboundVariable name) )
+                                case getQualifiedValue [] of
+                                    Nothing ->
+                                        returnQualifiedError []
+
+                                    Just annotation ->
+                                        let
+                                            (Infer run) =
+                                                instantiate annotation
+                                        in
+                                        run env
 
                             Just annotation ->
                                 let
@@ -856,19 +873,9 @@ findValue moduleName name =
                         run env
 
             else
-                case
-                    Dict.get moduleName env.currentModule.qualifiedValues
-                        |> Maybe.andThen (\values -> Dict.get name values)
-                of
+                case getQualifiedValue moduleName of
                     Nothing ->
-                        State.state
-                            ( []
-                            , []
-                            , Err
-                                (UnboundVariable
-                                    (Src.qualifiedName moduleName name)
-                                )
-                            )
+                        returnQualifiedError moduleName
 
                     Just annotation ->
                         let

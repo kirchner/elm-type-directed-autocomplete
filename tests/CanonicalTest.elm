@@ -73,6 +73,8 @@ testMaybe =
                         >> Expect.equal Fixtures.Maybe.exposedValues
                     , exposedUnions [ "Maybe" ]
                         >> Expect.equal Fixtures.Maybe.exposedUnions
+                    , values [ "Maybe" ]
+                        >> Expect.equal Fixtures.Maybe.values
                     ]
 
 
@@ -135,6 +137,18 @@ exposedUnions moduleName store =
 
         Just module_ ->
             module_.exposedUnions
+                |> Dict.keys
+                |> Set.fromList
+
+
+values : ModuleName -> Store -> Set String
+values moduleName store =
+    case Dict.get moduleName store.done of
+        Nothing ->
+            Debug.todo "no done module"
+
+        Just module_ ->
+            module_.values
                 |> Dict.keys
                 |> Set.fromList
 

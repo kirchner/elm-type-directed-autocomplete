@@ -8,6 +8,7 @@ module Canonical.Type exposing
     , fromTypeAnnotation
     , int
     , list
+    , maybe
     , result
     , set
     , shader
@@ -252,6 +253,11 @@ set a =
 result : Type -> Type -> Type
 result err ok =
     Type [ "Result" ] "Result" [ err, ok ]
+
+
+maybe : Type -> Type
+maybe a =
+    Type [ "Maybe" ] "Maybe" [ a ]
 
 
 shader : List Type -> Type

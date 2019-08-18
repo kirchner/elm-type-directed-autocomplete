@@ -12,8 +12,8 @@ exposedValues =
     Set.fromList <|
         List.concat
             [ [ "toFloat", "round", "floor", "ceiling", "truncate" ]
-            , [ "max", "min", "compare" ]
-            , [ "not", "xor" ]
+            , [ "max", "min", "compare", "EQ", "GT", "LT" ]
+            , [ "True", "False", "not", "xor" ]
             , [ "modBy", "remainderBy", "negate", "abs", "clamp", "sqrt", "logBase", "e" ]
             , [ "pi", "cos", "sin", "tan", "acos", "asin", "atan", "atan2" ]
             , [ "degrees", "radians", "turns" ]

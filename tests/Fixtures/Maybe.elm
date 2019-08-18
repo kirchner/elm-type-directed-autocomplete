@@ -2,6 +2,7 @@ module Fixtures.Maybe exposing
     ( exposedUnions
     , exposedValues
     , src
+    , values
     )
 
 import Set exposing (Set)
@@ -11,9 +12,22 @@ exposedValues : Set String
 exposedValues =
     Set.fromList <|
         List.concat
-            [ [ "andThen" ]
+            [ [ "Just", "Nothing" ]
+            , [ "andThen" ]
             , [ "map", "map2", "map3", "map4", "map5" ]
             , [ "withDefault" ]
+            ]
+
+
+values : Set String
+values =
+    Set.fromList <|
+        List.concat
+            [ [ "Just", "Nothing" ]
+            , [ "andThen" ]
+            , [ "map", "map2", "map3", "map4", "map5" ]
+            , [ "withDefault" ]
+            , [ "isJust", "destruct" ]
             ]
 
 
