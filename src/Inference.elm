@@ -904,11 +904,16 @@ findValue moduleName name =
                         |> Maybe.andThen (\values -> Dict.get name values)
 
                 returnQualifiedError qualifier =
-                    State.state
-                        ( []
-                        , []
-                        , Err (UnboundVariable (Src.qualifiedName qualifier name))
-                        )
+                    --State.state
+                    --    ( []
+                    --    , []
+                    --    , Err (UnboundVariable (Src.qualifiedName qualifier name))
+                    --    )
+                    State.advance <|
+                        \count ->
+                            ( ( [], [], Ok (Var ("a" ++ String.fromInt count)) )
+                            , count + 1
+                            )
             in
             if List.isEmpty moduleName then
                 case Dict.get name env.values of

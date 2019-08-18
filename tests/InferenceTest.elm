@@ -17,7 +17,7 @@ import Fixtures.List
 import Fixtures.Maybe
 import Fuzz exposing (Fuzzer)
 import Inference
-import Module
+import Src
 import Test exposing (..)
 
 
@@ -527,7 +527,7 @@ inferHelp { src, range } =
                         }
                         store
             in
-            case Module.functionDeclarationAt actualRange file of
+            case Src.functionDeclarationAt actualRange file of
                 Nothing ->
                     Debug.todo "No function declaration at the specified range"
 
