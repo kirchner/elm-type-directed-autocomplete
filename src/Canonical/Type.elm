@@ -208,6 +208,7 @@ toString tipe =
                     Just var ->
                         "{ " ++ var ++ " | "
                 , String.join ", " (List.map fieldToString fields)
+                , " }"
                 ]
 
 
