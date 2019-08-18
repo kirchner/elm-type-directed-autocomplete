@@ -291,6 +291,9 @@ update msg model =
                                             else if name == "identity" then
                                                 Nothing
 
+                                            else if name == "toString" then
+                                                Nothing
+
                                             else
                                                 Just ( Src.qualifiedName qualifier name, annotation )
                                     in
