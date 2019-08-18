@@ -457,6 +457,33 @@ bar ({ count } as stuff) =
                                 ]
                             )
                         )
+        , test "let binding" <|
+            \_ ->
+                inferHelp
+                    { src = """bar : Int -> Float
+bar int =
+    let
+        foo =
+            1.0
+    in
+    foo + toFloat int
+"""
+                    , range =
+                        { start = { column = 11, row = 7 }
+                        , end = { column = 18, row = 7 }
+                        }
+                    }
+                    |> Expect.equal
+                        (Ok
+                            ( Lambda
+                                Canonical.Type.int
+                                Canonical.Type.float
+                            , Dict.fromList
+                                [ ( "int", Canonical.Type.int )
+                                , ( "foo", Canonical.Type.float )
+                                ]
+                            )
+                        )
         ]
 
 

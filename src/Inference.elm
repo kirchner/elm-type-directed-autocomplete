@@ -9,7 +9,7 @@ import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
 import Elm.Syntax.Declaration exposing (Declaration(..))
-import Elm.Syntax.Expression exposing (Expression(..))
+import Elm.Syntax.Expression exposing (Expression(..), LetDeclaration(..))
 import Elm.Syntax.Infix exposing (Infix)
 import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
@@ -273,8 +273,76 @@ infer range (Node currentRange expr) =
             inferCase range caseBlock
 
         LetExpression letBlock ->
-            -- TODO add declarations to env
-            infer range letBlock.expression
+            let
+                inferLets annotations =
+                    inEnvs annotations
+                        (traverse inferLet letBlock.declarations
+                            |> map (List.filterMap identity)
+                            |> andThen
+                                (\newAnnotations ->
+                                    inEnvs newAnnotations
+                                        (infer range letBlock.expression)
+                                        |> andThen
+                                            (\tipe ->
+                                                collectConstraints annotations newAnnotations
+                                                    |> map (\_ -> tipe)
+                                            )
+                                )
+                        )
+
+                collectConstraints annotations newAnnotations =
+                    case ( annotations, newAnnotations ) of
+                        ( ( _, ForAll _ tipe ) :: rest, ( _, ForAll _ newType ) :: newRest ) ->
+                            addConstraint ( tipe, newType )
+                                |> andThen (\_ -> collectConstraints rest newRest)
+
+                        _ ->
+                            return ()
+
+                inferLet declaration =
+                    case Node.value declaration of
+                        LetFunction function ->
+                            let
+                                functionDeclaration =
+                                    Node.value function.declaration
+                            in
+                            inferFunction range function
+                                |> andThen generalize
+                                |> map
+                                    (Tuple.pair (Node.value functionDeclaration.name)
+                                        >> Just
+                                    )
+
+                        LetDestructuring pattern expression ->
+                            return Nothing
+
+                annotationsFromDeclaration declaration =
+                    case Node.value declaration of
+                        LetFunction function ->
+                            let
+                                functionDeclaration =
+                                    Node.value function.declaration
+                            in
+                            traverse (\_ -> freshVar) functionDeclaration.arguments
+                                |> map (List.map Var)
+                                |> andThen (freshReturnVal functionDeclaration)
+
+                        LetDestructuring pattern expression ->
+                            return Nothing
+
+                freshReturnVal functionDeclaration args =
+                    freshVar
+                        |> map (returnAnnotation functionDeclaration args)
+
+                returnAnnotation functionDeclaration args returnVal =
+                    Just
+                        ( Node.value functionDeclaration.name
+                        , List.foldl Lambda (Var returnVal) args
+                            |> Canonical.Annotation.fromType
+                        )
+            in
+            traverse annotationsFromDeclaration letBlock.declarations
+                |> andThen (List.filterMap identity >> inferLets)
 
         RecordAccessFunction name ->
             inferAccessor range name
@@ -978,22 +1046,28 @@ freshVars vars subst =
                         )
 
 
-generalize : Env -> Type -> Annotation
-generalize env tipe =
-    let
-        newVars =
-            Set.toList <|
-                Set.diff
-                    (Canonical.Type.freeTypeVars tipe)
-                    envFreeTypeVars
+generalize : Type -> Infer Annotation
+generalize tipe =
+    Infer <|
+        \env ->
+            let
+                newVars =
+                    Set.toList <|
+                        Set.diff
+                            (Canonical.Type.freeTypeVars tipe)
+                            envFreeTypeVars
 
-        envFreeTypeVars =
-            Dict.foldl
-                (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
-                Set.empty
-                env.values
-    in
-    ForAll newVars tipe
+                envFreeTypeVars =
+                    Dict.foldl
+                        (\_ -> Canonical.Annotation.freeTypeVars >> Set.union)
+                        Set.empty
+                        env.values
+            in
+            State.state
+                ( []
+                , []
+                , Ok (ForAll newVars tipe)
+                )
 
 
 
