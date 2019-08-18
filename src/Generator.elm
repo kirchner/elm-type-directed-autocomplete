@@ -435,24 +435,22 @@ recordUpdate generator =
                 case targetType of
                     Record fields var ->
                         let
-                            ofTargetType name annotation collected =
+                            ofTargetType ( name, annotation ) =
                                 instantiate annotation
                                     |> BranchedState.map
                                         (\tipe ->
-                                            collect name collected <|
+                                            case
                                                 Solver.unifiability
                                                     { typeA = tipe
                                                     , typeB = targetType
                                                     }
+                                            of
+                                                NotUnifiable _ ->
+                                                    Nothing
+
+                                                Unifiable _ _ ->
+                                                    Just name
                                         )
-
-                            collect name collected unifiability =
-                                case unifiability of
-                                    NotUnifiable _ ->
-                                        collected
-
-                                    Unifiable _ _ ->
-                                        name :: collected
 
                             toRecordUpdate name =
                                 fields
@@ -465,13 +463,12 @@ recordUpdate generator =
                                     |> BranchedState.map (Tuple.pair fieldName)
                         in
                         BranchedState.traverse
-                            (Dict.foldl
-                                (\name annotation ->
-                                    BranchedState.andThen (ofTargetType name annotation)
-                                )
-                                (BranchedState.state [])
-                                >> BranchedState.andThen
-                                    (BranchedState.traverse toRecordUpdate)
+                            (\values ->
+                                Dict.toList values
+                                    |> BranchedState.combine ofTargetType
+                                    |> BranchedState.map (List.filterMap identity)
+                                    |> BranchedState.andThen
+                                        (BranchedState.traverse toRecordUpdate)
                             )
                             config.values
 
