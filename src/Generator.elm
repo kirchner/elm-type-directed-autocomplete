@@ -113,84 +113,87 @@ available. Take a look at its source code, to get an idea of what is possible.
 -}
 default : Generator
 default =
-    all
-        [ recordUpdate <|
-            all
-                [ value
-                , field
+    firstN 42 <|
+        all
+            [ recordUpdate <|
+                all
+                    [ value
+                    , field
+                    ]
+            , value
+            , field
+            , accessor
+            , tuple
+                { first =
+                    all
+                        [ recordUpdate value
+                        , value
+                        , call [ value ]
+                        ]
+                , second =
+                    all
+                        [ recordUpdate value
+                        , value
+                        , call [ value ]
+                        ]
+                }
+            , cases
+                { matched = value
+                , branch =
+                    \_ ->
+                        first <|
+                            all
+                                [ tuple
+                                    { first =
+                                        all
+                                            [ todo
+                                            , value
+                                            ]
+                                    , second =
+                                        all
+                                            [ value
+                                            , call [ value ]
+                                            ]
+                                    }
+                                , value
+                                ]
+                }
+            , cases
+                { matched = value
+                , branch =
+                    \_ ->
+                        tuple
+                            { first = todo
+                            , second = value
+                            }
+                }
+            , cases
+                { matched = value
+                , branch =
+                    \_ ->
+                        todo
+                }
+            , call
+                [ all
+                    [ value
+                    , field
+                    , accessor
+                    ]
                 ]
-        , value
-        , field
-        , accessor
-        , tuple
-            { first =
-                all
-                    [ recordUpdate value
-                    , value
-                    , call [ value ]
+            , call
+                [ all
+                    [ value
+                    , field
+                    , accessor
                     ]
-            , second =
-                all
-                    [ recordUpdate value
-                    , value
-                    , call [ value ]
+                , all
+                    [ value
+                        |> takeValues 1
+                    , field
+                    , accessor
                     ]
-            }
-        , cases
-            { matched = value
-            , branch =
-                \_ ->
-                    first <|
-                        all
-                            [ tuple
-                                { first =
-                                    all
-                                        [ value ]
-                                , second =
-                                    all
-                                        [ value
-                                        , call [ value ]
-                                        ]
-                                }
-                            , value
-                            ]
-            }
-        , cases
-            { matched = value
-            , branch =
-                \_ ->
-                    tuple
-                        { first = todo
-                        , second = value
-                        }
-            }
-        , cases
-            { matched = value
-            , branch =
-                \_ ->
-                    todo
-            }
-        , call
-            [ all
-                [ value
-                , field
-                , accessor
                 ]
             ]
-        , call
-            [ all
-                [ value
-                , field
-                , accessor
-                ]
-            , all
-                [ value
-                    |> takeValues 1
-                , field
-                , accessor
-                ]
-            ]
-        ]
 
 
 {-| If your `Generator` should potentially output case expression, you have to
