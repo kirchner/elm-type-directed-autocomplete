@@ -140,24 +140,35 @@ default =
             { matched = value
             , branch =
                 \_ ->
-                    all
-                        [ first <|
-                            all
-                                [ tuple
-                                    { first =
-                                        all
-                                            [ value
-                                            ]
-                                    , second =
-                                        all
-                                            [ value
-                                            , call [ value ]
-                                            ]
-                                    }
-                                , value
-                                ]
-                        , todo
-                        ]
+                    first <|
+                        all
+                            [ tuple
+                                { first =
+                                    all
+                                        [ value ]
+                                , second =
+                                    all
+                                        [ value
+                                        , call [ value ]
+                                        ]
+                                }
+                            , value
+                            ]
+            }
+        , cases
+            { matched = value
+            , branch =
+                \_ ->
+                    tuple
+                        { first = todo
+                        , second = value
+                        }
+            }
+        , cases
+            { matched = value
+            , branch =
+                \_ ->
+                    todo
             }
         , call
             [ all
@@ -269,6 +280,19 @@ call argumentGenerators =
                 let
                     collectScope valuesInScope =
                         valuesInScope
+                            |> Dict.filter
+                                (\name _ ->
+                                    name
+                                        |> String.split "."
+                                        |> List.reverse
+                                        |> List.head
+                                        |> Maybe.andThen
+                                            (String.toList
+                                                >> List.head
+                                                >> Maybe.map Char.isLower
+                                            )
+                                        |> Maybe.withDefault True
+                                )
                             |> Dict.toList
                             |> BranchedState.traverse collectValue
 
