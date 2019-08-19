@@ -555,20 +555,10 @@ computeTopLevelExpose topLevelExpose currentModule =
                                         union
                                         currentModule.exposedUnions
                                 , exposedValues =
-                                    List.foldl
-                                        (\( name, types ) ->
-                                            Dict.insert name
-                                                (Canonical.Annotation.fromType <|
-                                                    List.foldl Lambda
-                                                        (Type union.moduleName
-                                                            exposedType.name
-                                                            (List.map Var union.vars)
-                                                        )
-                                                        types
-                                                )
-                                        )
+                                    insertConstructors
+                                        exposedType.name
+                                        union
                                         currentModule.exposedValues
-                                        union.constructors
                             }
 
 
@@ -865,7 +855,7 @@ insertConstructors typeName union values =
         (\( name, types ) ->
             Dict.insert name
                 (Canonical.Annotation.fromType <|
-                    List.foldl Lambda
+                    List.foldr Lambda
                         (Type union.moduleName
                             typeName
                             (List.map Var union.vars)
