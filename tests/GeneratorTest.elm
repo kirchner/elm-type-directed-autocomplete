@@ -58,6 +58,7 @@ suite =
             , allTest
             , equivalenceTest
             , firstNTest
+            , todoTest
             ]
         , takeValuesTest
         ]
@@ -526,6 +527,40 @@ firstNTest =
             [ ( Canonical.Type.int
               , [ "func int1"
                 , "func int2"
+                ]
+              )
+            ]
+        ]
+
+
+todoTest : Test
+todoTest =
+    describe "todo"
+        [ testGenerator "with no additinal values"
+            Generator.todo
+            [ ( Canonical.Type.int
+              , [ "Debug.todo \"implementation missing\"" ]
+              )
+            ]
+        , testGenerator "with cases"
+            (cases
+                { matched = call []
+                , branch =
+                    \_ ->
+                        Generator.todo
+                }
+                |> addValues values
+            )
+            [ ( Canonical.Type.int
+              , [ """case msg of
+    NewInt newInt ->
+        Debug.todo "implementation missing"
+
+    NewFloat newFloat ->
+        Debug.todo "implementation missing"
+
+    NewString newString ->
+        Debug.todo "implementation missing\""""
                 ]
               )
             ]

@@ -152,7 +152,11 @@ var createServer = function() {
 
               console.log();
               console.log("================================================================================");
-              console.log(JSON.stringify(params, null, "  "));
+              console.log(JSON.stringify({
+                fileName: params.fileName,
+                column: params.column,
+                row: params.row
+              }, null, "  "));
               console.log("--------------------------------------------------------------------------------");
 
               if (params) {

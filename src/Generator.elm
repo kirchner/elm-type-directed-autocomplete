@@ -7,6 +7,7 @@ module Generator exposing
     , all
     , first, firstN
     , exprToString, exprToText
+    , todo
     )
 
 {-|
@@ -138,48 +139,46 @@ default =
         , cases
             { matched = value
             , branch =
-                \newValues ->
-                    first <|
-                        all
-                            [ tuple
-                                { first =
-                                    all
-                                        [ recordUpdate <|
-                                            all
-                                                [ value
-                                                    |> addValues newValues
-                                                    |> takeValues 1
-                                                , call
-                                                    [ value
-                                                        |> addValues newValues
-                                                        |> takeValues 1
-                                                    ]
-                                                ]
-                                        , value
-                                        , call [ value ]
-                                        ]
-                                , second =
-                                    all
-                                        [ value
-                                        , call [ value ]
-                                        ]
-                                }
-                            , recordUpdate <|
-                                all
-                                    [ value
-                                        |> addValues newValues
-                                        |> takeValues 1
-                                    , call
-                                        [ value
-                                            |> addValues newValues
-                                            |> takeValues 1
-                                        ]
-                                    ]
-                            , value
-                            ]
+                \_ ->
+                    all
+                        [ first <|
+                            all
+                                [ tuple
+                                    { first =
+                                        all
+                                            [ value
+                                            ]
+                                    , second =
+                                        all
+                                            [ value
+                                            , call [ value ]
+                                            ]
+                                    }
+                                , value
+                                ]
+                        , todo
+                        ]
             }
-        , call [ all [ value, field, accessor ] ]
-        , call [ all [ value, field, accessor ], all [ value, field, accessor ] ]
+        , call
+            [ all
+                [ value
+                , field
+                , accessor
+                ]
+            ]
+        , call
+            [ all
+                [ value
+                , field
+                , accessor
+                ]
+            , all
+                [ value
+                    |> takeValues 1
+                , field
+                , accessor
+                ]
+            ]
         ]
 
 
@@ -615,6 +614,17 @@ cases generator =
 
                     _ ->
                         BranchedState.state []
+        }
+
+
+todo : Generator
+todo =
+    Generator
+        { transform = identity
+        , generate =
+            \config _ ->
+                BranchedState.state
+                    [ Call "Debug.todo" [ Call "\"implementation missing\"" [] ] ]
         }
 
 
