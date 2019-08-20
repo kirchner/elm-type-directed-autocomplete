@@ -154,13 +154,13 @@ update msg model =
                     ( { model | store = newStore }
                     , Cmd.batch
                         [ store file data
-                        , toJS (Encode.string ("reparsed " ++ file.fileName))
+                        , log ("reparsed " ++ file.fileName)
                         ]
                     )
 
                 Err e ->
                     ( model
-                    , toJS <| Encode.string <| file.fileName ++ ": " ++ e
+                    , log (file.fileName ++ ": " ++ e)
                     )
 
         Restore cached ->
@@ -171,14 +171,14 @@ update msg model =
                             Canonical.add moduleData model.store
                     in
                     ( { model | store = newStore }
-                    , toJS (Encode.string ("restored " ++ cached.fileName))
+                    , log ("restored " ++ cached.fileName)
                     )
 
                 Err e ->
                     ( model
                     , Cmd.batch
-                        [ toJS <| Encode.string e
-                        , toJS <| Encode.string cached.fileName
+                        [ log e
+                        , log cached.fileName
                         ]
                     )
 
@@ -187,7 +187,7 @@ update msg model =
                 Err e ->
                     ( model
                     , Cmd.batch
-                        [ toJS (Encode.string "could not parse file")
+                        [ log "could not parse file"
                         , completions []
                         ]
                     )
@@ -227,7 +227,7 @@ update msg model =
                     , case Src.functionDeclarationAt range currentModuleData.file of
                         Nothing ->
                             Cmd.batch
-                                [ toJS (Encode.string "no function declaration found")
+                                [ log "no function declaration found"
                                 , completions []
                                 ]
 
@@ -249,22 +249,20 @@ update msg model =
                                             String.join "."
                                     in
                                     Cmd.batch
-                                        [ toJS
-                                            (Encode.string <|
-                                                String.concat
-                                                    [ "Could not find module "
-                                                    , moduleNameToString
-                                                        currentModuleData.moduleName
-                                                    , ". The following modules are available:\n\n  "
-                                                    , String.join "\n  " <|
-                                                        List.map moduleNameToString <|
-                                                            Dict.keys model.store.done
-                                                    , "\n\nThe following modules are blocked:\n\n  "
-                                                    , String.join "\n  " <|
-                                                        List.map todoToString <|
-                                                            model.store.todo
-                                                    ]
-                                            )
+                                        [ log <|
+                                            String.concat
+                                                [ "Could not find module "
+                                                , moduleNameToString
+                                                    currentModuleData.moduleName
+                                                , ". The following modules are available:\n\n  "
+                                                , String.join "\n  " <|
+                                                    List.map moduleNameToString <|
+                                                        Dict.keys model.store.done
+                                                , "\n\nThe following modules are blocked:\n\n  "
+                                                , String.join "\n  " <|
+                                                    List.map todoToString <|
+                                                        model.store.todo
+                                                ]
                                         , completions []
                                         ]
 
@@ -338,7 +336,7 @@ update msg model =
                                     of
                                         Err error ->
                                             Cmd.batch
-                                                [ toJS (Encode.string error)
+                                                [ log error
                                                 , completions []
                                                 ]
 
@@ -413,23 +411,21 @@ generateCompletions :
     -> Cmd Msg
 generateCompletions range globalValues aliases unions ( tipe, localValues ) =
     let
-        addValues generator =
-            List.foldl
-                (\values ->
-                    --Generator.addValues (Dict.map (\_ -> Type.normalize aliases) values)
-                    Generator.addValues values
-                )
-                generator
-                globalValues
+        addGlobalValues generator =
+            List.foldl Generator.addValues generator globalValues
     in
-    Generator.default
-        |> addValues
-        |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
-        |> Generator.addUnions unions
-        --|> Generator.for (Type.normalize aliases tipe)
-        |> Generator.for tipe
-        |> List.map (completionToString range)
-        |> completions
+    Cmd.batch
+        [ log ("Inferred type: " ++ Canonical.Type.toString tipe)
+        , log "Completions:"
+        , Generator.default
+            |> addGlobalValues
+            |> Generator.addValues
+                (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
+            |> Generator.addUnions unions
+            |> Generator.for tipe
+            |> List.map (completionToString range)
+            |> completions
+        ]
 
 
 completionToString : Range -> Expr -> String
@@ -449,6 +445,11 @@ completionToString range completion =
                     List.map (\line -> String.repeat (range.start.column - 1) " " ++ line)
                         rest
                 ]
+
+
+log : String -> Cmd msg
+log text =
+    toJS (Encode.string text)
 
 
 subscriptions : Sub Msg
