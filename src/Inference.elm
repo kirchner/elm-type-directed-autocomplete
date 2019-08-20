@@ -480,7 +480,7 @@ inferLambda range lambda =
                 )
 
         returnType vars tipe =
-            List.foldl Lambda tipe vars
+            List.foldr Lambda tipe vars
     in
     traverse inferPattern lambda.args
         |> andThen (List.unzip >> inferBody)
@@ -630,7 +630,7 @@ inferLetShallow declaration =
                 toValue args returnVar =
                     ( Node.value functionDeclaration.name
                     , Canonical.Annotation.fromType <|
-                        List.foldl Lambda (Var returnVar) args
+                        List.foldr Lambda (Var returnVar) args
                     )
             in
             map Just <|
@@ -874,7 +874,7 @@ inferPattern (Node _ pattern) =
                                             (\( types, annotations ) ->
                                                 addConstraint
                                                     ( constructorType
-                                                    , List.foldl Lambda (Var var) types
+                                                    , List.foldr Lambda (Var var) types
                                                     )
                                                     |> map
                                                         (\_ ->
