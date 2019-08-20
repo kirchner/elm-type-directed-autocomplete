@@ -37,6 +37,21 @@ testRun =
                     ]
                     |> Expect.equal
                         (Ok (Dict.singleton "a" Canonical.Type.int))
+        , test "Result err ok  ~  Result String Int" <|
+            \_ ->
+                Solver.run
+                    [ ( Canonical.Type.result (Var "err") (Var "ok")
+                      , Canonical.Type.result Canonical.Type.string Canonical.Type.int
+                      )
+                    ]
+                    |> Expect.equal
+                        (Ok
+                            (Dict.fromList
+                                [ ( "err", Canonical.Type.string )
+                                , ( "ok", Canonical.Type.int )
+                                ]
+                            )
+                        )
         , test "a -> String  ~  Int -> String" <|
             \_ ->
                 Solver.run
@@ -247,6 +262,21 @@ testUnifiability =
                         (Unifiable
                             TypeBIsMoreGeneral
                             (Dict.singleton "a" Canonical.Type.int)
+                        )
+        , test "Result err ok  ~  Result String Int" <|
+            \_ ->
+                Solver.unifiability
+                    { typeA = Canonical.Type.result (Var "err") (Var "ok")
+                    , typeB = Canonical.Type.result Canonical.Type.string Canonical.Type.int
+                    }
+                    |> Expect.equal
+                        (Unifiable
+                            TypeAIsMoreGeneral
+                            (Dict.fromList
+                                [ ( "err", Canonical.Type.string )
+                                , ( "ok", Canonical.Type.int )
+                                ]
+                            )
                         )
         , test "number  ~  Int" <|
             \_ ->

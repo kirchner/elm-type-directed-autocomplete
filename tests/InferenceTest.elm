@@ -9,6 +9,7 @@ import Elm.Parser
 import Elm.Processing
 import Elm.RawFile exposing (RawFile)
 import Elm.Syntax.Expression exposing (Function)
+import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node exposing (Node(..))
 import Elm.Syntax.Range exposing (Range, emptyRange)
 import Expect exposing (Expectation)
@@ -573,6 +574,14 @@ store =
             , imports = Elm.RawFile.imports rawList
             , interface = Elm.Interface.build rawList
             }
+        |> addMock [ "Result" ]
+        |> addMock [ "String" ]
+        |> addMock [ "Char" ]
+        |> addMock [ "Tuple" ]
+        |> addMock [ "Debug" ]
+        |> addMock [ "Platform" ]
+        |> addMock [ "Platform", "Sub" ]
+        |> addMock [ "Platform", "Cmd" ]
 
 
 rawBasics : RawFile
@@ -598,3 +607,29 @@ parse src =
 
         Ok rawFile ->
             rawFile
+
+
+rawMock : ModuleName -> RawFile
+rawMock moduleName =
+    parse <|
+        String.concat
+            [ "module "
+            , String.join "." moduleName
+            , " exposing ()\n"
+            ]
+
+
+addMock : ModuleName -> Store -> Store
+addMock moduleName =
+    let
+        rawFile =
+            rawMock moduleName
+    in
+    Canonical.add
+        { moduleName = moduleName
+        , fileName = String.join "/" moduleName ++ ".elm"
+        , file =
+            Elm.Processing.process Elm.Processing.init rawFile
+        , imports = Elm.RawFile.imports rawFile
+        , interface = Elm.Interface.build rawFile
+        }

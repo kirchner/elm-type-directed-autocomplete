@@ -119,7 +119,7 @@ canonicalizeModule importedModules moduleName file interface =
             }
 
         { binops, qualifiedValues, qualifiedUnions, qualifiedAliases } =
-            if Set.member moduleName defaultImportModules then
+            if Set.member moduleName coreModules then
                 collectImports importedModules file.imports
 
             else
@@ -583,7 +583,14 @@ collectImports importedModules imports =
         initialImports =
             { binops = Dict.empty
             , qualifiedValues = Dict.empty
-            , qualifiedUnions = Dict.empty
+            , qualifiedUnions =
+                Dict.singleton []
+                    (Dict.singleton "List"
+                        { moduleName = [ "List" ]
+                        , vars = [ "a" ]
+                        , constructors = []
+                        }
+                    )
             , qualifiedAliases = Dict.empty
             }
     in
@@ -999,9 +1006,18 @@ requiredModules : ModuleData -> Store -> Set ModuleName
 requiredModules moduleData store =
     let
         needed =
-            List.map (.moduleName >> Node.value) moduleData.imports
-                |> List.filter (not << isNative)
-                |> Set.fromList
+            if Set.member moduleData.moduleName coreModules then
+                List.map (.moduleName >> Node.value) moduleData.imports
+                    |> List.filter (not << isNative)
+                    |> Set.fromList
+
+            else
+                List.map (.moduleName >> Node.value)
+                    (moduleData.imports
+                        ++ List.map Node.value defaultImports
+                    )
+                    |> List.filter (not << isNative)
+                    |> Set.fromList
 
         isNative moduleName =
             case moduleName of
@@ -1025,20 +1041,26 @@ requiredModules moduleData store =
 ---- DEFAULT IMPORTS
 
 
-defaultImportModules : Set ModuleName
-defaultImportModules =
+coreModules : Set ModuleName
+coreModules =
     Set.fromList
-        [ [ "Basics" ]
+        [ [ "Array" ]
+        , [ "Basics" ]
+        , [ "Bitwise" ]
+        , [ "Char" ]
+        , [ "Debug" ]
+        , [ "Dict" ]
         , [ "List" ]
         , [ "Maybe" ]
-        , [ "Result" ]
-        , [ "String" ]
-        , [ "Char" ]
-        , [ "Tuple" ]
-        , [ "Debug" ]
         , [ "Platform" ]
         , [ "Platform", "Cmd" ]
         , [ "Platform", "Sub" ]
+        , [ "Process" ]
+        , [ "Result" ]
+        , [ "Set" ]
+        , [ "String" ]
+        , [ "Task" ]
+        , [ "Tuple" ]
         ]
 
 
