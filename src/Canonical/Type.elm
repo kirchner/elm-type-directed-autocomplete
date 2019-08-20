@@ -167,16 +167,31 @@ fromTypeAnnotation typeAnnotation =
 
 toString : Type -> String
 toString tipe =
+    toStringHelp False tipe
+
+
+toStringHelp : Bool -> Type -> String
+toStringHelp needsParantheses tipe =
     case tipe of
         Var var ->
             var
 
         Lambda from to ->
-            String.concat
-                [ toString from
-                , " -> "
-                , toString to
-                ]
+            if needsParantheses then
+                String.concat
+                    [ "("
+                    , toStringHelp True from
+                    , " -> "
+                    , toStringHelp False to
+                    , ")"
+                    ]
+
+            else
+                String.concat
+                    [ toStringHelp True from
+                    , " -> "
+                    , toStringHelp False to
+                    ]
 
         Unit ->
             "()"
@@ -184,7 +199,7 @@ toString tipe =
         Tuple tipes ->
             String.concat
                 [ "( "
-                , String.join ", " (List.map toString tipes)
+                , String.join ", " (List.map (toStringHelp False) tipes)
                 , " )"
                 ]
 
@@ -193,12 +208,25 @@ toString tipe =
                 qualifiedName =
                     String.join "." (moduleName ++ [ name ])
             in
-            String.join " " (qualifiedName :: List.map toString tipes)
+            if List.isEmpty tipes then
+                qualifiedName
+
+            else if needsParantheses then
+                String.concat
+                    [ "("
+                    , String.join " "
+                        (qualifiedName :: List.map (toStringHelp True) tipes)
+                    , ")"
+                    ]
+
+            else
+                String.join " "
+                    (qualifiedName :: List.map (toStringHelp True) tipes)
 
         Record fields maybeVar ->
             let
                 fieldToString ( fieldName, fieldType ) =
-                    fieldName ++ " : " ++ toString fieldType
+                    fieldName ++ " : " ++ toStringHelp False fieldType
             in
             String.concat
                 [ case maybeVar of
