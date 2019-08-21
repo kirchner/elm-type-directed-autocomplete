@@ -6,6 +6,7 @@ module Canonical exposing
     , Module
     , ModuleData
     , Store
+    , TodoItem
     , Union
     , add
     , canonicalizeModule

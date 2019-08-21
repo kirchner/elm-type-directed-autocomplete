@@ -1,6 +1,6 @@
 port module Worker exposing (main)
 
-import Canonical exposing (Alias, ModuleData, Store, Union)
+import Canonical exposing (Alias, Module, ModuleData, Store, TodoItem, Union)
 import Canonical.Annotation exposing (Annotation)
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
@@ -25,6 +25,7 @@ import Json.Decode.Pipeline as Decode
 import Json.Encode as Encode exposing (Value)
 import List.Extra as List
 import Parser
+import Result.Extra as Result
 import Set exposing (Set)
 import Src
 
@@ -183,177 +184,393 @@ update msg model =
                     )
 
         For completionRequest ->
-            case Parser.parse completionRequest.src of
-                Err e ->
-                    ( model
-                    , Cmd.batch
-                        [ log "could not parse file"
+            ( model
+            , case computeCompletions model.store completionRequest of
+                Err error ->
+                    Cmd.batch
+                        [ log (errorToString error)
                         , completions []
                         ]
-                    )
 
-                Ok rawFile ->
-                    let
-                        currentModuleData =
-                            toModuleData completionRequest.fileName rawFile
-
-                        newStore =
-                            Canonical.replace currentModuleData model.store
-
-                        range =
-                            { start =
-                                { column = completionRequest.column - wordLength
-                                , row = completionRequest.row
-                                }
-                            , end =
-                                { column = completionRequest.column
-                                , row = completionRequest.row
-                                }
-                            }
-
-                        wordLength =
-                            completionRequest.src
-                                |> String.lines
-                                |> List.getAt (completionRequest.row - 1)
-                                |> Maybe.andThen
-                                    (String.left (completionRequest.column - 1)
-                                        >> String.words
-                                        >> List.last
-                                    )
-                                |> Maybe.map String.length
-                                |> Maybe.withDefault 1
-                    in
-                    ( { model | store = newStore }
-                    , case Src.functionDeclarationAt range currentModuleData.file of
-                        Nothing ->
-                            Cmd.batch
-                                [ log "no function declaration found"
-                                , completions []
-                                ]
-
-                        Just function ->
-                            case Dict.get currentModuleData.moduleName model.store.done of
-                                Nothing ->
-                                    let
-                                        todoToString todo =
-                                            String.concat
-                                                [ moduleNameToString
-                                                    todo.moduleData.moduleName
-                                                , " blocked by "
-                                                , String.join ", " <|
-                                                    List.map moduleNameToString <|
-                                                        Set.toList todo.blockedBy
-                                                ]
-
-                                        moduleNameToString =
-                                            String.join "."
-                                    in
-                                    Cmd.batch
-                                        [ log <|
-                                            String.concat
-                                                [ "Could not find module "
-                                                , moduleNameToString
-                                                    currentModuleData.moduleName
-                                                , ". The following modules are available:\n\n  "
-                                                , String.join "\n  " <|
-                                                    List.map moduleNameToString <|
-                                                        Dict.keys model.store.done
-                                                , "\n\nThe following modules are blocked:\n\n  "
-                                                , String.join "\n  " <|
-                                                    List.map todoToString <|
-                                                        model.store.todo
-                                                ]
-                                        , completions []
-                                        ]
-
-                                Just currentModule ->
-                                    let
-                                        globalValues =
-                                            Dict.foldl
-                                                (\qualifier values allValues ->
-                                                    Dict.union allValues
-                                                        (values
-                                                            |> Dict.toList
-                                                            |> List.filterMap (qualify qualifier)
-                                                            |> Dict.fromList
-                                                        )
-                                                )
-                                                Dict.empty
-                                                currentModule.qualifiedValues
-
-                                        qualify qualifier ( name, annotation ) =
-                                            if name == "always" then
-                                                Nothing
-
-                                            else if name == "identity" then
-                                                Nothing
-
-                                            else if name == "toString" then
-                                                Nothing
-
-                                            else if name == "todo" then
-                                                Nothing
-
-                                            else
-                                                Just ( Src.qualifiedName qualifier name, annotation )
-
-                                        standardValues =
-                                            Dict.fromList
-                                                [ ( "[]"
-                                                  , Canonical.Annotation.fromType
-                                                        (Canonical.Type.list (Var "a"))
-                                                  )
-                                                , ( "\"\""
-                                                  , Canonical.Annotation.fromType
-                                                        Canonical.Type.string
-                                                  )
-                                                , ( "0"
-                                                  , Canonical.Annotation.fromType (Var "number")
-                                                  )
-                                                ]
-                                    in
-                                    case
-                                        Inference.inferHole
-                                            { function = function
-                                            , range = range
-                                            , moduleName = currentModuleData.moduleName
-                                            , currentModule = currentModule
-                                            }
-                                            |> Result.mapError
-                                                (inferenceErrorToString
-                                                    (Dict.union globalValues currentModule.values)
-                                                    currentModule.aliases
-                                                    currentModule.unions
-                                                    range
-                                                    function
-                                                )
-                                            |> Result.map
-                                                (generateCompletions range
-                                                    [ currentModule.values, standardValues, globalValues ]
-                                                    currentModule.aliases
-                                                    currentModule.unions
-                                                )
-                                    of
-                                        Err error ->
-                                            Cmd.batch
-                                                [ log error
-                                                , completions []
-                                                ]
-
-                                        Ok cmd ->
-                                            cmd
-                    )
+                Ok result ->
+                    Cmd.batch
+                        [ log (completionResultToString result)
+                        , result.completions
+                            |> List.map (completionToString result.range)
+                            |> completions
+                        ]
+            )
 
 
-inferenceErrorToString :
+
+---- COMPUTE COMPLETIONS
+
+
+type Error
+    = CannotGetRange
+    | ParserError (List Parser.DeadEnd)
+    | CannotFindFunctionDeclaration
+    | CannotFindCurrentModule (List TodoItem) (Dict ModuleName Module) ModuleName
+    | InferenceError CompletionRequest (Dict String Annotation) Module Range Function Inference.Error
+
+
+computeCompletions : Store -> CompletionRequest -> Result Error CompletionResult
+computeCompletions currentStore ({ row, column, src, fileName } as request) =
+    Result.andThen2 (runInfer request currentStore)
+        (computeRange row column src)
+        (parseModule src)
+
+
+computeRange : Int -> Int -> String -> Result Error Range
+computeRange row column src =
+    case
+        src
+            |> String.lines
+            |> List.getAt (row - 1)
+            |> Maybe.andThen
+                (String.left (column - 1)
+                    >> String.words
+                    >> List.last
+                )
+            |> Maybe.map String.length
+    of
+        Nothing ->
+            Err CannotGetRange
+
+        Just wordLength ->
+            Ok
+                { start =
+                    { column = column - wordLength
+                    , row = row
+                    }
+                , end =
+                    { column = column
+                    , row = row
+                    }
+                }
+
+
+parseModule : String -> Result Error RawFile
+parseModule src =
+    Result.mapError ParserError (Parser.parse src)
+
+
+runInfer : CompletionRequest -> Store -> Range -> RawFile -> Result Error CompletionResult
+runInfer request currentStore range rawFile =
+    let
+        ({ moduleName, file } as currentModuleData) =
+            toModuleData request.fileName rawFile
+
+        newStore =
+            Canonical.replace currentModuleData currentStore
+    in
+    Result.andThen2 (infer request range moduleName)
+        (getFunctionDeclaration range file)
+        (findModule newStore.todo newStore.done moduleName)
+
+
+getFunctionDeclaration : Range -> File -> Result Error Function
+getFunctionDeclaration range file =
+    Result.fromMaybe
+        CannotFindFunctionDeclaration
+        (Src.functionDeclarationAt range file)
+
+
+findModule : List TodoItem -> Dict ModuleName Module -> ModuleName -> Result Error Module
+findModule todo done moduleName =
+    Result.fromMaybe
+        (CannotFindCurrentModule todo done moduleName)
+        (Dict.get moduleName done)
+
+
+
+---- INFER
+
+
+infer :
+    CompletionRequest
+    -> Range
+    -> ModuleName
+    -> Function
+    -> Module
+    -> Result Error CompletionResult
+infer request range moduleName function currentModule =
+    let
+        globalValues =
+            Dict.foldl
+                (\qualifier values allValues ->
+                    Dict.union allValues
+                        (values
+                            |> Dict.toList
+                            |> List.filterMap (qualify qualifier)
+                            |> Dict.fromList
+                        )
+                )
+                Dict.empty
+                currentModule.qualifiedValues
+    in
+    Inference.inferHole
+        { function = function
+        , range = range
+        , moduleName = moduleName
+        , currentModule = currentModule
+        }
+        |> Result.mapError (InferenceError request globalValues currentModule range function)
+        |> Result.map
+            (generateCompletions request
+                range
+                [ currentModule.values, standardValues, globalValues ]
+                currentModule.aliases
+                currentModule.unions
+            )
+
+
+qualify : ModuleName -> ( String, Annotation ) -> Maybe ( String, Annotation )
+qualify qualifier ( name, annotation ) =
+    if name == "always" then
+        Nothing
+
+    else if name == "identity" then
+        Nothing
+
+    else if name == "toString" then
+        Nothing
+
+    else if name == "todo" then
+        Nothing
+
+    else
+        Just ( Src.qualifiedName qualifier name, annotation )
+
+
+standardValues : Dict String Annotation
+standardValues =
+    Dict.fromList
+        [ ( "[]", Canonical.Annotation.fromType (Canonical.Type.list (Var "a")) )
+        , ( "\"\"", Canonical.Annotation.fromType Canonical.Type.string )
+        , ( "0", Canonical.Annotation.fromType (Var "number") )
+        ]
+
+
+
+---- GENERATE COMPLETIONS
+
+
+generateCompletions :
+    CompletionRequest
+    -> Range
+    -> List (Dict String Annotation)
+    -> Dict String Alias
+    -> Dict String Union
+    -> ( Type, Dict String Type )
+    -> CompletionResult
+generateCompletions request range globalValues aliases unions ( tipe, localValues ) =
+    let
+        addGlobalValues generator =
+            List.foldl Generator.addValues generator globalValues
+    in
+    { fileName = request.fileName
+    , src = request.src
+    , row = request.row
+    , column = request.column
+    , range = range
+    , tipe = tipe
+    , completions =
+        Generator.default
+            |> addGlobalValues
+            |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
+            |> Generator.addUnions unions
+            |> Generator.for tipe
+    }
+
+
+completionToString : Range -> Expr -> String
+completionToString range completion =
+    case String.lines (Generator.exprToText completion) of
+        [] ->
+            ""
+
+        first :: [] ->
+            first
+
+        first :: rest ->
+            String.concat
+                [ first
+                , "\n"
+                , String.join "\n" <|
+                    List.map (\line -> String.repeat (range.start.column - 1) " " ++ line)
+                        rest
+                ]
+
+
+type alias CompletionResult =
+    { fileName : String
+    , src : String
+    , row : Int
+    , column : Int
+    , range : Range
+    , tipe : Type
+    , completions : List Expr
+    }
+
+
+completionResultToString : CompletionResult -> String
+completionResultToString result =
+    let
+        addBulletPoint text =
+            ">" ++ String.dropLeft 1 text
+    in
+    String.join "\n"
+        [ ""
+        , ""
+        , ""
+        , "--- SUCCESSFULLY COMPUTED COMPLETIONS ------------------------------------------"
+        , ""
+        , meta result.fileName result.row result.column
+        , ""
+        , snippet result.range result.src
+        , ""
+        , "Infered type: " ++ Canonical.Type.toString result.tipe
+        , ""
+        , "Completions:"
+        , ""
+        , String.join "\n" <|
+            List.map (addBulletPoint << indent 2 << Generator.exprToString)
+                result.completions
+        ]
+
+
+meta : String -> Int -> Int -> String
+meta fileName row column =
+    String.join "\n"
+        [ "File:   " ++ fileName
+        , "Row:    " ++ String.fromInt row
+        , "Column: " ++ String.fromInt column
+        ]
+
+
+snippet : Range -> String -> String
+snippet range src =
+    let
+        displayedLines =
+            5
+
+        lineNumber index =
+            String.padLeft lineNumberWidth ' ' <|
+                String.fromInt (range.start.row - displayedLines + index)
+
+        lineNumberWidth =
+            String.length (String.fromInt range.start.row)
+    in
+    String.concat
+        [ src
+            |> String.lines
+            |> List.drop (range.start.row - displayedLines)
+            |> List.take displayedLines
+            |> List.indexedMap
+                (\index line ->
+                    lineNumber index ++ "|" ++ line
+                )
+            |> String.join "\n"
+        , "\n"
+        , String.repeat (range.start.column + lineNumberWidth) " "
+        , String.repeat (range.end.column - range.start.column) "^"
+        ]
+
+
+indent : Int -> String -> String
+indent amount text =
+    let
+        indentation =
+            String.repeat amount " "
+    in
+    text
+        |> String.lines
+        |> List.map (\line -> indentation ++ line)
+        |> String.join "\n"
+
+
+
+---- ERROR TO STRING
+
+
+errorToString : Error -> String
+errorToString error =
+    let
+        title text =
+            "=== " ++ text ++ " " ++ String.repeat (75 - String.length text) "="
+
+        wrap text =
+            String.join "\n"
+                [ ""
+                , ""
+                , ""
+                , text
+                ]
+    in
+    case error of
+        CannotGetRange ->
+            wrap <|
+                title "CANNOT COMPUTE RANGE"
+
+        ParserError deadEnds ->
+            wrap <|
+                title "CANNOT PARSE MODULE"
+
+        CannotFindFunctionDeclaration ->
+            wrap <|
+                title "CANNOT FIND FUNCTION DECLARATION"
+
+        CannotFindCurrentModule todo done moduleName ->
+            let
+                todoToString todoItem =
+                    String.concat
+                        [ moduleNameToString
+                            todoItem.moduleData.moduleName
+                        , " blocked by "
+                        , String.join ", " <|
+                            List.map moduleNameToString <|
+                                Set.toList todoItem.blockedBy
+                        ]
+
+                moduleNameToString =
+                    String.join "."
+            in
+            wrap <|
+                String.concat
+                    [ title "CANNOT FIND MODULE"
+                    , moduleNameToString moduleName
+                    , ". The following modules are available:\n\n  "
+                    , String.join "\n  " (List.map moduleNameToString (Dict.keys done))
+                    , "\n\nThe following modules are blocked:\n\n  "
+                    , String.join "\n  " (List.map todoToString todo)
+                    ]
+
+        InferenceError request globalValues currentModule range function inferenceError ->
+            wrap <|
+                String.join "\n"
+                    [ title "CANNOT INFER VALUE"
+                    , ""
+                    , meta request.fileName request.row request.column
+                    , ""
+                    , snippet range request.src
+                    , ""
+                    , Inference.errorToString inferenceError
+                    , ""
+                    , ""
+                    , availableDataToString
+                        (Dict.union globalValues currentModule.values)
+                        currentModule.aliases
+                        currentModule.unions
+                    ]
+
+
+availableDataToString :
     Dict String Annotation
     -> Dict String Alias
     -> Dict String Union
-    -> Range
-    -> Function
-    -> Inference.Error
     -> String
-inferenceErrorToString values aliases unions range function error =
+availableDataToString values aliases unions =
     let
         unionToString ( name, union ) =
             String.concat
@@ -376,75 +593,22 @@ inferenceErrorToString values aliases unions range function error =
                 , Canonical.Annotation.toString fieldAnnotation
                 ]
     in
-    String.concat
-        [ "Could not infer at"
-        , " "
-        , String.fromInt range.start.column
-        , " "
-        , String.fromInt range.start.row
-        , " "
-        , String.fromInt range.end.column
-        , " "
-        , String.fromInt range.end.row
-        , "\n\nThe error was:\n  "
-        , Inference.errorToString error
-        , "."
-        , "\n\nUnions:\n"
+    String.join "\n"
+        [ "Unions:"
+        , ""
         , unions
             |> Dict.toList
             |> List.map unionToString
             |> List.map (\line -> "  " ++ line)
             |> String.join "\n"
-        , "\n\nValues:\n"
+        , ""
+        , ""
+        , "Values:"
+        , ""
         , List.map valueToString (Dict.toList values)
             |> List.map (\line -> "  " ++ line)
             |> String.join "\n"
         ]
-
-
-generateCompletions :
-    Range
-    -> List (Dict String Annotation)
-    -> Dict String Alias
-    -> Dict String Union
-    -> ( Type, Dict String Type )
-    -> Cmd Msg
-generateCompletions range globalValues aliases unions ( tipe, localValues ) =
-    let
-        addGlobalValues generator =
-            List.foldl Generator.addValues generator globalValues
-    in
-    Cmd.batch
-        [ log ("Inferred type: " ++ Canonical.Type.toString tipe)
-        , log "Completions:"
-        , Generator.default
-            |> addGlobalValues
-            |> Generator.addValues
-                (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
-            |> Generator.addUnions unions
-            |> Generator.for tipe
-            |> List.map (completionToString range)
-            |> completions
-        ]
-
-
-completionToString : Range -> Expr -> String
-completionToString range completion =
-    case String.lines (Generator.exprToText completion) of
-        [] ->
-            ""
-
-        first :: [] ->
-            first
-
-        first :: rest ->
-            String.concat
-                [ first
-                , "\n"
-                , String.join "\n" <|
-                    List.map (\line -> String.repeat (range.start.column - 1) " " ++ line)
-                        rest
-                ]
 
 
 log : String -> Cmd msg

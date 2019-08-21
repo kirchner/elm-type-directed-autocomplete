@@ -138,8 +138,6 @@ var createServer = function() {
         .listen("elm-stuff/autocomplete/server.sock")
         .on("connection", function(socket) {
           var respond = function(completions) {
-            console.log(JSON.stringify(completions, null, "  "));
-            console.log("================================================================================");
             socket.write(JSON.stringify(completions));
             app.ports.completions.unsubscribe(respond);
           };
@@ -149,15 +147,6 @@ var createServer = function() {
 
             try {
               var params = JSON.parse(line.toString());
-
-              console.log();
-              console.log("================================================================================");
-              console.log(JSON.stringify({
-                fileName: params.fileName,
-                column: params.column,
-                row: params.row
-              }, null, "  "));
-              console.log("--------------------------------------------------------------------------------");
 
               if (params) {
                 app.ports.completionsFor.send(params);
