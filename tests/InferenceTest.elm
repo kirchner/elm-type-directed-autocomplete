@@ -41,6 +41,7 @@ bar num =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.int
+                            , False
                             , Dict.fromList
                                 [ ( "num", Canonical.Type.float ) ]
                             )
@@ -61,6 +62,7 @@ bar num =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "num", Canonical.Type.int ) ]
                             )
@@ -81,6 +83,7 @@ bar num =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.list Canonical.Type.int
+                            , True
                             , Dict.fromList
                                 [ ( "num", Canonical.Type.int ) ]
                             )
@@ -101,6 +104,7 @@ bar numA numB =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.int
+                            , True
                             , Dict.fromList
                                 [ ( "numA", Canonical.Type.int )
                                 , ( "numB", Canonical.Type.int )
@@ -125,6 +129,7 @@ bar int =
                             ( Lambda
                                 Canonical.Type.int
                                 Canonical.Type.float
+                            , True
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 ]
@@ -149,6 +154,7 @@ bar int =
                             ( Lambda
                                 Canonical.Type.int
                                 Canonical.Type.float
+                            , True
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 ]
@@ -174,6 +180,7 @@ bar int =
                             ( Lambda
                                 Canonical.Type.float
                                 Canonical.Type.float
+                            , True
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 ]
@@ -200,6 +207,7 @@ bar ints =
                             ( Lambda
                                 (Canonical.Type.list Canonical.Type.float)
                                 (Canonical.Type.list Canonical.Type.float)
+                            , True
                             , Dict.fromList
                                 [ ( "ints", Canonical.Type.list Canonical.Type.int )
                                 ]
@@ -223,6 +231,7 @@ bar num =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "num", Canonical.Type.int ) ]
                             )
@@ -243,6 +252,7 @@ bar data =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "data"
                                   , Record
@@ -276,6 +286,7 @@ foo int =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 , ( "float", Canonical.Type.float )
@@ -301,6 +312,7 @@ foo bool =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "bool", Canonical.Type.bool ) ]
                             )
@@ -321,6 +333,7 @@ foo int =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , True
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int ) ]
                             )
@@ -348,6 +361,7 @@ update maybeInt model =
                             ( Record
                                 [ ( "count", Canonical.Type.int ) ]
                                 Nothing
+                            , False
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 , ( "maybeInt", Canonical.Type.maybe Canonical.Type.int )
@@ -373,6 +387,7 @@ bar nums =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "nums", Canonical.Type.list Canonical.Type.int )
                                 ]
@@ -396,6 +411,7 @@ bar nums =
                     |> Expect.equal
                         (Ok
                             ( Canonical.Type.float
+                            , False
                             , Dict.fromList
                                 [ ( "first", Canonical.Type.int )
                                 , ( "nums", Canonical.Type.list Canonical.Type.int )
@@ -419,6 +435,7 @@ bar { count } =
                     |> Expect.equal
                         (Ok
                             ( Lambda Canonical.Type.int Canonical.Type.float
+                            , True
                             , Dict.fromList
                                 [ ( "count", Canonical.Type.int )
                                 ]
@@ -448,6 +465,7 @@ bar ({ count } as stuff) =
                                     Canonical.Type.int
                                     Canonical.Type.float
                                 )
+                            , True
                             , Dict.fromList
                                 [ ( "count", Canonical.Type.int )
                                 , ( "stuff"
@@ -479,6 +497,7 @@ bar int =
                             ( Lambda
                                 Canonical.Type.int
                                 Canonical.Type.float
+                            , True
                             , Dict.fromList
                                 [ ( "int", Canonical.Type.int )
                                 , ( "foo", Canonical.Type.float )
@@ -492,7 +511,7 @@ inferHelp :
     { src : String
     , range : Range
     }
-    -> Result Inference.Error ( Type, Dict String Type )
+    -> Result Inference.Error ( Type, Bool, Dict String Type )
 inferHelp { src, range } =
     let
         actualSrc =

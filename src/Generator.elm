@@ -810,16 +810,16 @@ freshVars vars count subst =
 
 {-| Turn an `Expr` into Elm code. This will use a lot of line breaks.
 -}
-exprToText : Expr -> String
-exprToText expr =
-    exprToStringHelp True False expr
+exprToText : Bool -> Expr -> String
+exprToText isArgument expr =
+    exprToStringHelp True isArgument expr
 
 
 {-| Turn an `Expr` into Elm code. This will use very few line breaks.
 -}
-exprToString : Expr -> String
-exprToString expr =
-    exprToStringHelp False False expr
+exprToString : Bool -> Expr -> String
+exprToString isArgument expr =
+    exprToStringHelp False isArgument expr
 
 
 exprToStringHelp : Bool -> Bool -> Expr -> String

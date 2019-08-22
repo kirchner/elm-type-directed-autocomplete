@@ -29,7 +29,7 @@ inferHole :
     , moduleName : ModuleName
     , currentModule : Module
     }
-    -> Result Error ( Type, Dict String Type )
+    -> Result Error ( Type, Bool, Dict String Type )
 inferHole { function, range, moduleName, currentModule } =
     let
         ( constraints, holes, result ) =
@@ -47,19 +47,20 @@ inferHole { function, range, moduleName, currentModule } =
 
         Ok _ ->
             let
-                solve ( _, tipe, newEnv ) =
+                solve hole =
                     Solver.run constraints
                         |> Result.mapError CouldNotSolve
-                        |> Result.map (substitute tipe newEnv)
+                        |> Result.map (substitute hole)
 
-                substitute tipe newEnv subst =
+                substitute hole subst =
                     let
                         substEnv =
                             Dict.map
                                 (\_ -> Canonical.Annotation.apply subst)
-                                newEnv.values
+                                hole.env.values
                     in
-                    ( Canonical.Type.apply subst tipe
+                    ( Canonical.Type.apply subst hole.tipe
+                    , hole.isArgument
                     , substEnv
                         |> Dict.map (\_ (ForAll _ t) -> t)
                     )
@@ -125,14 +126,27 @@ type alias Env =
 
 
 type alias Hole =
-    ( String, Type, Env )
+    { name : String
+    , tipe : Type
+    , env : Env
+    , isArgument : Bool
+    }
 
 
-storeHole : String -> Type -> Infer ()
-storeHole name tipe =
+storeHole : String -> Type -> Bool -> Infer ()
+storeHole name tipe isArgument =
     Infer <|
         \env ->
-            State.state ( [], [ ( name, tipe, env ) ], Ok () )
+            State.state
+                ( []
+                , [ { name = name
+                    , tipe = tipe
+                    , env = env
+                    , isArgument = isArgument
+                    }
+                  ]
+                , Ok ()
+                )
 
 
 type alias Constraint =
@@ -169,7 +183,7 @@ inferFunction range function =
 
         inferBody ( types, annotations ) =
             inEnvs (List.concat annotations)
-                (infer range declaration.expression
+                (infer range False declaration.expression
                     |> andThen (returnType types)
                 )
 
@@ -195,12 +209,12 @@ inferFunction range function =
 ---- INFER EXPRESSIONS
 
 
-infer : Range -> Node Expression -> Infer Type
-infer range (Node currentRange expr) =
+infer : Range -> Bool -> Node Expression -> Infer Type
+infer range isArgument (Node currentRange expr) =
     case expr of
         FunctionOrValue moduleName name ->
             if range == currentRange then
-                storeHole name (Var name)
+                storeHole name (Var name) isArgument
                     |> map (\_ -> Var name)
 
             else if name == "True" then
@@ -246,7 +260,7 @@ infer range (Node currentRange expr) =
             return (Tuple [])
 
         ParenthesizedExpression parenthesizedExpr ->
-            infer range parenthesizedExpr
+            infer range False parenthesizedExpr
 
         ListExpr elementExprs ->
             inferList range elementExprs
@@ -255,7 +269,7 @@ infer range (Node currentRange expr) =
             inferTuple range allExprs
 
         Negation numberExpr ->
-            infer range numberExpr
+            infer range True numberExpr
 
         OperatorApplication name _ exprA exprB ->
             inferBinops range name exprA exprB
@@ -306,11 +320,11 @@ inferList range elementExprs =
         firstExpr :: rest ->
             let
                 inferRest firstType =
-                    traverse (infer range) rest
+                    traverse (infer range False) rest
                         |> andThen (traverse (Tuple.pair firstType >> addConstraint))
                         |> map (\_ -> Canonical.Type.list firstType)
             in
-            infer range firstExpr
+            infer range False firstExpr
                 |> andThen inferRest
 
 
@@ -320,7 +334,7 @@ inferList range elementExprs =
 
 inferTuple : Range -> List (Node Expression) -> Infer Type
 inferTuple range exprs =
-    map Tuple (traverse (infer range) exprs)
+    map Tuple (traverse (infer range False) exprs)
 
 
 
@@ -443,7 +457,7 @@ inferBinop : Range -> BinopApp -> Infer Type
 inferBinop range binop =
     case binop of
         Final expr ->
-            infer range expr
+            infer range True expr
 
         BinopApp infixType binopA binopB ->
             let
@@ -475,7 +489,7 @@ inferLambda range lambda =
     let
         inferBody ( types, annotations ) =
             inEnvs (List.concat annotations)
-                (infer range lambda.expression
+                (infer range False lambda.expression
                     |> map (returnType types)
                 )
 
@@ -499,7 +513,7 @@ inferCall range exprs =
         function :: arguments ->
             let
                 inferArguments functionType =
-                    traverse (infer range) arguments
+                    traverse (infer range True) arguments
                         |> andThen (getReturnVar functionType)
 
                 getReturnVar functionType types =
@@ -515,7 +529,7 @@ inferCall range exprs =
                         )
                         |> map (\_ -> Var var)
             in
-            infer range function
+            infer range True function
                 |> andThen inferArguments
 
 
@@ -527,16 +541,16 @@ inferIf : Range -> Node Expression -> Node Expression -> Node Expression -> Infe
 inferIf range exprCond exprFirst exprSecond =
     let
         inferCond =
-            infer range exprCond
+            infer range False exprCond
                 |> andThen inferFirst
 
         inferFirst typeCond =
             addConstraint ( typeCond, Canonical.Type.bool )
-                |> andThen (\_ -> infer range exprFirst)
+                |> andThen (\_ -> infer range False exprFirst)
                 |> andThen (inferSecond typeCond)
 
         inferSecond typeCond typeFirst =
-            infer range exprSecond
+            infer range False exprSecond
                 |> andThen (returnHelp typeCond typeFirst)
 
         returnHelp typeCond typeFirst typeSecond =
@@ -566,7 +580,7 @@ inferCase range caseBlock =
                     traverse (Tuple.pair firstType >> addConstraint) rest
                         |> map (\_ -> firstType)
     in
-    infer range caseBlock.expression
+    infer range False caseBlock.expression
         |> andThen inferCaseBranches
 
 
@@ -579,7 +593,7 @@ inferCaseBranch range exprType ( pattern, expr ) =
 
         inferBody annotations _ =
             inEnvs annotations
-                (infer range expr)
+                (infer range False expr)
     in
     inferPattern pattern
         |> andThen addConstraintHelp
@@ -601,7 +615,7 @@ inferLetBlock range letBlock =
 
         inferBody annotations newAnnotations =
             inEnvs newAnnotations
-                (infer range letBlock.expression
+                (infer range False letBlock.expression
                     |> andThen (collectConstraints annotations newAnnotations)
                 )
 
@@ -708,7 +722,7 @@ inferAccess range recordExpr name =
                 )
                 |> map (\_ -> Var fieldVar)
     in
-    infer range recordExpr
+    infer range True recordExpr
         |> andThen getRecordVar
 
 
@@ -720,7 +734,7 @@ inferUpdate : Range -> String -> List (Node Elm.Syntax.Expression.RecordSetter) 
 inferUpdate range name recordSetters =
     let
         inferRecordSetter (Node _ ( Node _ fieldName, fieldExpr )) =
-            infer range fieldExpr
+            infer range False fieldExpr
                 |> map (Tuple.pair fieldName)
 
         inferRecordType fieldTypes =
@@ -750,7 +764,7 @@ inferRecord : Range -> List (Node Elm.Syntax.Expression.RecordSetter) -> Infer T
 inferRecord range recordSetters =
     let
         inferSetter (Node _ ( Node _ name, valueExpr )) =
-            infer range valueExpr
+            infer range False valueExpr
                 |> map (Tuple.pair name)
     in
     traverse inferSetter recordSetters

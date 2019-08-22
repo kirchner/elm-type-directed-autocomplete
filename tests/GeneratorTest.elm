@@ -600,18 +600,18 @@ equivalenceTest =
         [ test "Int" <|
             \_ ->
                 for Canonical.Type.int generatorA
-                    |> List.map exprToString
+                    |> List.map (exprToString False)
                     |> Expect.equal
                         (for Canonical.Type.int generatorB
-                            |> List.map exprToString
+                            |> List.map (exprToString False)
                         )
         , test "List Int" <|
             \_ ->
                 for (Canonical.Type.list Canonical.Type.int) generatorA
-                    |> List.map exprToString
+                    |> List.map (exprToString False)
                     |> Expect.equal
                         (for (Canonical.Type.list Canonical.Type.int) generatorB
-                            |> List.map exprToString
+                            |> List.map (exprToString False)
                         )
         ]
 
@@ -830,7 +830,7 @@ testGenerator description generator tests =
                     generator
                         |> addUnions unions
                         |> for targetType
-                        |> List.map exprToString
+                        |> List.map (exprToString False)
                         |> Expect.equal expectation
     in
     describe description <|

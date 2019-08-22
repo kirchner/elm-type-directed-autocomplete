@@ -196,7 +196,7 @@ update msg model =
                     Cmd.batch
                         [ log (completionResultToString result)
                         , result.completions
-                            |> List.map (completionToString result.range)
+                            |> List.map (completionToString result.range result.isArgument)
                             |> completions
                         ]
             )
@@ -315,7 +315,8 @@ infer request range moduleName function currentModule =
         , moduleName = moduleName
         , currentModule = currentModule
         }
-        |> Result.mapError (InferenceError request globalValues currentModule range function)
+        |> Result.mapError
+            (InferenceError request globalValues currentModule range function)
         |> Result.map
             (generateCompletions request
                 range
@@ -362,9 +363,9 @@ generateCompletions :
     -> List (Dict String Annotation)
     -> Dict String Alias
     -> Dict String Union
-    -> ( Type, Dict String Type )
+    -> ( Type, Bool, Dict String Type )
     -> CompletionResult
-generateCompletions request range globalValues aliases unions ( tipe, localValues ) =
+generateCompletions request range globalValues aliases unions ( tipe, isArgument, localValues ) =
     let
         addGlobalValues generator =
             List.foldl Generator.addValues generator globalValues
@@ -381,12 +382,13 @@ generateCompletions request range globalValues aliases unions ( tipe, localValue
             |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
             |> Generator.addUnions unions
             |> Generator.for tipe
+    , isArgument = isArgument
     }
 
 
-completionToString : Range -> Expr -> String
-completionToString range completion =
-    case String.lines (Generator.exprToText completion) of
+completionToString : Range -> Bool -> Expr -> String
+completionToString range isArgument completion =
+    case String.lines (Generator.exprToText isArgument completion) of
         [] ->
             ""
 
@@ -411,6 +413,7 @@ type alias CompletionResult =
     , range : Range
     , tipe : Type
     , completions : List Expr
+    , isArgument : Bool
     }
 
 
@@ -435,7 +438,11 @@ completionResultToString result =
         , "Completions:"
         , ""
         , String.join "\n" <|
-            List.map (addBulletPoint << indent 2 << Generator.exprToString)
+            List.map
+                (addBulletPoint
+                    << indent 2
+                    << Generator.exprToString result.isArgument
+                )
                 result.completions
         ]
 
