@@ -1150,7 +1150,7 @@ defaultImports =
             Just <|
                 Node emptyRange <|
                     Explicit
-                        [ Node emptyRange (TypeOrAliasExpose "Platform") ]
+                        [ Node emptyRange (TypeOrAliasExpose "Program") ]
       }
     , { moduleName = Node emptyRange [ "Platform", "Cmd" ]
       , moduleAlias = Just (Node emptyRange [ "Cmd" ])
