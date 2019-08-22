@@ -7,7 +7,7 @@ module Generator exposing
     , all
     , first, firstN
     , exprToString, exprToText
-    , todo
+    , constructor, todo
     )
 
 {-|
@@ -121,6 +121,7 @@ default =
                     , field
                     ]
             , value
+            , constructor
             , field
             , accessor
             , tuple
@@ -138,7 +139,15 @@ default =
                         ]
                 }
             , cases
-                { matched = value
+                { matched =
+                    all
+                        [ value
+                        , field
+                        , tuple
+                            { first = value
+                            , second = value
+                            }
+                        ]
                 , branch =
                     \_ ->
                         first <|
@@ -159,7 +168,11 @@ default =
                                 ]
                 }
             , cases
-                { matched = value
+                { matched =
+                    all
+                        [ value
+                        , field
+                        ]
                 , branch =
                     \_ ->
                         tuple
@@ -168,7 +181,11 @@ default =
                             }
                 }
             , cases
-                { matched = value
+                { matched =
+                    all
+                        [ value
+                        , field
+                        ]
                 , branch =
                     \_ ->
                         todo
@@ -283,19 +300,7 @@ call argumentGenerators =
                 let
                     collectScope valuesInScope =
                         valuesInScope
-                            |> Dict.filter
-                                (\name _ ->
-                                    name
-                                        |> String.split "."
-                                        |> List.reverse
-                                        |> List.head
-                                        |> Maybe.andThen
-                                            (String.toList
-                                                >> List.head
-                                                >> Maybe.map Char.isLower
-                                            )
-                                        |> Maybe.withDefault True
-                                )
+                            |> Dict.filter (\name _ -> isValue name)
                             |> Dict.toList
                             |> BranchedState.traverse collectValue
 
@@ -367,6 +372,49 @@ call argumentGenerators =
                         targetTypeVarsBoundBy config.targetTypeVars
                 in
                 BranchedState.traverse collectScope config.values
+        }
+
+
+isValue : String -> Bool
+isValue name =
+    name
+        |> String.split "."
+        |> List.reverse
+        |> List.head
+        |> Maybe.andThen
+            (String.toList
+                >> List.head
+                >> Maybe.map Char.isLower
+            )
+        |> Maybe.withDefault True
+
+
+{-| -}
+constructor : Generator
+constructor =
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                let
+                    constructorOfTargetType ( name, annotation ) =
+                        if not (isValue name) then
+                            instantiate annotation
+                                |> BranchedState.andThen
+                                    (\tipe ->
+                                        whenUnifiable config
+                                            (\_ -> Call name [])
+                                            { typeA = tipe
+                                            , typeB = targetType
+                                            }
+                                    )
+
+                        else
+                            BranchedState.state []
+                in
+                BranchedState.traverse
+                    (Dict.toList >> BranchedState.traverse constructorOfTargetType)
+                    config.values
         }
 
 
@@ -534,9 +582,7 @@ field =
                             }
                 in
                 BranchedState.traverse
-                    (Dict.toList
-                        >> BranchedState.traverse fieldsOfTargetType
-                    )
+                    (Dict.toList >> BranchedState.traverse fieldsOfTargetType)
                     config.values
         }
 
