@@ -1,19 +1,19 @@
 module Generator exposing
     ( Generator, Expr
-    , addUnions, addValues, takeValues, default, for
+    , addUnions, addAliases, addValues, takeValues, default, for
     , value, call
     , tuple, cases
     , record, recordUpdate, field, accessor
     , all
     , first, firstN
     , exprToString, exprToText
-    , constructor, todo
+    , constructor, jsonDecoder, todo
     )
 
 {-|
 
 @docs Generator, Expr
-@docs addUnions, addValues, takeValues, default, for
+@docs addUnions, addAliases, addValues, takeValues, default, for
 
 @docs value, call
 @docs tuple, cases
@@ -106,6 +106,7 @@ type Expr
     | UpdateRecord String (List ( String, Expr ))
     | CreateTuple Expr Expr
     | Case Expr (List ( String, Expr ))
+    | Pipe Expr Expr
 
 
 {-| An example `Generator` which is a combination of all the ones which are
@@ -113,33 +114,39 @@ available. Take a look at its source code, to get an idea of what is possible.
 -}
 default : Generator
 default =
-    firstN 42 <|
-        all
-            [ recordUpdate <|
+    all
+        [ jsonDecoder
+        , recordUpdate <|
+            all
+                [ value
+                , field
+                ]
+        , record <|
+            all
+                [ value
+                , todo
+                ]
+        , value
+        , constructor
+        , field
+        , accessor
+        , tuple
+            { first =
                 all
-                    [ value
-                    , field
+                    [ recordUpdate value
+                    , value
+                    , call [ value ]
                     ]
-            , value
-            , constructor
-            , field
-            , accessor
-            , tuple
-                { first =
-                    all
-                        [ recordUpdate value
-                        , value
-                        , call [ value ]
-                        ]
-                , second =
-                    all
-                        [ recordUpdate value
-                        , value
-                        , call [ value ]
-                        ]
-                }
-            , cases
-                { matched =
+            , second =
+                all
+                    [ recordUpdate value
+                    , value
+                    , call [ value ]
+                    ]
+            }
+        , cases
+            { matched =
+                takeValues 1 <|
                     all
                         [ value
                         , field
@@ -148,69 +155,70 @@ default =
                             , second = value
                             }
                         ]
-                , branch =
-                    \_ ->
-                        first <|
-                            all
-                                [ tuple
-                                    { first =
-                                        all
-                                            [ todo
-                                            , value
-                                            ]
-                                    , second =
-                                        all
-                                            [ value
-                                            , call [ value ]
-                                            ]
-                                    }
-                                , value
-                                ]
-                }
-            , cases
-                { matched =
+            , branch =
+                \_ ->
+                    first <|
+                        all
+                            [ tuple
+                                { first =
+                                    all
+                                        [ todo
+                                        , value
+                                        ]
+                                , second =
+                                    all
+                                        [ value
+                                        , call [ value ]
+                                        ]
+                                }
+                            , value
+                            ]
+            }
+        , cases
+            { matched =
+                takeValues 1 <|
                     all
                         [ value
                         , field
                         ]
-                , branch =
-                    \_ ->
-                        tuple
-                            { first = todo
-                            , second = value
-                            }
-                }
-            , cases
-                { matched =
+            , branch =
+                \_ ->
+                    tuple
+                        { first = todo
+                        , second = value
+                        }
+            }
+        , cases
+            { matched =
+                takeValues 1 <|
                     all
                         [ value
                         , field
                         ]
-                , branch =
-                    \_ ->
-                        todo
-                }
-            , call
-                [ all
-                    [ value
-                    , field
-                    , accessor
-                    ]
-                ]
-            , call
-                [ all
-                    [ value
-                    , field
-                    , accessor
-                    ]
-                , all
-                    [ value
-                        |> takeValues 1
-                    , field
-                    , accessor
-                    ]
+            , branch =
+                \_ ->
+                    todo
+            }
+        , call
+            [ all
+                [ value
+                , field
+                , accessor
                 ]
             ]
+        , call
+            [ all
+                [ value
+                , field
+                , accessor
+                ]
+            , all
+                [ value
+                , field
+                , accessor
+                ]
+            ]
+        ]
 
 
 {-| If your `Generator` should potentially output case expression, you have to
@@ -244,6 +252,17 @@ addUnions newUnions (Generator stuff) =
             | generate =
                 \config ->
                     stuff.generate { config | unions = Dict.union newUnions config.unions }
+        }
+
+
+addAliases : Dict String Alias -> Generator -> Generator
+addAliases newAliases (Generator stuff) =
+    Generator
+        { stuff
+            | generate =
+                \config ->
+                    stuff.generate
+                        { config | aliases = Dict.union newAliases config.aliases }
         }
 
 
@@ -690,6 +709,7 @@ cases generator =
         }
 
 
+{-| -}
 todo : Generator
 todo =
     Generator
@@ -698,6 +718,101 @@ todo =
             \config _ ->
                 BranchedState.state
                     [ Call "Debug.todo" [ Call "\"implementation missing\"" [] ] ]
+        }
+
+
+{-| -}
+jsonDecoder : Generator
+jsonDecoder =
+    customDecoder
+        { unwrap =
+            \tipe ->
+                case tipe of
+                    Type [ "Json", "Decode" ] "Decoder" [ decoded ] ->
+                        Just decoded
+
+                    _ ->
+                        Nothing
+        , wrap =
+            \tipe ->
+                Type [ "Json", "Decode" ] "Decoder" [ tipe ]
+        , toCall =
+            \name expr ->
+                Call "Decode.required"
+                    [ Call ("\"" ++ name ++ "\"") []
+                    , expr
+                    ]
+        , toInit =
+            \name exprs ->
+                pipeline
+                    (Call "Decode.succeed" [ Call name [] ])
+                    exprs
+        }
+
+
+pipeline : Expr -> List Expr -> Expr
+pipeline firstExpr restExprs =
+    case restExprs of
+        [] ->
+            firstExpr
+
+        nextExpr :: nextRestExprs ->
+            List.foldl
+                (\exprRight exprLeft -> Pipe exprLeft exprRight)
+                (Pipe firstExpr nextExpr)
+                nextRestExprs
+
+
+{-| -}
+customDecoder :
+    { unwrap : Type -> Maybe Type
+    , wrap : Type -> Type
+    , toCall : String -> Expr -> Expr
+    , toInit : String -> List Expr -> Expr
+    }
+    -> Generator
+customDecoder ({ unwrap, wrap, toCall, toInit } as customization) =
+    Generator
+        { transform = identity
+        , generate =
+            \config targetType ->
+                case unwrap targetType of
+                    Just decoded ->
+                        case decoded of
+                            Record fields Nothing ->
+                                let
+                                    generateField ( fieldName, fieldType ) =
+                                        wrap fieldType
+                                            |> run (customDecoder customization)
+                                                config
+                                            |> BranchedState.map (toCall fieldName)
+
+                                    maybeRecordName =
+                                        config.aliases
+                                            |> Dict.toList
+                                            |> List.filterMap
+                                                (\( name, alias_ ) ->
+                                                    if alias_.tipe == decoded then
+                                                        Just name
+
+                                                    else
+                                                        Nothing
+                                                )
+                                            |> List.head
+                                in
+                                case maybeRecordName of
+                                    Nothing ->
+                                        BranchedState.state []
+
+                                    Just recordName ->
+                                        BranchedState.combine generateField fields
+                                            |> BranchedState.map (toInit recordName)
+
+                            tipe ->
+                                run value config targetType
+
+                    Nothing ->
+                        BranchedState.state []
         }
 
 
@@ -956,6 +1071,17 @@ exprToStringHelp addLinebreaks isArgument expr =
                 , indent <|
                     String.join "\n\n" <|
                         List.map branchToString branches
+                ]
+
+        Pipe leftExpr rightExpr ->
+            String.concat
+                [ exprToStringHelp addLinebreaks False leftExpr
+                , if addLinebreaks then
+                    "\n    |> "
+
+                  else
+                    " |> "
+                , exprToStringHelp addLinebreaks False rightExpr
                 ]
 
 

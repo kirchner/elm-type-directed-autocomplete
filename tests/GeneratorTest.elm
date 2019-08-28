@@ -35,6 +35,7 @@ import Generator
         , exprToString
         , firstN
         , for
+        , jsonDecoder
         , record
         , recordUpdate
         , takeValues
@@ -59,6 +60,7 @@ suite =
             , equivalenceTest
             , firstNTest
             , todoTest
+            , jsonDecoderTest
             ]
         , takeValuesTest
         ]
@@ -562,6 +564,73 @@ todoTest =
     NewString newString ->
         Debug.todo "implementation missing\""""
                 ]
+              )
+            ]
+        ]
+
+
+jsonDecoderTest : Test
+jsonDecoderTest =
+    describe "jsonDecoder"
+        [ testGenerator "single value"
+            (Generator.jsonDecoder
+                |> Generator.addValues
+                    (Dict.fromList
+                        [ ( "Decode.int"
+                          , Canonical.Annotation.fromType <|
+                                Type [ "Json", "Decode" ]
+                                    "Decoder"
+                                    [ Canonical.Type.int ]
+                          )
+                        ]
+                    )
+            )
+            [ ( Type [ "Json", "Decode" ] "Decoder" [ Canonical.Type.int ]
+              , [ "Decode.int" ]
+              )
+            ]
+        , testGenerator "an aliased record"
+            (Generator.jsonDecoder
+                |> Generator.addValues
+                    (Dict.fromList
+                        [ ( "Decode.int"
+                          , Canonical.Annotation.fromType <|
+                                Type [ "Json", "Decode" ]
+                                    "Decoder"
+                                    [ Canonical.Type.int ]
+                          )
+                        , ( "Decode.string"
+                          , Canonical.Annotation.fromType <|
+                                Type [ "Json", "Decode" ]
+                                    "Decoder"
+                                    [ Canonical.Type.string ]
+                          )
+                        ]
+                    )
+                |> Generator.addAliases
+                    (Dict.fromList
+                        [ ( "User"
+                          , { vars = []
+                            , tipe =
+                                Record
+                                    [ ( "age", Canonical.Type.int )
+                                    , ( "name", Canonical.Type.string )
+                                    ]
+                                    Nothing
+                            }
+                          )
+                        ]
+                    )
+            )
+            [ ( Type [ "Json", "Decode" ]
+                    "Decoder"
+                    [ Record
+                        [ ( "age", Canonical.Type.int )
+                        , ( "name", Canonical.Type.string )
+                        ]
+                        Nothing
+                    ]
+              , [ "Decode.succeed User |> Decode.required \"age\" Decode.int |> Decode.required \"name\" Decode.string" ]
               )
             ]
         ]

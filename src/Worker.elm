@@ -381,6 +381,7 @@ generateCompletions request range globalValues aliases unions ( tipe, isArgument
             |> addGlobalValues
             |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
             |> Generator.addUnions unions
+            |> Generator.addAliases aliases
             |> Generator.for tipe
     , isArgument = isArgument
     }
