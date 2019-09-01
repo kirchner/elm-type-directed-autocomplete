@@ -1,8 +1,17 @@
 port module Worker exposing (main)
 
-import Canonical exposing (Alias, Module, ModuleData, Store, TodoItem, Union)
+import Canonical
+    exposing
+        ( Alias
+        , Constructor
+        , Module
+        , ModuleData
+        , Store
+        , TodoItem
+        , Type
+        )
 import Canonical.Annotation exposing (Annotation)
-import Canonical.Type exposing (Type(..))
+import Canonical.Type as Can
 import Dict exposing (Dict)
 import Elm.Interface as Interface exposing (Interface)
 import Elm.Parser as Parser
@@ -322,7 +331,8 @@ infer request range moduleName function currentModule =
                 range
                 [ currentModule.values, standardValues, globalValues ]
                 currentModule.aliases
-                currentModule.unions
+                currentModule.types
+                currentModule.constructors
             )
 
 
@@ -347,9 +357,9 @@ qualify qualifier ( name, annotation ) =
 standardValues : Dict String Annotation
 standardValues =
     Dict.fromList
-        [ ( "[]", Canonical.Annotation.fromType (Canonical.Type.list (Var "a")) )
-        , ( "\"\"", Canonical.Annotation.fromType Canonical.Type.string )
-        , ( "0", Canonical.Annotation.fromType (Var "number") )
+        [ ( "[]", Canonical.Annotation.fromType (Can.list (Can.Var "a")) )
+        , ( "\"\"", Canonical.Annotation.fromType Can.string )
+        , ( "0", Canonical.Annotation.fromType (Can.Var "number") )
         ]
 
 
@@ -362,10 +372,11 @@ generateCompletions :
     -> Range
     -> List (Dict String Annotation)
     -> Dict String Alias
-    -> Dict String Union
-    -> ( Type, Bool, Dict String Type )
+    -> Dict String Type
+    -> Dict String Constructor
+    -> ( Can.Type, Bool, Dict String Can.Type )
     -> CompletionResult
-generateCompletions request range globalValues aliases unions ( tipe, isArgument, localValues ) =
+generateCompletions request range globalValues aliases types constructors ( tipe, isArgument, localValues ) =
     let
         addGlobalValues generator =
             List.foldl Generator.addValues generator globalValues
@@ -380,7 +391,8 @@ generateCompletions request range globalValues aliases unions ( tipe, isArgument
         Generator.default
             |> addGlobalValues
             |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
-            |> Generator.addUnions unions
+            |> Generator.addTypes types
+            |> Generator.addConstructors constructors
             |> Generator.addAliases aliases
             |> Generator.for tipe
     , isArgument = isArgument
@@ -412,7 +424,7 @@ type alias CompletionResult =
     , row : Int
     , column : Int
     , range : Range
-    , tipe : Type
+    , tipe : Can.Type
     , completions : List Expr
     , isArgument : Bool
     }
@@ -434,7 +446,7 @@ completionResultToString result =
         , ""
         , snippet result.range result.src
         , ""
-        , "Infered type: " ++ Canonical.Type.toString result.tipe
+        , "Infered type: " ++ Can.toString result.tipe
         , ""
         , "Completions:"
         , ""
@@ -569,30 +581,37 @@ errorToString error =
                     , availableDataToString
                         (Dict.union globalValues currentModule.values)
                         currentModule.aliases
-                        currentModule.unions
+                        currentModule.types
+                        currentModule.constructors
                     ]
 
 
 availableDataToString :
     Dict String Annotation
     -> Dict String Alias
-    -> Dict String Union
+    -> Dict String Type
+    -> Dict String Constructor
     -> String
-availableDataToString values aliases unions =
+availableDataToString values aliases types constructors =
     let
         unionToString ( name, union ) =
             String.concat
                 [ String.join " " (name :: union.vars)
                 , " = "
-                , union.constructors
+                , union.tags
                     |> List.map constructorToString
                     |> String.join " | "
                 ]
 
-        constructorToString ( name, types ) =
-            name
-                :: List.map Canonical.Type.toString types
-                |> String.join " "
+        constructorToString tag =
+            case Dict.get tag constructors of
+                Nothing ->
+                    "UNKNOWN CONSTRUCTOR '" ++ tag ++ "'"
+
+                Just constructor ->
+                    tag
+                        :: List.map Can.toString constructor.args
+                        |> String.join " "
 
         valueToString ( fieldName, fieldAnnotation ) =
             String.concat
@@ -604,7 +623,7 @@ availableDataToString values aliases unions =
     String.join "\n"
         [ "Unions:"
         , ""
-        , unions
+        , types
             |> Dict.toList
             |> List.map unionToString
             |> List.map (\line -> "  " ++ line)

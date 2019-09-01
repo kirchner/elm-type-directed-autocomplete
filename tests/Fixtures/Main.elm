@@ -1,11 +1,28 @@
 module Fixtures.Main exposing
-    ( exposedUnions
+    ( exposedAliases
+    , exposedConstructors
+    , exposedTypes
     , exposedValues
     , src
     , values
     )
 
 import Set exposing (Set)
+
+
+exposedTypes : Set String
+exposedTypes =
+    Set.fromList []
+
+
+exposedAliases : Set String
+exposedAliases =
+    Set.empty
+
+
+exposedConstructors : Set String
+exposedConstructors =
+    Set.empty
 
 
 exposedValues : Set String
@@ -15,13 +32,7 @@ exposedValues =
 
 values : Set String
 values =
-    Set.fromList <|
-        [ "NoOp", "update" ]
-
-
-exposedUnions : Set String
-exposedUnions =
-    Set.fromList []
+    Set.fromList [ "update" ]
 
 
 src : String

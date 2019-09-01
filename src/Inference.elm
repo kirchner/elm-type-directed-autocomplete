@@ -4,7 +4,7 @@ module Inference exposing
     , inferHole
     )
 
-import Canonical exposing (Alias, Associativity(..), Binop, Imports, Module, Union)
+import Canonical exposing (Alias, Associativity(..), Binop, Imports, Module)
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
@@ -217,11 +217,8 @@ infer range isArgument (Node currentRange expr) =
                 storeHole name (Var name) isArgument
                     |> map (\_ -> Var name)
 
-            else if name == "True" then
-                return Canonical.Type.bool
-
-            else if name == "False" then
-                return Canonical.Type.bool
+            else if isCapitalized name then
+                findConstructor moduleName name
 
             else
                 findValue moduleName name
@@ -879,7 +876,7 @@ inferPattern (Node _ pattern) =
             freshVar
                 |> andThen
                     (\var ->
-                        findValue moduleName name
+                        findConstructor moduleName name
                             |> andThen
                                 (\constructorType ->
                                     traverse inferPattern patterns
@@ -927,11 +924,6 @@ findValue moduleName name =
                         |> Maybe.andThen (\values -> Dict.get name values)
 
                 returnQualifiedError qualifier =
-                    --State.state
-                    --    ( []
-                    --    , []
-                    --    , Err (UnboundVariable (Src.qualifiedName qualifier name))
-                    --    )
                     State.advance <|
                         \count ->
                             ( ( [], [], Ok (Var ("a" ++ String.fromInt count)) )
@@ -979,6 +971,75 @@ findValue moduleName name =
                                 instantiate annotation
                         in
                         run env
+
+
+findConstructor : ModuleName -> String -> Infer Type
+findConstructor moduleName name =
+    Infer <|
+        \env ->
+            let
+                getQualifiedConstructor qualifier =
+                    Dict.get qualifier env.currentModule.qualifiedConstructors
+                        |> Maybe.andThen (Dict.get name)
+
+                returnQualifiedError qualifier =
+                    State.advance <|
+                        \count ->
+                            ( ( [], [], Ok (Var ("a" ++ String.fromInt count)) )
+                            , count + 1
+                            )
+
+                toAnnotation constructor =
+                    Canonical.Annotation.fromType <|
+                        List.foldr Lambda constructor.tipe constructor.args
+            in
+            if List.isEmpty moduleName then
+                case Dict.get name env.currentModule.constructors of
+                    Nothing ->
+                        case getQualifiedConstructor [] of
+                            Nothing ->
+                                returnQualifiedError []
+
+                            Just constructor ->
+                                let
+                                    (Infer run) =
+                                        constructor
+                                            |> toAnnotation
+                                            |> instantiate
+                                in
+                                run env
+
+                    Just constructor ->
+                        let
+                            (Infer run) =
+                                constructor
+                                    |> toAnnotation
+                                    |> instantiate
+                        in
+                        run env
+
+            else
+                case getQualifiedConstructor moduleName of
+                    Nothing ->
+                        returnQualifiedError moduleName
+
+                    Just constructor ->
+                        let
+                            (Infer run) =
+                                constructor
+                                    |> toAnnotation
+                                    |> instantiate
+                        in
+                        run env
+
+
+isCapitalized : String -> Bool
+isCapitalized name =
+    name
+        |> String.toList
+        |> List.head
+        |> Maybe.map Char.isUpper
+        |> Maybe.withDefault True
 
 
 findInfix : String -> Infer ( Binop, Type )

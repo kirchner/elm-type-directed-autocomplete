@@ -1,5 +1,7 @@
 module Fixtures.Basics exposing
-    ( exposedUnions
+    ( exposedAliases
+    , exposedConstructors
+    , exposedTypes
     , exposedValues
     , src
     )
@@ -7,30 +9,44 @@ module Fixtures.Basics exposing
 import Set exposing (Set)
 
 
-exposedValues : Set String
-exposedValues =
-    Set.fromList <|
-        List.concat
-            [ [ "toFloat", "round", "floor", "ceiling", "truncate" ]
-            , [ "max", "min", "compare", "EQ", "GT", "LT" ]
-            , [ "True", "False", "not", "xor" ]
-            , [ "modBy", "remainderBy", "negate", "abs", "clamp", "sqrt", "logBase", "e" ]
-            , [ "pi", "cos", "sin", "tan", "acos", "asin", "atan", "atan2" ]
-            , [ "degrees", "radians", "turns" ]
-            , [ "toPolar", "fromPolar" ]
-            , [ "isNaN", "isInfinite" ]
-            , [ "identity", "always", "never" ]
-            ]
-
-
-exposedUnions : Set String
-exposedUnions =
+exposedTypes : Set String
+exposedTypes =
     Set.fromList <|
         List.concat
             [ [ "Int", "Float" ]
             , [ "Order" ]
             , [ "Bool" ]
             , [ "Never" ]
+            ]
+
+
+exposedAliases : Set String
+exposedAliases =
+    Set.empty
+
+
+exposedConstructors : Set String
+exposedConstructors =
+    Set.fromList <|
+        List.concat
+            [ [ "EQ", "GT", "LT" ]
+            , [ "True", "False" ]
+            ]
+
+
+exposedValues : Set String
+exposedValues =
+    Set.fromList <|
+        List.concat
+            [ [ "toFloat", "round", "floor", "ceiling", "truncate" ]
+            , [ "max", "min", "compare" ]
+            , [ "not", "xor" ]
+            , [ "modBy", "remainderBy", "negate", "abs", "clamp", "sqrt", "logBase", "e" ]
+            , [ "pi", "cos", "sin", "tan", "acos", "asin", "atan", "atan2" ]
+            , [ "degrees", "radians", "turns" ]
+            , [ "toPolar", "fromPolar" ]
+            , [ "isNaN", "isInfinite" ]
+            , [ "identity", "always", "never" ]
             ]
 
 

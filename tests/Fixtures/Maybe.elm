@@ -1,5 +1,7 @@
 module Fixtures.Maybe exposing
-    ( exposedUnions
+    ( exposedAliases
+    , exposedConstructors
+    , exposedTypes
     , exposedValues
     , src
     , values
@@ -8,32 +10,41 @@ module Fixtures.Maybe exposing
 import Set exposing (Set)
 
 
-exposedValues : Set String
-exposedValues =
-    Set.fromList <|
-        List.concat
-            [ [ "Just", "Nothing" ]
-            , [ "andThen" ]
-            , [ "map", "map2", "map3", "map4", "map5" ]
-            , [ "withDefault" ]
-            ]
-
-
 values : Set String
 values =
     Set.fromList <|
         List.concat
-            [ [ "Just", "Nothing" ]
-            , [ "andThen" ]
+            [ [ "andThen" ]
             , [ "map", "map2", "map3", "map4", "map5" ]
             , [ "withDefault" ]
             , [ "isJust", "destruct" ]
             ]
 
 
-exposedUnions : Set String
-exposedUnions =
+exposedTypes : Set String
+exposedTypes =
     Set.fromList [ "Maybe" ]
+
+
+exposedAliases : Set String
+exposedAliases =
+    Set.empty
+
+
+exposedConstructors : Set String
+exposedConstructors =
+    Set.fromList <|
+        [ "Just", "Nothing" ]
+
+
+exposedValues : Set String
+exposedValues =
+    Set.fromList <|
+        List.concat
+            [ [ "andThen" ]
+            , [ "map", "map2", "map3", "map4", "map5" ]
+            , [ "withDefault" ]
+            ]
 
 
 src : String

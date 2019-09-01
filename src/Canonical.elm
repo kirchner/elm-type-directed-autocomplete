@@ -2,22 +2,23 @@ module Canonical exposing
     ( Alias
     , Associativity(..)
     , Binop
+    , Constructor
     , Imports
     , Module
     , ModuleData
     , Store
     , TodoItem
-    , Union
+    , Type
     , add
+    , addImports
     , canonicalizeModule
     , canonicalizeTypeAnnotation
-    , collectImports
     , emptyStore
     , replace
     )
 
 import Canonical.Annotation exposing (Annotation(..))
-import Canonical.Type exposing (Type(..))
+import Canonical.Type as Can
 import Dict exposing (Dict)
 import Elm.Interface exposing (Interface)
 import Elm.Syntax.Declaration exposing (Declaration(..))
@@ -39,30 +40,51 @@ import Set exposing (Set)
 
 
 type alias Module =
-    { exposedValues : Dict String Annotation
-    , exposedUnions : Dict String Union
-    , exposedAliases : Dict String Alias
-    , exposedBinops : Dict String Binop
-    , values : Dict String Annotation
-    , unions : Dict String Union
-    , aliases : Dict String Alias
-    , binops : Dict String Binop
-    , qualifiedValues : Dict ModuleName (Dict String Annotation)
-    , qualifiedUnions : Dict ModuleName (Dict String Union)
-    , qualifiedAliases : Dict ModuleName (Dict String Alias)
+    { exposedTypes : Exposed Type
+    , exposedAliases : Exposed Alias
+    , exposedConstructors : Exposed Constructor
+    , exposedBinops : Exposed Binop
+    , exposedValues : Exposed Annotation
+    , types : Local Type
+    , aliases : Local Alias
+    , constructors : Local Constructor
+    , binops : Local Binop
+    , values : Local Annotation
+    , qualifiedTypes : Qualified Type
+    , qualifiedAliases : Qualified Alias
+    , qualifiedConstructors : Qualified Constructor
+    , qualifiedValues : Qualified Annotation
     }
 
 
-type alias Union =
+type alias Exposed a =
+    Dict String a
+
+
+type alias Local a =
+    Dict String a
+
+
+type alias Qualified a =
+    Dict ModuleName (Dict String a)
+
+
+type alias Type =
     { moduleName : ModuleName
     , vars : List String
-    , constructors : List ( String, List Type )
+    , tags : List String
+    }
+
+
+type alias Constructor =
+    { args : List Can.Type
+    , tipe : Can.Type
     }
 
 
 type alias Alias =
     { vars : List String
-    , tipe : Type
+    , tipe : Can.Type
     }
 
 
@@ -88,50 +110,55 @@ canonicalizeModule : Dict ModuleName Module -> ModuleName -> File -> Interface -
 canonicalizeModule importedModules moduleName file interface =
     let
         initialModule =
-            { exposedValues = Dict.empty
-            , exposedUnions =
+            { exposedTypes =
                 if moduleName == [ "List" ] then
                     Dict.singleton "List"
                         { moduleName = [ "List" ]
                         , vars = [ "a" ]
-                        , constructors = []
+                        , tags = []
                         }
 
                 else
                     Dict.empty
             , exposedAliases = Dict.empty
+            , exposedConstructors = Dict.empty
             , exposedBinops = Dict.empty
-            , values = Dict.empty
-            , unions =
+            , exposedValues = Dict.empty
+            , types =
                 if moduleName == [ "List" ] then
                     Dict.singleton "List"
                         { moduleName = [ "List" ]
                         , vars = [ "a" ]
-                        , constructors = []
+                        , tags = []
                         }
 
                 else
                     Dict.empty
             , aliases = Dict.empty
-            , binops = binops
-            , qualifiedValues = qualifiedValues
-            , qualifiedUnions = qualifiedUnions
-            , qualifiedAliases = qualifiedAliases
+            , constructors = Dict.empty
+            , binops = imports.binops
+            , values = Dict.empty
+            , qualifiedTypes = imports.qualifiedTypes
+            , qualifiedAliases = imports.qualifiedAliases
+            , qualifiedConstructors = imports.qualifiedConstructors
+            , qualifiedValues = imports.qualifiedValues
             }
 
-        { binops, qualifiedValues, qualifiedUnions, qualifiedAliases } =
+        imports =
             if Set.member moduleName coreModules then
-                collectImports importedModules file.imports
+                addImports importedModules file.imports
 
             else
-                collectImports importedModules (file.imports ++ defaultImports)
+                addImports importedModules (file.imports ++ defaultImports)
 
         exposingList =
             Elm.Syntax.Module.exposingList (Node.value file.moduleDefinition)
     in
     file.declarations
-        |> List.foldl (canonicalizeDeclaration moduleName file.declarations) initialModule
-        |> computeExposed exposingList
+        |> List.foldl
+            (canonicalizeDeclaration moduleName file.declarations)
+            initialModule
+        |> expose exposingList
 
 
 canonicalizeDeclaration :
@@ -200,16 +227,28 @@ canonicalizeDeclaration moduleName declarations declaration currentModule =
                         (canonicalizeTypeAnnotation moduleName currentModule)
                         valueConstructor.arguments
                     )
-
-                union =
-                    { moduleName = moduleName
-                    , vars = vars
-                    , constructors = constructors
-                    }
             in
             { currentModule
-                | unions = Dict.insert typeName union currentModule.unions
-                , values = insertConstructors typeName union currentModule.values
+                | types =
+                    Dict.insert typeName
+                        { moduleName = moduleName
+                        , vars = vars
+                        , tags = List.map Tuple.first constructors
+                        }
+                        currentModule.types
+                , constructors =
+                    List.foldl
+                        (\( name, args ) ->
+                            Dict.insert name
+                                { args = args
+                                , tipe =
+                                    Can.Type moduleName
+                                        typeName
+                                        (List.map Can.Var vars)
+                                }
+                        )
+                        currentModule.constructors
+                        constructors
             }
 
         PortDeclaration p ->
@@ -285,18 +324,18 @@ canonicalizeDeclaration moduleName declarations declaration currentModule =
             currentModule
 
 
-canonicalizeTypeAnnotation : ModuleName -> Module -> Node Src.TypeAnnotation -> Type
+canonicalizeTypeAnnotation : ModuleName -> Module -> Node Src.TypeAnnotation -> Can.Type
 canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
     case Node.value typeAnnotation of
         Src.GenericType var ->
-            Var var
+            Can.Var var
 
         Src.Typed qualifiedName typeAnnotations ->
             let
                 ( qualifier, name ) =
                     Node.value qualifiedName
             in
-            case lookupUnion currentModule qualifier name of
+            case lookupType currentModule qualifier name of
                 Nothing ->
                     case lookupAlias currentModule qualifier name of
                         Nothing ->
@@ -304,7 +343,7 @@ canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
                             -- the Elm file compiles, then this should actually
                             -- not happen. So, for simplicity, we just assume
                             -- the type is defined within the current module
-                            Type
+                            Can.Type
                                 moduleName
                                 name
                                 (List.map
@@ -320,9 +359,9 @@ canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
                                     typeAnnotations
                                 )
 
-                Just union ->
-                    Type
-                        union.moduleName
+                Just tipe ->
+                    Can.Type
+                        tipe.moduleName
                         name
                         (List.map
                             (canonicalizeTypeAnnotation moduleName currentModule)
@@ -330,22 +369,22 @@ canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
                         )
 
         Src.Unit ->
-            Tuple []
+            Can.Tuple []
 
         Src.Tupled typeAnnotations ->
-            Tuple
+            Can.Tuple
                 (List.map
                     (canonicalizeTypeAnnotation moduleName currentModule)
                     typeAnnotations
                 )
 
         Src.Record recordFields ->
-            Record
+            Can.Record
                 (List.map (canonicalizeRecordField moduleName currentModule) recordFields)
                 Nothing
 
         Src.GenericRecord var recordFields ->
-            Record
+            Can.Record
                 (List.map
                     (canonicalizeRecordField moduleName currentModule)
                     (Node.value recordFields)
@@ -353,12 +392,12 @@ canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
                 (Just (Node.value var))
 
         Src.FunctionTypeAnnotation from to ->
-            Lambda
+            Can.Lambda
                 (canonicalizeTypeAnnotation moduleName currentModule from)
                 (canonicalizeTypeAnnotation moduleName currentModule to)
 
 
-substituteVars : Type -> List String -> List Type -> Type
+substituteVars : Can.Type -> List String -> List Can.Type -> Can.Type
 substituteVars tipe vars types =
     let
         subst =
@@ -375,15 +414,15 @@ substituteVars tipe vars types =
     substituteVarsHelp subst tipe
 
 
-substituteVarsHelp : Dict String Type -> Type -> Type
+substituteVarsHelp : Dict String Can.Type -> Can.Type -> Can.Type
 substituteVarsHelp subst tipe =
     case tipe of
-        Lambda from to ->
-            Lambda
+        Can.Lambda from to ->
+            Can.Lambda
                 (substituteVarsHelp subst from)
                 (substituteVarsHelp subst to)
 
-        Var name ->
+        Can.Var name ->
             case Dict.get name subst of
                 Nothing ->
                     tipe
@@ -391,45 +430,45 @@ substituteVarsHelp subst tipe =
                 Just newType ->
                     newType
 
-        Type moduleName name types ->
-            Type moduleName
+        Can.Type moduleName name types ->
+            Can.Type moduleName
                 name
                 (List.map (substituteVarsHelp subst) types)
 
-        Record fields maybeVar ->
+        Can.Record fields maybeVar ->
             case maybeVar of
                 Nothing ->
-                    Record
+                    Can.Record
                         (List.map (Tuple.mapSecond (substituteVarsHelp subst)) fields)
                         maybeVar
 
                 Just name ->
                     case Dict.get name subst of
                         Nothing ->
-                            Record
+                            Can.Record
                                 (List.map (Tuple.mapSecond (substituteVarsHelp subst))
                                     fields
                                 )
                                 maybeVar
 
-                        Just (Record newFields newMaybeVar) ->
-                            Record (fields ++ newFields) newMaybeVar
+                        Just (Can.Record newFields newMaybeVar) ->
+                            Can.Record (fields ++ newFields) newMaybeVar
 
                         _ ->
-                            Record
+                            Can.Record
                                 (List.map (Tuple.mapSecond (substituteVarsHelp subst))
                                     fields
                                 )
                                 maybeVar
 
-        Unit ->
+        Can.Unit ->
             tipe
 
-        Tuple types ->
-            Tuple (List.map (substituteVarsHelp subst) types)
+        Can.Tuple types ->
+            Can.Tuple (List.map (substituteVarsHelp subst) types)
 
 
-canonicalizeRecordField : ModuleName -> Module -> Node Src.RecordField -> ( String, Type )
+canonicalizeRecordField : ModuleName -> Module -> Node Src.RecordField -> ( String, Can.Type )
 canonicalizeRecordField moduleName currentModule recordField =
     let
         ( name, annotation ) =
@@ -446,9 +485,9 @@ lookupValue currentModule moduleName name =
         |> Maybe.andThen (Dict.get name)
 
 
-lookupUnion : Module -> ModuleName -> String -> Maybe Union
-lookupUnion currentModule moduleName name =
-    Dict.get moduleName currentModule.qualifiedUnions
+lookupType : Module -> ModuleName -> String -> Maybe Type
+lookupType currentModule moduleName name =
+    Dict.get moduleName currentModule.qualifiedTypes
         |> Maybe.andThen (Dict.get name)
 
 
@@ -468,440 +507,375 @@ lookupAlias currentModule moduleName name =
             |> Maybe.andThen (Dict.get name)
 
 
-computeExposed : Exposing -> Module -> Module
-computeExposed exposingList currentModule =
+expose : Exposing -> Module -> Module
+expose exposingList currentModule =
     case exposingList of
         All _ ->
             { currentModule
-                | exposedValues = currentModule.values
-                , exposedUnions = currentModule.unions
+                | exposedTypes = currentModule.types
                 , exposedAliases = currentModule.aliases
+                , exposedConstructors = currentModule.constructors
+                , exposedValues = currentModule.values
             }
 
         Explicit topLevelExposes ->
-            List.foldl
-                computeTopLevelExpose
-                currentModule
-                topLevelExposes
+            List.foldl exposeHelp currentModule topLevelExposes
 
 
-computeTopLevelExpose : Node TopLevelExpose -> Module -> Module
-computeTopLevelExpose topLevelExpose currentModule =
+exposeHelp : Node TopLevelExpose -> Module -> Module
+exposeHelp topLevelExpose currentModule =
     case Node.value topLevelExpose of
         InfixExpose name ->
-            case Dict.get name currentModule.binops of
-                Nothing ->
-                    currentModule
-
-                Just binop ->
-                    { currentModule
-                        | exposedBinops =
-                            Dict.insert name binop currentModule.exposedBinops
-                    }
+            exposeBinop name currentModule
 
         FunctionExpose name ->
-            case Dict.get name currentModule.values of
-                Nothing ->
-                    currentModule
-
-                Just annotation ->
-                    { currentModule
-                        | exposedValues =
-                            Dict.insert name annotation currentModule.exposedValues
-                    }
+            exposeValue name currentModule
 
         TypeOrAliasExpose name ->
-            case Dict.get name currentModule.unions of
-                Nothing ->
-                    case Dict.get name currentModule.aliases of
-                        Nothing ->
-                            currentModule
-
-                        Just alias_ ->
-                            { currentModule
-                                | exposedAliases =
-                                    Dict.insert name alias_ currentModule.exposedAliases
-                            }
-
-                Just union ->
-                    { currentModule
-                        | exposedUnions =
-                            Dict.insert name union currentModule.exposedUnions
-                    }
+            currentModule
+                |> exposeType name
+                |> exposeAlias name
 
         TypeExpose exposedType ->
             case exposedType.open of
                 Nothing ->
-                    case Dict.get exposedType.name currentModule.unions of
-                        Nothing ->
-                            currentModule
-
-                        Just union ->
-                            { currentModule
-                                | exposedUnions =
-                                    Dict.insert exposedType.name
-                                        union
-                                        currentModule.exposedUnions
-                            }
+                    currentModule
+                        |> exposeType exposedType.name
 
                 Just _ ->
-                    case Dict.get exposedType.name currentModule.unions of
-                        Nothing ->
-                            currentModule
-
-                        Just union ->
-                            { currentModule
-                                | exposedUnions =
-                                    Dict.insert exposedType.name
-                                        union
-                                        currentModule.exposedUnions
-                                , exposedValues =
-                                    insertConstructors
-                                        exposedType.name
-                                        union
-                                        currentModule.exposedValues
-                            }
+                    currentModule
+                        |> exposeType exposedType.name
+                        |> exposeConstructors exposedType.name
 
 
+exposeBinop : String -> Module -> Module
+exposeBinop name currentModule =
+    case Dict.get name currentModule.binops of
+        Nothing ->
+            currentModule
 
----- COLLECT IMPORTS
+        Just binop ->
+            { currentModule
+                | exposedBinops =
+                    Dict.insert name binop currentModule.exposedBinops
+            }
+
+
+exposeValue : String -> Module -> Module
+exposeValue name currentModule =
+    case Dict.get name currentModule.values of
+        Nothing ->
+            currentModule
+
+        Just annotation ->
+            { currentModule
+                | exposedValues =
+                    Dict.insert name annotation currentModule.exposedValues
+            }
+
+
+exposeType : String -> Module -> Module
+exposeType name currentModule =
+    case Dict.get name currentModule.types of
+        Nothing ->
+            currentModule
+
+        Just tipe ->
+            { currentModule
+                | exposedTypes =
+                    Dict.insert name tipe currentModule.exposedTypes
+            }
+
+
+exposeAlias : String -> Module -> Module
+exposeAlias name currentModule =
+    case Dict.get name currentModule.aliases of
+        Nothing ->
+            currentModule
+
+        Just alias_ ->
+            { currentModule
+                | exposedAliases =
+                    Dict.insert name alias_ currentModule.exposedAliases
+            }
+
+
+exposeConstructors : String -> Module -> Module
+exposeConstructors name currentModule =
+    case Dict.get name currentModule.types of
+        Nothing ->
+            currentModule
+
+        Just tipe ->
+            { currentModule
+                | exposedConstructors =
+                    List.foldl
+                        (\tag ->
+                            case Dict.get tag currentModule.constructors of
+                                Nothing ->
+                                    identity
+
+                                Just constructor ->
+                                    Dict.insert tag constructor
+                        )
+                        currentModule.exposedConstructors
+                        tipe.tags
+            }
+
+
+
+---- ADD IMPORTS
 
 
 type alias Imports =
-    { binops : Dict String Binop
-    , qualifiedValues : Dict ModuleName (Dict String Annotation)
-    , qualifiedUnions : Dict ModuleName (Dict String Union)
-    , qualifiedAliases : Dict ModuleName (Dict String Alias)
+    { binops : Local Binop
+    , qualifiedTypes : Qualified Type
+    , qualifiedAliases : Qualified Alias
+    , qualifiedConstructors : Qualified Constructor
+    , qualifiedValues : Qualified Annotation
     }
 
 
-collectImports :
-    Dict ModuleName Module
-    -> List (Node Import)
-    -> Imports
-collectImports importedModules imports =
+addImports : Dict ModuleName Module -> List (Node Import) -> Imports
+addImports importedModules =
     let
         initialImports =
             { binops = Dict.empty
-            , qualifiedValues = Dict.empty
-            , qualifiedUnions =
+            , qualifiedTypes =
                 Dict.singleton []
                     (Dict.singleton "List"
                         { moduleName = [ "List" ]
                         , vars = [ "a" ]
-                        , constructors = []
+                        , tags = []
                         }
                     )
             , qualifiedAliases = Dict.empty
+            , qualifiedConstructors = Dict.empty
+            , qualifiedValues = Dict.empty
             }
     in
     List.foldl
-        (\import_ imports_ ->
+        (\importStatement imports ->
             let
                 moduleName =
-                    import_
+                    importStatement
                         |> Node.value
                         |> .moduleName
                         |> Node.value
             in
             case Dict.get moduleName importedModules of
                 Nothing ->
-                    imports_
+                    imports
 
                 Just importedModule ->
-                    let
-                        qualifier =
-                            moduleAlias
-                                |> Maybe.map Node.value
-                                |> Maybe.withDefault moduleName
-
-                        { moduleAlias, exposingList } =
-                            Node.value import_
-                    in
-                    imports_
-                        |> collectQualifiedExposed importedModule qualifier
-                        |> collectExposed
-                            importedModule
-                            qualifier
-                            moduleName
-                            exposingList
+                    addImport importStatement moduleName importedModule imports
         )
         initialImports
-        imports
 
 
-collectQualifiedExposed : Module -> ModuleName -> Imports -> Imports
-collectQualifiedExposed importedModule qualifier imports =
-    { imports
-        | qualifiedValues =
-            Dict.update qualifier
-                (\maybeValues ->
-                    case maybeValues of
-                        Nothing ->
-                            Just importedModule.exposedValues
+addImport : Node Import -> ModuleName -> Module -> Imports -> Imports
+addImport importStatement moduleName importedModule imports =
+    let
+        qualifier =
+            moduleAlias
+                |> Maybe.map Node.value
+                |> Maybe.withDefault moduleName
 
-                        Just values ->
-                            Just <|
-                                Dict.union values
-                                    importedModule.exposedValues
-                )
-                imports.qualifiedValues
-        , qualifiedUnions =
-            Dict.update qualifier
-                (\maybeUnions ->
-                    case maybeUnions of
-                        Nothing ->
-                            Just importedModule.exposedUnions
-
-                        Just unions ->
-                            Just <|
-                                Dict.union unions
-                                    importedModule.exposedUnions
-                )
-                imports.qualifiedUnions
-        , qualifiedAliases =
-            Dict.update qualifier
-                (\maybeAliases ->
-                    case maybeAliases of
-                        Nothing ->
-                            Just importedModule.exposedAliases
-
-                        Just aliases ->
-                            Just <|
-                                Dict.union aliases
-                                    importedModule.exposedAliases
-                )
-                imports.qualifiedAliases
-    }
+        { moduleAlias, exposingList } =
+            Node.value importStatement
+    in
+    imports
+        |> addTypes qualifier importedModule
+        |> addAliases qualifier importedModule
+        |> addConstructors qualifier importedModule
+        |> addValues qualifier importedModule
+        |> addExposings qualifier importedModule exposingList
 
 
-collectExposed :
-    Module
-    -> ModuleName
-    -> ModuleName
-    -> Maybe (Node Exposing)
-    -> Imports
-    -> Imports
-collectExposed importedModule qualifier actualModuleName exposingList imports =
+addExposings : ModuleName -> Module -> Maybe (Node Exposing) -> Imports -> Imports
+addExposings qualifier importedModule exposingList imports =
     case exposingList of
         Nothing ->
             imports
 
-        Just exposing_ ->
-            case Node.value exposing_ of
+        Just exposings ->
+            case Node.value exposings of
                 All _ ->
-                    { imports
-                        | qualifiedValues =
-                            Dict.update []
-                                (\maybeValues ->
-                                    case maybeValues of
-                                        Nothing ->
-                                            Just importedModule.exposedValues
-
-                                        Just values ->
-                                            Just <|
-                                                Dict.union values
-                                                    importedModule.exposedValues
-                                )
-                                imports.qualifiedValues
-                        , qualifiedUnions =
-                            Dict.update []
-                                (\maybeUnions ->
-                                    case maybeUnions of
-                                        Nothing ->
-                                            Just importedModule.exposedUnions
-
-                                        Just unions ->
-                                            Just <|
-                                                Dict.union unions
-                                                    importedModule.exposedUnions
-                                )
-                                imports.qualifiedUnions
-                        , qualifiedAliases =
-                            Dict.update []
-                                (\maybeAliases ->
-                                    case maybeAliases of
-                                        Nothing ->
-                                            Just importedModule.exposedAliases
-
-                                        Just aliases ->
-                                            Just <|
-                                                Dict.union aliases
-                                                    importedModule.exposedAliases
-                                )
-                                imports.qualifiedAliases
-                        , binops = Dict.union imports.binops importedModule.exposedBinops
-                    }
+                    imports
+                        |> addTypes [] importedModule
+                        |> addAliases [] importedModule
+                        |> addConstructors [] importedModule
+                        |> addValues [] importedModule
+                        |> addBinops importedModule
 
                 Explicit topLevelExposes ->
-                    List.foldl
-                        (collectTopLevelExpose
-                            importedModule
-                            []
-                            actualModuleName
-                        )
+                    List.foldl (addExposing [] importedModule)
                         imports
                         topLevelExposes
 
 
-collectTopLevelExpose :
-    Module
-    -> ModuleName
-    -> ModuleName
-    -> Node TopLevelExpose
-    -> Imports
-    -> Imports
-collectTopLevelExpose importedModule qualifier moduleName topLevelExpose currentImports =
+addExposing : ModuleName -> Module -> Node TopLevelExpose -> Imports -> Imports
+addExposing qualifier importedModule topLevelExpose imports =
     case Node.value topLevelExpose of
         InfixExpose name ->
-            let
-                actualName =
-                    String.dropLeft 1 (String.dropRight 1 name)
-            in
-            case Dict.get actualName importedModule.exposedBinops of
-                Nothing ->
-                    currentImports
-
-                Just binop ->
-                    { currentImports
-                        | binops = Dict.insert actualName binop currentImports.binops
-                    }
+            addBinop (String.dropLeft 1 (String.dropRight 1 name))
+                importedModule
+                imports
 
         FunctionExpose name ->
-            collectExposedValue importedModule.values
-                qualifier
-                moduleName
-                name
-                currentImports
+            addValue name qualifier importedModule imports
 
         TypeOrAliasExpose name ->
-            case Dict.get name importedModule.unions of
-                Nothing ->
-                    case Dict.get name importedModule.aliases of
-                        Nothing ->
-                            currentImports
-
-                        Just alias_ ->
-                            let
-                                newQualifiedAliases =
-                                    Dict.update qualifier
-                                        (\maybeAliases ->
-                                            case maybeAliases of
-                                                Nothing ->
-                                                    Just (Dict.singleton name alias_)
-
-                                                Just aliases ->
-                                                    Just (Dict.insert name alias_ aliases)
-                                        )
-                                        currentImports.qualifiedAliases
-                            in
-                            { currentImports | qualifiedAliases = newQualifiedAliases }
-
-                Just union ->
-                    let
-                        newQualifiedUnions =
-                            Dict.update qualifier
-                                (\maybeUnions ->
-                                    case maybeUnions of
-                                        Nothing ->
-                                            Just (Dict.singleton name union)
-
-                                        Just unions ->
-                                            Just (Dict.insert name union unions)
-                                )
-                                currentImports.qualifiedUnions
-                    in
-                    { currentImports | qualifiedUnions = newQualifiedUnions }
+            imports
+                |> addType name qualifier importedModule
+                |> addAlias name qualifier importedModule
 
         TypeExpose exposedType ->
-            case Dict.get exposedType.name importedModule.unions of
+            case exposedType.open of
                 Nothing ->
-                    currentImports
+                    imports
+                        |> addType exposedType.name qualifier importedModule
 
-                Just union ->
-                    let
-                        newQualifiedUnions =
-                            Dict.update qualifier
-                                (\maybeImports ->
-                                    case maybeImports of
-                                        Nothing ->
-                                            Just (Dict.singleton exposedType.name union)
-
-                                        Just imports ->
-                                            Just
-                                                (Dict.insert exposedType.name
-                                                    union
-                                                    imports
-                                                )
-                                )
-                                currentImports.qualifiedUnions
-                    in
-                    case exposedType.open of
-                        Nothing ->
-                            { currentImports | qualifiedUnions = newQualifiedUnions }
-
-                        Just _ ->
-                            { currentImports
-                                | qualifiedUnions = newQualifiedUnions
-                                , qualifiedValues =
-                                    Dict.update qualifier
-                                        (\maybeValues ->
-                                            case maybeValues of
-                                                Nothing ->
-                                                    Just (insertConstructors exposedType.name union Dict.empty)
-
-                                                Just values ->
-                                                    Just (insertConstructors exposedType.name union values)
-                                        )
-                                        currentImports.qualifiedValues
-                            }
+                Just _ ->
+                    imports
+                        |> addType exposedType.name qualifier importedModule
+                        |> addConstructorsFor exposedType.name
+                            qualifier
+                            importedModule
 
 
-insertConstructors : String -> Union -> Dict String Annotation -> Dict String Annotation
-insertConstructors typeName union values =
-    List.foldl
-        (\( name, types ) ->
-            Dict.insert name
-                (Canonical.Annotation.fromType <|
-                    List.foldr Lambda
-                        (Type union.moduleName
-                            typeName
-                            (List.map Var union.vars)
+addTypes : ModuleName -> Module -> Imports -> Imports
+addTypes qualifier { exposedTypes } ({ qualifiedTypes } as imports) =
+    { imports
+        | qualifiedTypes = addQualified qualifier exposedTypes qualifiedTypes
+    }
+
+
+addType : String -> ModuleName -> Module -> Imports -> Imports
+addType name qualifer { exposedTypes } ({ qualifiedTypes } as imports) =
+    case Dict.get name exposedTypes of
+        Nothing ->
+            imports
+
+        Just tipe ->
+            { imports
+                | qualifiedTypes =
+                    addSingleQualified qualifer name tipe qualifiedTypes
+            }
+
+
+addConstructorsFor : String -> ModuleName -> Module -> Imports -> Imports
+addConstructorsFor name qualifer { exposedTypes, exposedConstructors } ({ qualifiedConstructors } as imports) =
+    case Dict.get name exposedTypes of
+        Nothing ->
+            imports
+
+        Just tipe ->
+            { imports
+                | qualifiedConstructors =
+                    List.foldl
+                        (\tag ->
+                            case Dict.get tag exposedConstructors of
+                                Nothing ->
+                                    identity
+
+                                Just constructor ->
+                                    addSingleQualified qualifer tag constructor
                         )
-                        types
-                )
-        )
-        values
-        union.constructors
+                        qualifiedConstructors
+                        tipe.tags
+            }
 
 
-collectExposedValue :
-    Dict String Annotation
-    -> ModuleName
-    -> ModuleName
-    -> String
-    -> Imports
-    -> Imports
-collectExposedValue values qualifer moduleName name imports =
-    case Dict.get name values of
+addAliases : ModuleName -> Module -> Imports -> Imports
+addAliases qualifier { exposedAliases } ({ qualifiedAliases } as imports) =
+    { imports
+        | qualifiedAliases = addQualified qualifier exposedAliases qualifiedAliases
+    }
+
+
+addAlias : String -> ModuleName -> Module -> Imports -> Imports
+addAlias name qualifer { exposedAliases } ({ qualifiedAliases } as imports) =
+    case Dict.get name exposedAliases of
+        Nothing ->
+            imports
+
+        Just tipe ->
+            { imports
+                | qualifiedAliases =
+                    addSingleQualified qualifer name tipe qualifiedAliases
+            }
+
+
+addConstructors : ModuleName -> Module -> Imports -> Imports
+addConstructors qualifier { exposedConstructors } ({ qualifiedConstructors } as imports) =
+    { imports
+        | qualifiedConstructors =
+            addQualified qualifier exposedConstructors qualifiedConstructors
+    }
+
+
+addValues : ModuleName -> Module -> Imports -> Imports
+addValues qualifier { exposedValues } ({ qualifiedValues } as imports) =
+    { imports
+        | qualifiedValues = addQualified qualifier exposedValues qualifiedValues
+    }
+
+
+addValue : String -> ModuleName -> Module -> Imports -> Imports
+addValue name qualifer { exposedValues } ({ qualifiedValues } as imports) =
+    case Dict.get name exposedValues of
         Nothing ->
             imports
 
         Just annotation ->
             { imports
                 | qualifiedValues =
-                    Dict.update
-                        qualifer
-                        (\maybeValues ->
-                            case maybeValues of
-                                Nothing ->
-                                    Just (Dict.singleton name annotation)
-
-                                Just values_ ->
-                                    Just (Dict.insert name annotation values_)
-                        )
-                        imports.qualifiedValues
+                    addSingleQualified qualifer name annotation qualifiedValues
             }
+
+
+addQualified : ModuleName -> Exposed a -> Qualified a -> Qualified a
+addQualified qualifier exposed qualified =
+    Dict.update qualifier (merge exposed) qualified
+
+
+addSingleQualified : ModuleName -> String -> a -> Qualified a -> Qualified a
+addSingleQualified qualifer name a =
+    Dict.update qualifer
+        (\maybeDictA ->
+            case maybeDictA of
+                Nothing ->
+                    Just (Dict.singleton name a)
+
+                Just dictA ->
+                    Just (Dict.insert name a dictA)
+        )
+
+
+addBinops : Module -> Imports -> Imports
+addBinops { exposedBinops } imports =
+    { imports | binops = Dict.union imports.binops exposedBinops }
+
+
+addBinop : String -> Module -> Imports -> Imports
+addBinop name { exposedBinops } imports =
+    case Dict.get name exposedBinops of
+        Nothing ->
+            imports
+
+        Just binop ->
+            { imports | binops = Dict.insert name binop imports.binops }
+
+
+merge : Dict comparable a -> Maybe (Dict comparable a) -> Maybe (Dict comparable a)
+merge dictA maybeDictA =
+    case maybeDictA of
+        Nothing ->
+            Just dictA
+
+        Just originalDictA ->
+            Just (Dict.union originalDictA dictA)
 
 
 

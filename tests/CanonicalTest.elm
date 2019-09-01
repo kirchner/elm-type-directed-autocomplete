@@ -1,6 +1,12 @@
 module CanonicalTest exposing (suite)
 
-import Canonical exposing (Associativity(..), Module, Store)
+import Canonical
+    exposing
+        ( Associativity(..)
+        , Constructor
+        , Module
+        , Store
+        )
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
@@ -44,10 +50,14 @@ testBasics =
                     }
                 |> Expect.all
                     [ .todo >> Expect.equal []
+                    , exposedTypes [ "Basics" ]
+                        >> Expect.equal Fixtures.Basics.exposedTypes
+                    , exposedAliases [ "Basics" ]
+                        >> Expect.equal Fixtures.Basics.exposedAliases
+                    , exposedConstructors [ "Basics" ]
+                        >> Expect.equal Fixtures.Basics.exposedConstructors
                     , exposedValues [ "Basics" ]
                         >> Expect.equal Fixtures.Basics.exposedValues
-                    , exposedUnions [ "Basics" ]
-                        >> Expect.equal Fixtures.Basics.exposedUnions
                     ]
 
 
@@ -72,10 +82,14 @@ testMaybe =
                     }
                 |> Expect.all
                     [ .todo >> Expect.equal []
+                    , exposedTypes [ "Maybe" ]
+                        >> Expect.equal Fixtures.Maybe.exposedTypes
+                    , exposedAliases [ "Maybe" ]
+                        >> Expect.equal Fixtures.Maybe.exposedAliases
+                    , exposedConstructors [ "Maybe" ]
+                        >> Expect.equal Fixtures.Maybe.exposedConstructors
                     , exposedValues [ "Maybe" ]
                         >> Expect.equal Fixtures.Maybe.exposedValues
-                    , exposedUnions [ "Maybe" ]
-                        >> Expect.equal Fixtures.Maybe.exposedUnions
                     , values [ "Maybe" ]
                         >> Expect.equal Fixtures.Maybe.values
                     ]
@@ -109,10 +123,14 @@ testList =
                     }
                 |> Expect.all
                     [ .todo >> Expect.equal []
+                    , exposedTypes [ "List" ]
+                        >> Expect.equal Fixtures.List.exposedTypes
+                    , exposedAliases [ "List" ]
+                        >> Expect.equal Fixtures.List.exposedAliases
+                    , exposedConstructors [ "List" ]
+                        >> Expect.equal Fixtures.List.exposedConstructors
                     , exposedValues [ "List" ]
                         >> Expect.equal Fixtures.List.exposedValues
-                    , exposedUnions [ "List" ]
-                        >> Expect.equal Fixtures.List.exposedUnions
                     ]
 
 
@@ -165,10 +183,14 @@ testMain =
                     }
                 |> Expect.all
                     [ .todo >> Expect.equal []
+                    , exposedTypes [ "Main" ]
+                        >> Expect.equal Fixtures.Main.exposedTypes
+                    , exposedAliases [ "Main" ]
+                        >> Expect.equal Fixtures.Main.exposedAliases
+                    , exposedConstructors [ "Main" ]
+                        >> Expect.equal Fixtures.Main.exposedConstructors
                     , exposedValues [ "Main" ]
                         >> Expect.equal Fixtures.Main.exposedValues
-                    , exposedUnions [ "Main" ]
-                        >> Expect.equal Fixtures.Main.exposedUnions
                     , values [ "Main" ]
                         >> Expect.equal Fixtures.Main.values
                     , value [ "Main" ] "update"
@@ -187,11 +209,57 @@ testMain =
                                         )
                                     )
                             )
+                    , qualifiedConstructor [ "Main" ] [ "Maybe" ] "Just"
+                        >> Expect.equal
+                            { args = [ Var "a" ]
+                            , tipe = Type [ "Maybe" ] "Maybe" [ Var "a" ]
+                            }
+                    , qualifiedConstructor [ "Main" ] [ "Maybe" ] "Nothing"
+                        >> Expect.equal
+                            { args = []
+                            , tipe = Type [ "Maybe" ] "Maybe" [ Var "a" ]
+                            }
                     ]
 
 
 
 ---- HELPER
+
+
+exposedTypes : ModuleName -> Store -> Set String
+exposedTypes moduleName store =
+    case Dict.get moduleName store.done of
+        Nothing ->
+            Debug.todo "no done module"
+
+        Just module_ ->
+            module_.exposedTypes
+                |> Dict.keys
+                |> Set.fromList
+
+
+exposedAliases : ModuleName -> Store -> Set String
+exposedAliases moduleName store =
+    case Dict.get moduleName store.done of
+        Nothing ->
+            Debug.todo "no done module"
+
+        Just module_ ->
+            module_.exposedAliases
+                |> Dict.keys
+                |> Set.fromList
+
+
+exposedConstructors : ModuleName -> Store -> Set String
+exposedConstructors moduleName store =
+    case Dict.get moduleName store.done of
+        Nothing ->
+            Debug.todo "no done module"
+
+        Just module_ ->
+            module_.exposedConstructors
+                |> Dict.keys
+                |> Set.fromList
 
 
 exposedValues : ModuleName -> Store -> Set String
@@ -202,18 +270,6 @@ exposedValues moduleName store =
 
         Just module_ ->
             module_.exposedValues
-                |> Dict.keys
-                |> Set.fromList
-
-
-exposedUnions : ModuleName -> Store -> Set String
-exposedUnions moduleName store =
-    case Dict.get moduleName store.done of
-        Nothing ->
-            Debug.todo "no done module"
-
-        Just module_ ->
-            module_.exposedUnions
                 |> Dict.keys
                 |> Set.fromList
 
@@ -243,6 +299,26 @@ value moduleName name store =
 
                 Just v ->
                     v
+
+
+qualifiedConstructor : ModuleName -> ModuleName -> String -> Store -> Constructor
+qualifiedConstructor moduleName qualifier name store =
+    case Dict.get moduleName store.done of
+        Nothing ->
+            Debug.todo "no done module"
+
+        Just module_ ->
+            case Dict.get qualifier module_.qualifiedConstructors of
+                Nothing ->
+                    Debug.todo "qualifier not found"
+
+                Just constructors ->
+                    case Dict.get name constructors of
+                        Nothing ->
+                            Debug.todo "constructor not found"
+
+                        Just constructor ->
+                            constructor
 
 
 parse : String -> RawFile

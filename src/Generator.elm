@@ -1,6 +1,6 @@
 module Generator exposing
     ( Generator, Expr
-    , addUnions, addAliases, addValues, takeValues, default, for
+    , addTypes, addConstructors, addAliases, addValues, takeValues, default, for
     , value, call
     , tuple, cases
     , record, recordUpdate, field, accessor
@@ -13,7 +13,7 @@ module Generator exposing
 {-|
 
 @docs Generator, Expr
-@docs addUnions, addAliases, addValues, takeValues, default, for
+@docs addTypes, addConstructors, addAliases, addValues, takeValues, default, for
 
 @docs value, call
 @docs tuple, cases
@@ -44,9 +44,9 @@ module Generator exposing
 -}
 
 import BranchedState exposing (BranchedState)
-import Canonical exposing (Alias, Union)
+import Canonical exposing (Alias, Constructor, Type)
 import Canonical.Annotation exposing (Annotation(..))
-import Canonical.Type exposing (Type(..))
+import Canonical.Type as Can
 import Dict exposing (Dict)
 import Set exposing (Set)
 import Solver exposing (Comparability(..), Unifiability(..))
@@ -78,20 +78,24 @@ calls, case expressions and tuples. You can also combine these generators.
 type Generator
     = Generator
         { transform : List (Dict String Annotation) -> List (Dict String Annotation)
-        , generate : GeneratorConfig -> Type -> BranchedState GeneratorState Expr
+        , generate :
+            GeneratorConfig
+            -> Can.Type
+            -> BranchedState GeneratorState Expr
         }
 
 
 type alias GeneratorState =
     { count : Int
-    , substitutions : Dict String Type
+    , substitutions : Dict String Can.Type
     }
 
 
 type alias GeneratorConfig =
     { targetTypeVars : Set String
     , isRoot : Bool
-    , unions : Dict String Union
+    , types : Dict String Type
+    , constructors : Dict String Constructor
     , aliases : Dict String Alias
     , values : List (Dict String Annotation)
     }
@@ -245,13 +249,28 @@ add known custom types to it. For example
                 ]
 
 -}
-addUnions : Dict String Union -> Generator -> Generator
-addUnions newUnions (Generator stuff) =
+addTypes : Dict String Type -> Generator -> Generator
+addTypes newTypes (Generator stuff) =
     Generator
         { stuff
             | generate =
                 \config ->
-                    stuff.generate { config | unions = Dict.union newUnions config.unions }
+                    stuff.generate
+                        { config | types = Dict.union newTypes config.types }
+        }
+
+
+addConstructors : Dict String Constructor -> Generator -> Generator
+addConstructors newConstructors (Generator stuff) =
+    Generator
+        { stuff
+            | generate =
+                \config ->
+                    stuff.generate
+                        { config
+                            | constructors =
+                                Dict.union newConstructors config.constructors
+                        }
         }
 
 
@@ -284,16 +303,17 @@ takeValues distance (Generator stuff) =
 
 {-| Generate all possible expressions which are of a certain type.
 -}
-for : Type -> Generator -> List Expr
+for : Can.Type -> Generator -> List Expr
 for targetType (Generator stuff) =
     BranchedState.finalValues Nothing
         { count = 0
         , substitutions = Dict.empty
         }
         (stuff.generate
-            { targetTypeVars = Canonical.Type.freeTypeVars targetType
+            { targetTypeVars = Can.freeTypeVars targetType
             , isRoot = True
-            , unions = Dict.empty
+            , types = Dict.empty
+            , constructors = Dict.empty
             , aliases = Dict.empty
             , values = stuff.transform []
             }
@@ -348,7 +368,7 @@ call argumentGenerators =
 
                     collectArgumentsHelp tipe generators arguments =
                         case ( tipe, generators ) of
-                            ( Lambda from to, generator :: rest ) ->
+                            ( Can.Lambda from to, generator :: rest ) ->
                                 collectArgumentsHelp to rest <|
                                     (( from, generator ) :: arguments)
 
@@ -480,7 +500,7 @@ tuple generator =
         , generate =
             \config targetType ->
                 case targetType of
-                    Tuple (typeA :: typeB :: []) ->
+                    Can.Tuple (typeA :: typeB :: []) ->
                         let
                             toTuple exprA =
                                 run generator.second config typeB
@@ -502,7 +522,7 @@ record generator =
         , generate =
             \config targetType ->
                 case targetType of
-                    Record fields var ->
+                    Can.Record fields var ->
                         let
                             generateField ( fieldName, fieldType ) =
                                 run generator { config | isRoot = False } fieldType
@@ -525,7 +545,7 @@ recordUpdate generator =
         , generate =
             \config targetType ->
                 case targetType of
-                    Record fields var ->
+                    Can.Record fields var ->
                         let
                             ofTargetType ( name, annotation ) =
                                 instantiate annotation
@@ -582,7 +602,7 @@ field =
                             |> BranchedState.andThen
                                 (\tipe ->
                                     case tipe of
-                                        Record fields _ ->
+                                        Can.Record fields _ ->
                                             BranchedState.traverse (ofTargetType name) fields
 
                                         _ ->
@@ -614,7 +634,7 @@ accessor =
         , generate =
             \config targetType ->
                 case targetType of
-                    Lambda (Record fields var) to ->
+                    Can.Lambda (Can.Record fields var) to ->
                         let
                             ofToType ( fieldName, tipe ) =
                                 let
@@ -646,27 +666,37 @@ cases generator =
                         generator.matched
 
                     exprs =
-                        config.unions
+                        config.types
                             |> Dict.toList
                             |> BranchedState.traverse generateMatched
                             |> BranchedState.andThen generateCase
 
-                    generateMatched ( name, union ) =
-                        BranchedState.map (Tuple.pair union.constructors) <|
+                    generateMatched ( name, tipe ) =
+                        BranchedState.map (Tuple.pair tipe.tags) <|
                             stuffMatched.generate
-                                { config | values = stuffMatched.transform config.values }
-                                (Type union.moduleName name (List.map Var union.vars))
+                                { config
+                                    | values = stuffMatched.transform config.values
+                                }
+                                (Can.Type tipe.moduleName
+                                    name
+                                    (List.map Can.Var tipe.vars)
+                                )
 
-                    generateCase ( constructors, matched ) =
-                        constructors
+                    generateCase ( tags, matched ) =
+                        tags
                             |> BranchedState.combine generateBranch
                             |> BranchedState.map (Case matched)
 
-                    generateBranch ( name, subTypes ) =
-                        BranchedState.map (Tuple.pair (branch name subTypes)) <|
-                            run (generator.branch (toNewValues subTypes))
-                                { config | isRoot = False }
-                                targetType
+                    generateBranch tag =
+                        case Dict.get tag config.constructors of
+                            Nothing ->
+                                BranchedState.state []
+
+                            Just { args } ->
+                                BranchedState.map (Tuple.pair (branch tag args)) <|
+                                    run (generator.branch (toNewValues args))
+                                        { config | isRoot = False }
+                                        targetType
 
                     branch name subTypes =
                         if List.isEmpty subTypes then
@@ -688,20 +718,20 @@ cases generator =
 
                     newValueFromType tipe =
                         case tipe of
-                            Type _ name _ ->
+                            Can.Type _ name _ ->
                                 "new" ++ name
 
                             _ ->
                                 "a"
                 in
                 case targetType of
-                    Type _ _ _ ->
+                    Can.Type _ _ _ ->
                         exprs
 
-                    Tuple _ ->
+                    Can.Tuple _ ->
                         exprs
 
-                    Record _ _ ->
+                    Can.Record _ _ ->
                         exprs
 
                     _ ->
@@ -728,14 +758,14 @@ jsonDecoder =
         { unwrap =
             \tipe ->
                 case tipe of
-                    Type [ "Json", "Decode" ] "Decoder" [ decoded ] ->
+                    Can.Type [ "Json", "Decode" ] "Decoder" [ decoded ] ->
                         Just decoded
 
                     _ ->
                         Nothing
         , wrap =
             \tipe ->
-                Type [ "Json", "Decode" ] "Decoder" [ tipe ]
+                Can.Type [ "Json", "Decode" ] "Decoder" [ tipe ]
         , toCall =
             \name expr ->
                 Call "Decode.required"
@@ -765,8 +795,8 @@ pipeline firstExpr restExprs =
 
 {-| -}
 customDecoder :
-    { unwrap : Type -> Maybe Type
-    , wrap : Type -> Type
+    { unwrap : Can.Type -> Maybe Can.Type
+    , wrap : Can.Type -> Can.Type
     , toCall : String -> Expr -> Expr
     , toInit : String -> List Expr -> Expr
     }
@@ -779,7 +809,7 @@ customDecoder ({ unwrap, wrap, toCall, toInit } as customization) =
                 case unwrap targetType of
                     Just decoded ->
                         case decoded of
-                            Record fields Nothing ->
+                            Can.Record fields Nothing ->
                                 let
                                     generateField ( fieldName, fieldType ) =
                                         wrap fieldType
@@ -820,13 +850,13 @@ customDecoder ({ unwrap, wrap, toCall, toInit } as customization) =
 ------ HELPER
 
 
-run : Generator -> GeneratorConfig -> Type -> BranchedState GeneratorState Expr
+run : Generator -> GeneratorConfig -> Can.Type -> BranchedState GeneratorState Expr
 run (Generator { transform, generate }) config tipe =
     let
         runHelp { substitutions } =
             generate
                 { config | values = transform config.values }
-                (Canonical.Type.apply substitutions tipe)
+                (Can.apply substitutions tipe)
     in
     BranchedState.get
         |> BranchedState.andThen runHelp
@@ -836,8 +866,8 @@ whenUnifiable :
     GeneratorConfig
     -> (() -> a)
     ->
-        { typeA : Type
-        , typeB : Type
+        { typeA : Can.Type
+        , typeB : Can.Type
         }
     -> BranchedState GeneratorState a
 whenUnifiable config func { typeA, typeB } =
@@ -885,7 +915,7 @@ whenUnifiable config func { typeA, typeB } =
                                 func
 
 
-addSubstitutions : Dict String Type -> BranchedState GeneratorState ()
+addSubstitutions : Dict String Can.Type -> BranchedState GeneratorState ()
 addSubstitutions newSubstitutions =
     BranchedState.get
         |> BranchedState.andThen
@@ -900,14 +930,14 @@ addSubstitutions newSubstitutions =
             )
 
 
-targetTypeVarsBoundBy : Set String -> Dict String Type -> Bool
+targetTypeVarsBoundBy : Set String -> Dict String Can.Type -> Bool
 targetTypeVarsBoundBy targetTypeVars bindTypeVariables =
     targetTypeVars
         |> Set.toList
         |> List.any (varBoundBy bindTypeVariables)
 
 
-varBoundBy : Dict String Type -> String -> Bool
+varBoundBy : Dict String Can.Type -> String -> Bool
 varBoundBy uncheckedBoundTypeVars varName =
     case Dict.get varName uncheckedBoundTypeVars of
         Nothing ->
@@ -915,7 +945,7 @@ varBoundBy uncheckedBoundTypeVars varName =
 
         Just varTipe ->
             case varTipe of
-                Var newVarName ->
+                Can.Var newVarName ->
                     varBoundBy
                         (Dict.remove varName uncheckedBoundTypeVars)
                         newVarName
@@ -924,7 +954,7 @@ varBoundBy uncheckedBoundTypeVars varName =
                     True
 
 
-instantiate : Annotation -> BranchedState GeneratorState Type
+instantiate : Annotation -> BranchedState GeneratorState Can.Type
 instantiate (ForAll vars tipe) =
     BranchedState.get
         |> BranchedState.andThen
@@ -935,11 +965,11 @@ instantiate (ForAll vars tipe) =
                 in
                 BranchedState.put { currentState | count = newCount }
                     |> BranchedState.map
-                        (\_ -> Canonical.Type.apply subst tipe)
+                        (\_ -> Can.apply subst tipe)
             )
 
 
-freshVars : List String -> Int -> Dict String Type -> ( Int, Dict String Type )
+freshVars : List String -> Int -> Dict String Can.Type -> ( Int, Dict String Can.Type )
 freshVars vars count subst =
     case vars of
         [] ->
@@ -960,7 +990,7 @@ freshVars vars count subst =
             freshVars rest
                 (count + 1)
                 (Dict.insert var
-                    (Var (prefix ++ String.fromInt count))
+                    (Can.Var (prefix ++ String.fromInt count))
                     subst
                 )
 
