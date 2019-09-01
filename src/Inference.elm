@@ -72,7 +72,7 @@ inferHole { function, range, moduleName, currentModule } =
 
 
 type Error
-    = UnboundVariable String
+    = UnknownConstructor String
     | UnknownInfix String
     | ConflictingAssociativity
     | ParserError
@@ -85,8 +85,8 @@ type Error
 errorToString : Error -> String
 errorToString error =
     case error of
-        UnboundVariable name ->
-            "Unbound variable " ++ name
+        UnknownConstructor name ->
+            "Unbound constructor " ++ name
 
         UnknownInfix name ->
             "Unknown infix operator " ++ name
@@ -218,7 +218,7 @@ infer range isArgument (Node currentRange expr) =
                     |> map (\_ -> Var name)
 
             else if isCapitalized name then
-                findConstructor moduleName name
+                findCapitalizedValue moduleName name
 
             else
                 findValue moduleName name
@@ -983,11 +983,8 @@ findConstructor moduleName name =
                         |> Maybe.andThen (Dict.get name)
 
                 returnQualifiedError qualifier =
-                    State.advance <|
-                        \count ->
-                            ( ( [], [], Ok (Var ("a" ++ String.fromInt count)) )
-                            , count + 1
-                            )
+                    State.state
+                        ( [], [], Err (UnknownConstructor name) )
 
                 toAnnotation constructor =
                     Canonical.Annotation.fromType <|
@@ -1022,6 +1019,87 @@ findConstructor moduleName name =
                 case getQualifiedConstructor moduleName of
                     Nothing ->
                         returnQualifiedError moduleName
+
+                    Just constructor ->
+                        let
+                            (Infer run) =
+                                constructor
+                                    |> toAnnotation
+                                    |> instantiate
+                        in
+                        run env
+
+
+findCapitalizedValue : ModuleName -> String -> Infer Type
+findCapitalizedValue moduleName name =
+    Infer <|
+        \env ->
+            let
+                getQualifiedConstructor qualifier =
+                    Dict.get qualifier env.currentModule.qualifiedConstructors
+                        |> Maybe.andThen (Dict.get name)
+
+                getQualifiedAliasConstructor qualifer =
+                    case Dict.get name env.currentModule.aliases of
+                        Nothing ->
+                            returnQualifiedError []
+
+                        Just { tipe } ->
+                            case tipe of
+                                Record fields Nothing ->
+                                    let
+                                        (Infer run) =
+                                            fields
+                                                |> List.foldr
+                                                    (\( _, fieldType ) ->
+                                                        Lambda fieldType
+                                                    )
+                                                    tipe
+                                                |> Canonical.Annotation.fromType
+                                                |> instantiate
+                                    in
+                                    run env
+
+                                _ ->
+                                    returnQualifiedError []
+
+                returnQualifiedError qualifier =
+                    State.state
+                        ( [], [], Err (UnknownConstructor name) )
+
+                toAnnotation constructor =
+                    Canonical.Annotation.fromType <|
+                        List.foldr Lambda constructor.tipe constructor.args
+            in
+            if List.isEmpty moduleName then
+                case Dict.get name env.currentModule.constructors of
+                    Nothing ->
+                        case getQualifiedConstructor [] of
+                            Nothing ->
+                                getQualifiedAliasConstructor []
+
+                            Just constructor ->
+                                let
+                                    (Infer run) =
+                                        constructor
+                                            |> toAnnotation
+                                            |> instantiate
+                                in
+                                run env
+
+                    Just constructor ->
+                        let
+                            (Infer run) =
+                                constructor
+                                    |> toAnnotation
+                                    |> instantiate
+                        in
+                        run env
+
+            else
+                case getQualifiedConstructor moduleName of
+                    Nothing ->
+                        getQualifiedAliasConstructor moduleName
 
                     Just constructor ->
                         let
