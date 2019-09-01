@@ -43,13 +43,13 @@ type alias Module =
     { exposedTypes : Exposed Type
     , exposedAliases : Exposed Alias
     , exposedConstructors : Exposed Constructor
-    , exposedBinops : Exposed Binop
     , exposedValues : Exposed Annotation
+    , exposedBinops : Exposed Binop
     , types : Local Type
     , aliases : Local Alias
     , constructors : Local Constructor
-    , binops : Local Binop
     , values : Local Annotation
+    , binops : Local Binop
     , qualifiedTypes : Qualified Type
     , qualifiedAliases : Qualified Alias
     , qualifiedConstructors : Qualified Constructor
@@ -122,8 +122,8 @@ canonicalizeModule importedModules moduleName file interface =
                     Dict.empty
             , exposedAliases = Dict.empty
             , exposedConstructors = Dict.empty
-            , exposedBinops = Dict.empty
             , exposedValues = Dict.empty
+            , exposedBinops = Dict.empty
             , types =
                 if moduleName == [ "List" ] then
                     Dict.singleton "List"
@@ -136,8 +136,8 @@ canonicalizeModule importedModules moduleName file interface =
                     Dict.empty
             , aliases = Dict.empty
             , constructors = Dict.empty
-            , binops = imports.binops
             , values = Dict.empty
+            , binops = imports.binops
             , qualifiedTypes = imports.qualifiedTypes
             , qualifiedAliases = imports.qualifiedAliases
             , qualifiedConstructors = imports.qualifiedConstructors
@@ -154,25 +154,148 @@ canonicalizeModule importedModules moduleName file interface =
         exposingList =
             Elm.Syntax.Module.exposingList (Node.value file.moduleDefinition)
     in
-    file.declarations
-        |> List.foldl
-            (canonicalizeDeclaration moduleName file.declarations)
-            initialModule
+    initialModule
+        |> canonicalizeTypes moduleName file.declarations
+        |> canonicalizeAliases moduleName file.declarations
+        |> canonicalizeConstructors moduleName file.declarations
+        |> canonicalizeValues moduleName file.declarations
+        |> canonicalizeBinops moduleName file.declarations
         |> expose exposingList
 
 
-canonicalizeDeclaration :
+canonicalizeTypes : ModuleName -> List (Node Declaration) -> Module -> Module
+canonicalizeTypes moduleName declarations currentModule =
+    { currentModule
+        | types =
+            List.foldl
+                (canonicalizeType moduleName)
+                currentModule.types
+                declarations
+    }
+
+
+canonicalizeType : ModuleName -> Node Declaration -> Local Type -> Local Type
+canonicalizeType moduleName declaration types =
+    case Node.value declaration of
+        CustomTypeDeclaration c ->
+            Dict.insert (Node.value c.name)
+                { moduleName = moduleName
+                , vars = List.map Node.value c.generics
+                , tags = List.map (Node.value >> .name >> Node.value) c.constructors
+                }
+                types
+
+        _ ->
+            types
+
+
+canonicalizeAliases : ModuleName -> List (Node Declaration) -> Module -> Module
+canonicalizeAliases moduleName declarations currentModule =
+    { currentModule
+        | aliases =
+            List.foldl
+                (canonicalizeAlias moduleName currentModule)
+                currentModule.aliases
+                declarations
+    }
+
+
+canonicalizeAlias :
     ModuleName
-    -> List (Node Declaration)
+    -> Module
     -> Node Declaration
+    -> Local Alias
+    -> Local Alias
+canonicalizeAlias moduleName currentModule declaration aliases =
+    case Node.value declaration of
+        AliasDeclaration a ->
+            let
+                tipe =
+                    canonicalizeTypeAnnotation moduleName
+                        currentModule
+                        a.typeAnnotation
+            in
+            Dict.insert
+                (Node.value a.name)
+                { vars = List.map Node.value a.generics
+                , tipe = tipe
+                }
+                aliases
+
+        _ ->
+            aliases
+
+
+canonicalizeConstructors : ModuleName -> List (Node Declaration) -> Module -> Module
+canonicalizeConstructors moduleName declarations currentModule =
+    { currentModule
+        | constructors =
+            List.foldl
+                (canonicalizeConstructor moduleName currentModule)
+                currentModule.constructors
+                declarations
+    }
+
+
+canonicalizeConstructor :
+    ModuleName
     -> Module
+    -> Node Declaration
+    -> Local Constructor
+    -> Local Constructor
+canonicalizeConstructor moduleName currentModule declaration constructors =
+    case Node.value declaration of
+        CustomTypeDeclaration c ->
+            let
+                tipe =
+                    Can.Type moduleName
+                        (Node.value c.name)
+                        (List.map (Can.Var << Node.value) c.generics)
+
+                toConstructor valueConstructor =
+                    ( Node.value valueConstructor.name
+                    , List.map
+                        (canonicalizeTypeAnnotation moduleName currentModule)
+                        valueConstructor.arguments
+                    )
+            in
+            List.foldl
+                (\( name, args ) ->
+                    Dict.insert name
+                        { args = args
+                        , tipe = tipe
+                        }
+                )
+                constructors
+                (List.map (Node.value >> toConstructor) c.constructors)
+
+        _ ->
+            constructors
+
+
+canonicalizeValues : ModuleName -> List (Node Declaration) -> Module -> Module
+canonicalizeValues moduleName declarations currentModule =
+    { currentModule
+        | values =
+            List.foldl
+                (canonicalizeValue moduleName currentModule)
+                currentModule.values
+                declarations
+    }
+
+
+canonicalizeValue :
+    ModuleName
     -> Module
-canonicalizeDeclaration moduleName declarations declaration currentModule =
+    -> Node Declaration
+    -> Local Annotation
+    -> Local Annotation
+canonicalizeValue moduleName currentModule declaration values =
     case Node.value declaration of
         FunctionDeclaration f ->
             case f.signature of
                 Nothing ->
-                    currentModule
+                    values
 
                 Just signature ->
                     let
@@ -186,145 +309,72 @@ canonicalizeDeclaration moduleName declarations declaration currentModule =
                             signature
                                 |> Node.value
                                 |> .typeAnnotation
-                                |> canonicalizeTypeAnnotation moduleName currentModule
+                                |> canonicalizeTypeAnnotation moduleName
+                                    currentModule
                     in
-                    { currentModule
-                        | values =
-                            Dict.insert name
-                                (Canonical.Annotation.fromType tipe)
-                                currentModule.values
-                    }
+                    Dict.insert name
+                        (Canonical.Annotation.fromType tipe)
+                        values
 
-        AliasDeclaration a ->
-            let
-                tipe =
-                    canonicalizeTypeAnnotation moduleName currentModule a.typeAnnotation
-            in
-            { currentModule
-                | aliases =
-                    Dict.insert
-                        (Node.value a.name)
-                        { vars = List.map Node.value a.generics
-                        , tipe = tipe
-                        }
-                        currentModule.aliases
-            }
+        _ ->
+            values
 
-        CustomTypeDeclaration c ->
-            let
-                typeName =
-                    Node.value c.name
 
-                vars =
-                    List.map Node.value c.generics
+canonicalizeBinops : ModuleName -> List (Node Declaration) -> Module -> Module
+canonicalizeBinops moduleName declarations currentModule =
+    { currentModule
+        | binops =
+            List.foldl
+                (canonicalizeBinop moduleName currentModule)
+                currentModule.binops
+                declarations
+    }
 
-                constructors =
-                    List.map (Node.value >> toConstructor) c.constructors
 
-                toConstructor valueConstructor =
-                    ( Node.value valueConstructor.name
-                    , List.map
-                        (canonicalizeTypeAnnotation moduleName currentModule)
-                        valueConstructor.arguments
-                    )
-            in
-            { currentModule
-                | types =
-                    Dict.insert typeName
-                        { moduleName = moduleName
-                        , vars = vars
-                        , tags = List.map Tuple.first constructors
-                        }
-                        currentModule.types
-                , constructors =
-                    List.foldl
-                        (\( name, args ) ->
-                            Dict.insert name
-                                { args = args
-                                , tipe =
-                                    Can.Type moduleName
-                                        typeName
-                                        (List.map Can.Var vars)
-                                }
-                        )
-                        currentModule.constructors
-                        constructors
-            }
-
-        PortDeclaration p ->
-            currentModule
-
+canonicalizeBinop :
+    ModuleName
+    -> Module
+    -> Node Declaration
+    -> Local Binop
+    -> Local Binop
+canonicalizeBinop moduleName currentModule declaration binops =
+    case Node.value declaration of
         InfixDeclaration i ->
             let
-                associativity =
-                    case Node.value i.direction of
-                        Src.Left ->
-                            Left
-
-                        Src.Non ->
-                            Non
-
-                        Src.Right ->
-                            Right
-
                 function =
                     Node.value i.function
-
-                infixFunction d =
-                    case Node.value d of
-                        FunctionDeclaration f ->
-                            function
-                                == (f.declaration
-                                        |> Node.value
-                                        |> .name
-                                        |> Node.value
-                                   )
-
-                        _ ->
-                            False
             in
-            case
-                List.find infixFunction declarations
-                    |> Maybe.map Node.value
-            of
+            case Dict.get function currentModule.values of
                 Nothing ->
-                    currentModule
+                    binops
 
-                Just (FunctionDeclaration f) ->
-                    case f.signature of
-                        Nothing ->
-                            currentModule
+                Just annotation ->
+                    Dict.insert (Node.value i.operator)
+                        { function = function
+                        , tipe = annotation
+                        , precedence = Node.value i.precedence
+                        , associativity =
+                            case Node.value i.direction of
+                                Src.Left ->
+                                    Left
 
-                        Just signature ->
-                            let
-                                tipe =
-                                    signature
-                                        |> Node.value
-                                        |> .typeAnnotation
-                                        |> canonicalizeTypeAnnotation
-                                            moduleName
-                                            currentModule
-                            in
-                            { currentModule
-                                | binops =
-                                    Dict.insert
-                                        (Node.value i.operator)
-                                        { function = function
-                                        , tipe = Canonical.Annotation.fromType tipe
-                                        , precedence = Node.value i.precedence
-                                        , associativity = associativity
-                                        }
-                                        currentModule.binops
-                            }
+                                Src.Non ->
+                                    Non
 
-                Just _ ->
-                    currentModule
+                                Src.Right ->
+                                    Right
+                        }
+                        binops
 
-        Destructuring _ _ ->
-            currentModule
+        _ ->
+            binops
 
 
-canonicalizeTypeAnnotation : ModuleName -> Module -> Node Src.TypeAnnotation -> Can.Type
+canonicalizeTypeAnnotation :
+    ModuleName
+    -> Module
+    -> Node Src.TypeAnnotation
+    -> Can.Type
 canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
     case Node.value typeAnnotation of
         Src.GenericType var ->
@@ -516,6 +566,7 @@ expose exposingList currentModule =
                 , exposedAliases = currentModule.aliases
                 , exposedConstructors = currentModule.constructors
                 , exposedValues = currentModule.values
+                , exposedBinops = currentModule.binops
             }
 
         Explicit topLevelExposes ->
