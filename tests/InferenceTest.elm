@@ -1,6 +1,6 @@
 module InferenceTest exposing (suite)
 
-import Canonical exposing (Associativity(..), Binop, Store)
+import Canonical exposing (Associativity(..), Binop, Module, ModuleData, Store)
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
@@ -538,7 +538,7 @@ inferHelp { src, range } =
                     }
 
                 actualStore =
-                    Canonical.add
+                    unsafeAdd
                         { moduleName = [ "Main" ]
                         , fileName = "Main.elm"
                         , file = file
@@ -569,24 +569,24 @@ inferHelp { src, range } =
 ---- FIXTURES
 
 
-store : Store
+store : Store ModuleName ModuleData Module
 store =
     Canonical.emptyStore
-        |> Canonical.add
+        |> unsafeAdd
             { moduleName = [ "Basics" ]
             , fileName = "Basics.elm"
             , file = Elm.Processing.process Elm.Processing.init rawBasics
             , imports = Elm.RawFile.imports rawBasics
             , interface = Elm.Interface.build rawBasics
             }
-        |> Canonical.add
+        |> unsafeAdd
             { moduleName = [ "Maybe" ]
             , fileName = "Maybe.elm"
             , file = Elm.Processing.process Elm.Processing.init rawMaybe
             , imports = Elm.RawFile.imports rawMaybe
             , interface = Elm.Interface.build rawMaybe
             }
-        |> Canonical.add
+        |> unsafeAdd
             { moduleName = [ "List" ]
             , fileName = "List.elm"
             , file = Elm.Processing.process Elm.Processing.init rawList
@@ -638,13 +638,16 @@ rawMock moduleName =
             ]
 
 
-addMock : ModuleName -> Store -> Store
+addMock :
+    ModuleName
+    -> Store ModuleName ModuleData Module
+    -> Store ModuleName ModuleData Module
 addMock moduleName =
     let
         rawFile =
             rawMock moduleName
     in
-    Canonical.add
+    unsafeAdd
         { moduleName = moduleName
         , fileName = String.join "/" moduleName ++ ".elm"
         , file =
@@ -652,3 +655,24 @@ addMock moduleName =
         , imports = Elm.RawFile.imports rawFile
         , interface = Elm.Interface.build rawFile
         }
+
+
+unsafeAdd data currentStore =
+    let
+        config =
+            { required = Canonical.requiredModules
+            , process =
+                \done moduleData ->
+                    Canonical.canonicalizeModule
+                        done
+                        moduleData.moduleName
+                        moduleData.file
+                        moduleData.interface
+            }
+    in
+    case Canonical.add config data.moduleName data currentStore of
+        Err error ->
+            Debug.todo (Canonical.errorToString error)
+
+        Ok newStore ->
+            newStore

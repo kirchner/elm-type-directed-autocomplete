@@ -4,7 +4,15 @@ module Inference exposing
     , inferHole
     )
 
-import Canonical exposing (Alias, Associativity(..), Binop, Imports, Module)
+import Canonical
+    exposing
+        ( Associativity(..)
+        , Binop
+        , Constructor(..)
+        , Imports
+        , Module
+        , Type(..)
+        )
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type exposing (Type(..))
 import Dict exposing (Dict)
@@ -80,6 +88,7 @@ type Error
     | UnsupportedUnification
     | CouldNotSolve Solver.Error
     | NoHoleFound
+    | CanonicalizationError Canonical.Error
 
 
 errorToString : Error -> String
@@ -108,6 +117,9 @@ errorToString error =
 
         NoHoleFound ->
             "No hole found at the specified range"
+
+        CanonicalizationError canonicalizationError ->
+            Canonical.errorToString canonicalizationError
 
 
 
@@ -986,9 +998,9 @@ findConstructor moduleName name =
                     State.state
                         ( [], [], Err (UnknownConstructor name) )
 
-                toAnnotation constructor =
+                toAnnotation tipe types =
                     Canonical.Annotation.fromType <|
-                        List.foldr Lambda constructor.tipe constructor.args
+                        List.foldr Lambda tipe types
             in
             if List.isEmpty moduleName then
                 case Dict.get name env.currentModule.constructors of
@@ -997,37 +1009,40 @@ findConstructor moduleName name =
                             Nothing ->
                                 returnQualifiedError []
 
-                            Just constructor ->
+                            Just (Constructor _ types tipe) ->
                                 let
                                     (Infer run) =
-                                        constructor
-                                            |> toAnnotation
-                                            |> instantiate
+                                        instantiate (toAnnotation tipe types)
                                 in
                                 run env
 
-                    Just constructor ->
+                            Just (RecordConstructor _ _) ->
+                                returnQualifiedError []
+
+                    Just (Constructor _ types tipe) ->
                         let
                             (Infer run) =
-                                constructor
-                                    |> toAnnotation
-                                    |> instantiate
+                                instantiate (toAnnotation tipe types)
                         in
                         run env
+
+                    Just (RecordConstructor _ _) ->
+                        returnQualifiedError []
 
             else
                 case getQualifiedConstructor moduleName of
                     Nothing ->
                         returnQualifiedError moduleName
 
-                    Just constructor ->
+                    Just (Constructor _ types tipe) ->
                         let
                             (Infer run) =
-                                constructor
-                                    |> toAnnotation
-                                    |> instantiate
+                                instantiate (toAnnotation tipe types)
                         in
                         run env
+
+                    Just (RecordConstructor _ _) ->
+                        returnQualifiedError []
 
 
 findCapitalizedValue : ModuleName -> String -> Infer Type
@@ -1039,76 +1054,55 @@ findCapitalizedValue moduleName name =
                     Dict.get qualifier env.currentModule.qualifiedConstructors
                         |> Maybe.andThen (Dict.get name)
 
-                getQualifiedAliasConstructor qualifer =
-                    case Dict.get name env.currentModule.aliases of
-                        Nothing ->
-                            returnQualifiedError []
-
-                        Just { tipe } ->
-                            case tipe of
-                                Record fields Nothing ->
-                                    let
-                                        (Infer run) =
-                                            fields
-                                                |> List.foldr
-                                                    (\( _, fieldType ) ->
-                                                        Lambda fieldType
-                                                    )
-                                                    tipe
-                                                |> Canonical.Annotation.fromType
-                                                |> instantiate
-                                    in
-                                    run env
-
-                                _ ->
-                                    returnQualifiedError []
-
                 returnQualifiedError qualifier =
                     State.state
                         ( [], [], Err (UnknownConstructor name) )
 
-                toAnnotation constructor =
+                toAnnotation tipe types =
                     Canonical.Annotation.fromType <|
-                        List.foldr Lambda constructor.tipe constructor.args
+                        List.foldr Lambda tipe types
             in
             if List.isEmpty moduleName then
                 case Dict.get name env.currentModule.constructors of
                     Nothing ->
                         case getQualifiedConstructor [] of
                             Nothing ->
-                                getQualifiedAliasConstructor []
+                                returnQualifiedError []
 
-                            Just constructor ->
+                            Just (Constructor _ types tipe) ->
                                 let
                                     (Infer run) =
-                                        constructor
-                                            |> toAnnotation
-                                            |> instantiate
+                                        instantiate (toAnnotation tipe types)
                                 in
                                 run env
 
-                    Just constructor ->
+                            Just (RecordConstructor _ _) ->
+                                returnQualifiedError []
+
+                    Just (Constructor _ types tipe) ->
                         let
                             (Infer run) =
-                                constructor
-                                    |> toAnnotation
-                                    |> instantiate
+                                instantiate (toAnnotation tipe types)
                         in
                         run env
+
+                    Just (RecordConstructor _ _) ->
+                        returnQualifiedError []
 
             else
                 case getQualifiedConstructor moduleName of
                     Nothing ->
-                        getQualifiedAliasConstructor moduleName
+                        returnQualifiedError moduleName
 
-                    Just constructor ->
+                    Just (Constructor _ types tipe) ->
                         let
                             (Infer run) =
-                                constructor
-                                    |> toAnnotation
-                                    |> instantiate
+                                instantiate (toAnnotation tipe types)
                         in
                         run env
+
+                    Just (RecordConstructor _ _) ->
+                        returnQualifiedError []
 
 
 isCapitalized : String -> Bool
@@ -1174,13 +1168,13 @@ instantiateTypeAnnotation typeAnnotation =
                     State.state
                         ( []
                         , []
-                        , Ok
-                            (Canonical.Annotation.fromType <|
-                                Canonical.canonicalizeTypeAnnotation
-                                    env.moduleName
-                                    env.currentModule
-                                    typeAnnotation
-                            )
+                        , Canonical.canonicalizeTypeAnnotation
+                            env.moduleName
+                            env.currentModule
+                            Dict.empty
+                            typeAnnotation
+                            |> Result.map Canonical.Annotation.fromType
+                            |> Result.mapError CanonicalizationError
                         )
     in
     annotation

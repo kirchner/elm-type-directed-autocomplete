@@ -1,20 +1,22 @@
 module Canonical exposing
-    ( Alias
-    , Associativity(..)
+    ( Associativity(..)
     , Binop
-    , Constructor
+    , Constructor(..)
+    , Error(..)
     , Imports
     , Module
     , ModuleData
     , Store
     , TodoItem
-    , Type
+    , Type(..)
     , add
     , addImports
     , canonicalizeModule
     , canonicalizeTypeAnnotation
     , emptyStore
+    , errorToString
     , replace
+    , requiredModules
     )
 
 import Canonical.Annotation exposing (Annotation(..))
@@ -30,8 +32,10 @@ import Elm.Syntax.Module
 import Elm.Syntax.ModuleName exposing (ModuleName)
 import Elm.Syntax.Node as Node exposing (Node(..))
 import Elm.Syntax.Range exposing (emptyRange)
+import Elm.Syntax.TypeAlias as Src
 import Elm.Syntax.TypeAnnotation as Src
 import List.Extra as List
+import Result.Extra as Result
 import Set exposing (Set)
 
 
@@ -41,17 +45,14 @@ import Set exposing (Set)
 
 type alias Module =
     { exposedTypes : Exposed Type
-    , exposedAliases : Exposed Alias
     , exposedConstructors : Exposed Constructor
     , exposedValues : Exposed Annotation
     , exposedBinops : Exposed Binop
     , types : Local Type
-    , aliases : Local Alias
     , constructors : Local Constructor
     , values : Local Annotation
     , binops : Local Binop
     , qualifiedTypes : Qualified Type
-    , qualifiedAliases : Qualified Alias
     , qualifiedConstructors : Qualified Constructor
     , qualifiedValues : Qualified Annotation
     }
@@ -69,23 +70,14 @@ type alias Qualified a =
     Dict ModuleName (Dict String a)
 
 
-type alias Type =
-    { moduleName : ModuleName
-    , vars : List String
-    , tags : List String
-    }
+type Type
+    = Union ModuleName (List String) Can.Type
+    | Alias ModuleName (List String) Can.Type
 
 
-type alias Constructor =
-    { args : List Can.Type
-    , tipe : Can.Type
-    }
-
-
-type alias Alias =
-    { vars : List String
-    , tipe : Can.Type
-    }
+type Constructor
+    = Constructor String (List Can.Type) Can.Type
+    | RecordConstructor String Can.Type
 
 
 type alias Binop =
@@ -106,43 +98,91 @@ type Associativity
 ---- CANONICALIZE
 
 
-canonicalizeModule : Dict ModuleName Module -> ModuleName -> File -> Interface -> Module
+type Error
+    = UnknownType ModuleName Module ModuleName String
+
+
+errorToString : Error -> String
+errorToString error =
+    let
+        title text =
+            "=== " ++ text ++ " " ++ String.repeat (75 - String.length text) "="
+
+        wrap text =
+            String.join "\n"
+                [ ""
+                , ""
+                , ""
+                , text
+                ]
+    in
+    case error of
+        UnknownType currentModuleName currentModule moduleName name ->
+            wrap <|
+                String.join "\n"
+                    [ title "UNKNOWN TYPE"
+                    , ""
+                    , String.concat
+                        [ "Could not find the type "
+                        , String.join "." (moduleName ++ [ name ])
+                        , " in the module "
+                        , String.join "." currentModuleName
+                        , "."
+                        ]
+                    , ""
+                    , "Locally available types:"
+                    , ""
+                    , String.join "\n" (List.map (\s -> "  " ++ s) (Dict.keys currentModule.types))
+                    , ""
+                    , "Imported types:"
+                    , ""
+                    , String.join "\n" <|
+                        (Dict.toList currentModule.qualifiedTypes
+                            |> List.map
+                                (\( qualifier, types ) ->
+                                    String.concat
+                                        [ "  From "
+                                        , String.join "." qualifier
+                                        , ": "
+                                        , String.join ", " <|
+                                            Dict.keys types
+                                        ]
+                                )
+                        )
+                    , ""
+                    , ""
+                    ]
+
+
+canonicalizeModule :
+    Dict ModuleName Module
+    -> ModuleName
+    -> File
+    -> Interface
+    -> Result Error Module
 canonicalizeModule importedModules moduleName file interface =
     let
         initialModule =
-            { exposedTypes =
-                if moduleName == [ "List" ] then
-                    Dict.singleton "List"
-                        { moduleName = [ "List" ]
-                        , vars = [ "a" ]
-                        , tags = []
-                        }
-
-                else
-                    Dict.empty
-            , exposedAliases = Dict.empty
+            { exposedTypes = initialTypes
             , exposedConstructors = Dict.empty
             , exposedValues = Dict.empty
             , exposedBinops = Dict.empty
-            , types =
-                if moduleName == [ "List" ] then
-                    Dict.singleton "List"
-                        { moduleName = [ "List" ]
-                        , vars = [ "a" ]
-                        , tags = []
-                        }
-
-                else
-                    Dict.empty
-            , aliases = Dict.empty
+            , types = initialTypes
             , constructors = Dict.empty
             , values = Dict.empty
             , binops = imports.binops
             , qualifiedTypes = imports.qualifiedTypes
-            , qualifiedAliases = imports.qualifiedAliases
             , qualifiedConstructors = imports.qualifiedConstructors
             , qualifiedValues = imports.qualifiedValues
             }
+
+        initialTypes =
+            if moduleName == [ "List" ] then
+                Dict.singleton "List" <|
+                    Union [ "List" ] [] (Can.Type [ "List" ] "List" [ Can.Var "a" ])
+
+            else
+                Dict.empty
 
         imports =
             if Set.member moduleName coreModules then
@@ -156,85 +196,164 @@ canonicalizeModule importedModules moduleName file interface =
     in
     initialModule
         |> canonicalizeTypes moduleName file.declarations
-        |> canonicalizeAliases moduleName file.declarations
-        |> canonicalizeConstructors moduleName file.declarations
-        |> canonicalizeValues moduleName file.declarations
-        |> canonicalizeBinops moduleName file.declarations
-        |> expose exposingList
+        |> Result.andThen (canonicalizeConstructors moduleName file.declarations)
+        |> Result.andThen (canonicalizeValues file.declarations moduleName)
+        |> Result.map (canonicalizeBinops moduleName file.declarations)
+        |> Result.map (expose exposingList)
 
 
-canonicalizeTypes : ModuleName -> List (Node Declaration) -> Module -> Module
+
+-- CANONICALIZE TYPES
+
+
+type SrcType
+    = SrcUnion
+        { name : String
+        , tags : List String
+        , vars : List String
+        }
+    | SrcAlias Src.TypeAlias
+
+
+canonicalizeTypes : ModuleName -> List (Node Declaration) -> Module -> Result Error Module
 canonicalizeTypes moduleName declarations currentModule =
-    { currentModule
-        | types =
-            List.foldl
-                (canonicalizeType moduleName)
-                currentModule.types
-                declarations
-    }
+    let
+        step declaration =
+            case Node.value declaration of
+                CustomTypeDeclaration customType ->
+                    Result.andThen <|
+                        add config (Node.value customType.name) <|
+                            SrcUnion
+                                { name = Node.value customType.name
+                                , tags =
+                                    List.map
+                                        (Node.value << .name << Node.value)
+                                        customType.constructors
+                                , vars = List.map Node.value customType.generics
+                                }
+
+                AliasDeclaration typeAlias ->
+                    Result.andThen
+                        (add config (Node.value typeAlias.name) (SrcAlias typeAlias))
+
+                _ ->
+                    identity
+
+        config =
+            { required = requiredTypes currentModule
+            , process = processType moduleName currentModule
+            }
+    in
+    declarations
+        |> List.foldl step (Ok { todo = [], done = Dict.empty })
+        |> Result.map (\{ done } -> { currentModule | types = done })
 
 
-canonicalizeType : ModuleName -> Node Declaration -> Local Type -> Local Type
-canonicalizeType moduleName declaration types =
-    case Node.value declaration of
-        CustomTypeDeclaration c ->
-            Dict.insert (Node.value c.name)
-                { moduleName = moduleName
-                , vars = List.map Node.value c.generics
-                , tags = List.map (Node.value >> .name >> Node.value) c.constructors
-                }
-                types
+requiredTypes : Module -> SrcType -> Set String
+requiredTypes currentModule srcType =
+    case srcType of
+        SrcUnion _ ->
+            Set.empty
 
-        _ ->
-            types
+        SrcAlias typeAlias ->
+            requiredTypesForTypeAnnotation currentModule typeAlias.typeAnnotation
 
 
-canonicalizeAliases : ModuleName -> List (Node Declaration) -> Module -> Module
-canonicalizeAliases moduleName declarations currentModule =
-    { currentModule
-        | aliases =
-            List.foldl
-                (canonicalizeAlias moduleName currentModule)
-                currentModule.aliases
-                declarations
-    }
+requiredTypesForTypeAnnotation : Module -> Node Src.TypeAnnotation -> Set String
+requiredTypesForTypeAnnotation currentModule typeAnnotation =
+    case Node.value typeAnnotation of
+        Src.GenericType var ->
+            Set.empty
 
-
-canonicalizeAlias :
-    ModuleName
-    -> Module
-    -> Node Declaration
-    -> Local Alias
-    -> Local Alias
-canonicalizeAlias moduleName currentModule declaration aliases =
-    case Node.value declaration of
-        AliasDeclaration a ->
+        Src.Typed qualifiedName typeAnnotations ->
             let
-                tipe =
-                    canonicalizeTypeAnnotation moduleName
-                        currentModule
-                        a.typeAnnotation
+                ( qualifier, name ) =
+                    Node.value qualifiedName
             in
-            Dict.insert
-                (Node.value a.name)
-                { vars = List.map Node.value a.generics
-                , tipe = tipe
-                }
-                aliases
+            List.foldl (Set.union << requiredTypesForTypeAnnotation currentModule)
+                (case Dict.get qualifier currentModule.qualifiedTypes of
+                    Nothing ->
+                        if List.isEmpty qualifier then
+                            Set.singleton name
 
-        _ ->
-            aliases
+                        else
+                            Set.empty
 
+                    Just types ->
+                        if Dict.member name types then
+                            Set.empty
 
-canonicalizeConstructors : ModuleName -> List (Node Declaration) -> Module -> Module
-canonicalizeConstructors moduleName declarations currentModule =
-    { currentModule
-        | constructors =
+                        else
+                            Set.singleton name
+                )
+                typeAnnotations
+
+        Src.Unit ->
+            Set.empty
+
+        Src.Tupled typeAnnotations ->
+            List.foldl (Set.union << requiredTypesForTypeAnnotation currentModule)
+                Set.empty
+                typeAnnotations
+
+        Src.Record recordFields ->
             List.foldl
-                (canonicalizeConstructor moduleName currentModule)
-                currentModule.constructors
-                declarations
-    }
+                (Set.union
+                    << requiredTypesForTypeAnnotation currentModule
+                    << Tuple.second
+                    << Node.value
+                )
+                Set.empty
+                recordFields
+
+        Src.GenericRecord var recordFields ->
+            List.foldl
+                (Set.union
+                    << requiredTypesForTypeAnnotation currentModule
+                    << Tuple.second
+                    << Node.value
+                )
+                Set.empty
+                (Node.value recordFields)
+
+        Src.FunctionTypeAnnotation from to ->
+            Set.union
+                (requiredTypesForTypeAnnotation currentModule from)
+                (requiredTypesForTypeAnnotation currentModule to)
+
+
+processType : ModuleName -> Module -> Local Type -> SrcType -> Result Error Type
+processType moduleName currentModule localTypes srcType =
+    case srcType of
+        SrcUnion { name, tags, vars } ->
+            Ok <|
+                Union moduleName
+                    tags
+                    (Can.Type moduleName name (List.map Can.Var vars))
+
+        SrcAlias { generics, typeAnnotation } ->
+            Result.map (Alias moduleName (List.map Node.value generics)) <|
+                canonicalizeTypeAnnotation moduleName currentModule localTypes typeAnnotation
+
+
+
+-- CANONICALIZE CONSTRUCTORS
+
+
+canonicalizeConstructors :
+    ModuleName
+    -> List (Node Declaration)
+    -> Module
+    -> Result Error Module
+canonicalizeConstructors moduleName declarations currentModule =
+    Result.map (\newConstructors -> { currentModule | constructors = newConstructors }) <|
+        List.foldl
+            (\constructor ->
+                Result.andThen
+                    (canonicalizeConstructor moduleName currentModule constructor)
+            )
+            (Ok currentModule.constructors)
+            declarations
 
 
 canonicalizeConstructor :
@@ -242,46 +361,64 @@ canonicalizeConstructor :
     -> Module
     -> Node Declaration
     -> Local Constructor
-    -> Local Constructor
+    -> Result Error (Local Constructor)
 canonicalizeConstructor moduleName currentModule declaration constructors =
     case Node.value declaration of
         CustomTypeDeclaration c ->
             let
-                tipe =
-                    Can.Type moduleName
-                        (Node.value c.name)
-                        (List.map (Can.Var << Node.value) c.generics)
-
                 toConstructor valueConstructor =
-                    ( Node.value valueConstructor.name
-                    , List.map
-                        (canonicalizeTypeAnnotation moduleName currentModule)
-                        valueConstructor.arguments
-                    )
+                    Result.map (Tuple.pair (Node.value valueConstructor.name)) <|
+                        Result.combine <|
+                            List.map (canonicalizeTypeAnnotation moduleName currentModule Dict.empty)
+                                valueConstructor.arguments
+
+                tipe =
+                    Can.Type moduleName (Node.value c.name) <|
+                        List.map (Can.Var << Node.value) c.generics
             in
-            List.foldl
-                (\( name, args ) ->
-                    Dict.insert name
-                        { args = args
-                        , tipe = tipe
-                        }
+            Result.map
+                (List.foldl
+                    (\( name, args ) ->
+                        Dict.insert name (Constructor (Node.value c.name) args tipe)
+                    )
+                    constructors
                 )
-                constructors
-                (List.map (Node.value >> toConstructor) c.constructors)
+                (Result.combine
+                    (List.map (Node.value >> toConstructor) c.constructors)
+                )
+
+        AliasDeclaration typeAlias ->
+            let
+                name =
+                    Node.value typeAlias.name
+            in
+            case Dict.get name currentModule.types of
+                Nothing ->
+                    Ok constructors
+
+                Just (Union _ _ _) ->
+                    Ok constructors
+
+                Just (Alias _ _ ((Can.Record _ Nothing) as tipe)) ->
+                    Ok (Dict.insert name (RecordConstructor name tipe) constructors)
+
+                Just (Alias _ _ _) ->
+                    Ok constructors
 
         _ ->
-            constructors
+            Ok constructors
 
 
-canonicalizeValues : ModuleName -> List (Node Declaration) -> Module -> Module
-canonicalizeValues moduleName declarations currentModule =
-    { currentModule
-        | values =
-            List.foldl
-                (canonicalizeValue moduleName currentModule)
-                currentModule.values
-                declarations
-    }
+
+-- CANONICALIZE VALUES
+
+
+canonicalizeValues : List (Node Declaration) -> ModuleName -> Module -> Result Error Module
+canonicalizeValues declarations currentModuleName currentModule =
+    Result.map (\newValues -> { currentModule | values = newValues }) <|
+        List.foldl (\value -> Result.andThen (canonicalizeValue currentModuleName currentModule value))
+            (Ok currentModule.values)
+            declarations
 
 
 canonicalizeValue :
@@ -289,13 +426,13 @@ canonicalizeValue :
     -> Module
     -> Node Declaration
     -> Local Annotation
-    -> Local Annotation
-canonicalizeValue moduleName currentModule declaration values =
+    -> Result Error (Local Annotation)
+canonicalizeValue currentModuleName currentModule declaration values =
     case Node.value declaration of
         FunctionDeclaration f ->
             case f.signature of
                 Nothing ->
-                    values
+                    Ok values
 
                 Just signature ->
                     let
@@ -304,20 +441,24 @@ canonicalizeValue moduleName currentModule declaration values =
                                 |> Node.value
                                 |> .name
                                 |> Node.value
-
-                        tipe =
-                            signature
-                                |> Node.value
-                                |> .typeAnnotation
-                                |> canonicalizeTypeAnnotation moduleName
-                                    currentModule
                     in
-                    Dict.insert name
-                        (Canonical.Annotation.fromType tipe)
-                        values
+                    signature
+                        |> Node.value
+                        |> .typeAnnotation
+                        |> canonicalizeTypeAnnotation currentModuleName currentModule Dict.empty
+                        |> Result.map
+                            (\tipe ->
+                                Dict.insert name
+                                    (Canonical.Annotation.fromType tipe)
+                                    values
+                            )
 
         _ ->
-            values
+            Ok values
+
+
+
+-- CANONICALIZE BINOPS
 
 
 canonicalizeBinops : ModuleName -> List (Node Declaration) -> Module -> Module
@@ -331,12 +472,7 @@ canonicalizeBinops moduleName declarations currentModule =
     }
 
 
-canonicalizeBinop :
-    ModuleName
-    -> Module
-    -> Node Declaration
-    -> Local Binop
-    -> Local Binop
+canonicalizeBinop : ModuleName -> Module -> Node Declaration -> Local Binop -> Local Binop
 canonicalizeBinop moduleName currentModule declaration binops =
     case Node.value declaration of
         InfixDeclaration i ->
@@ -370,81 +506,88 @@ canonicalizeBinop moduleName currentModule declaration binops =
             binops
 
 
+
+-- CANONICALIZE TYPE ANNOTATION
+
+
 canonicalizeTypeAnnotation :
     ModuleName
     -> Module
+    -> Local Type
     -> Node Src.TypeAnnotation
-    -> Can.Type
-canonicalizeTypeAnnotation moduleName currentModule typeAnnotation =
+    -> Result Error Can.Type
+canonicalizeTypeAnnotation currentModuleName currentModule localTypes typeAnnotation =
     case Node.value typeAnnotation of
         Src.GenericType var ->
-            Can.Var var
+            Ok (Can.Var var)
 
         Src.Typed qualifiedName typeAnnotations ->
             let
                 ( qualifier, name ) =
                     Node.value qualifiedName
-            in
-            case lookupType currentModule qualifier name of
-                Nothing ->
-                    case lookupAlias currentModule qualifier name of
+
+                canonicalizeAlias vars tipe =
+                    Result.map (substituteVars tipe vars) <|
+                        Result.combine <|
+                            List.map (canonicalizeTypeAnnotation currentModuleName currentModule localTypes)
+                                typeAnnotations
+
+                canonicalizeUnion moduleName =
+                    Result.map (Can.Type moduleName name) <|
+                        Result.combine <|
+                            List.map (canonicalizeTypeAnnotation currentModuleName currentModule localTypes)
+                                typeAnnotations
+
+                withImported =
+                    case lookupType currentModule qualifier name of
                         Nothing ->
-                            -- TODO If we implemented everything correct and
-                            -- the Elm file compiles, then this should actually
-                            -- not happen. So, for simplicity, we just assume
-                            -- the type is defined within the current module
-                            Can.Type
-                                moduleName
-                                name
-                                (List.map
-                                    (canonicalizeTypeAnnotation moduleName currentModule)
-                                    typeAnnotations
-                                )
+                            Err (UnknownType currentModuleName currentModule qualifier name)
 
-                        Just alias_ ->
-                            substituteVars alias_.tipe
-                                alias_.vars
-                                (List.map
-                                    (canonicalizeTypeAnnotation moduleName currentModule)
-                                    typeAnnotations
-                                )
+                        Just (Union moduleName _ _) ->
+                            canonicalizeUnion moduleName
 
-                Just tipe ->
-                    Can.Type
-                        tipe.moduleName
-                        name
-                        (List.map
-                            (canonicalizeTypeAnnotation moduleName currentModule)
-                            typeAnnotations
-                        )
+                        Just (Alias _ vars tipe) ->
+                            canonicalizeAlias vars tipe
+            in
+            if List.isEmpty qualifier then
+                case Dict.get name localTypes of
+                    Nothing ->
+                        withImported
+
+                    Just (Union moduleName _ _) ->
+                        canonicalizeUnion moduleName
+
+                    Just (Alias _ vars tipe) ->
+                        canonicalizeAlias vars tipe
+
+            else
+                withImported
 
         Src.Unit ->
-            Can.Tuple []
+            Ok (Can.Tuple [])
 
         Src.Tupled typeAnnotations ->
-            Can.Tuple
-                (List.map
-                    (canonicalizeTypeAnnotation moduleName currentModule)
-                    typeAnnotations
-                )
+            Result.map Can.Tuple <|
+                Result.combine <|
+                    List.map (canonicalizeTypeAnnotation currentModuleName currentModule localTypes)
+                        typeAnnotations
 
         Src.Record recordFields ->
-            Can.Record
-                (List.map (canonicalizeRecordField moduleName currentModule) recordFields)
-                Nothing
+            Result.map (\fields -> Can.Record fields Nothing) <|
+                Result.combine <|
+                    List.map (canonicalizeRecordField currentModuleName currentModule localTypes)
+                        recordFields
 
         Src.GenericRecord var recordFields ->
-            Can.Record
-                (List.map
-                    (canonicalizeRecordField moduleName currentModule)
-                    (Node.value recordFields)
-                )
-                (Just (Node.value var))
+            Result.map (\fields -> Can.Record fields (Just (Node.value var))) <|
+                Result.combine <|
+                    List.map (canonicalizeRecordField currentModuleName currentModule localTypes)
+                        (Node.value recordFields)
 
         Src.FunctionTypeAnnotation from to ->
-            Can.Lambda
-                (canonicalizeTypeAnnotation moduleName currentModule from)
-                (canonicalizeTypeAnnotation moduleName currentModule to)
+            Result.map2 Can.Lambda
+                (canonicalizeTypeAnnotation currentModuleName currentModule localTypes from)
+                (canonicalizeTypeAnnotation currentModuleName currentModule localTypes to)
 
 
 substituteVars : Can.Type -> List String -> List Can.Type -> Can.Type
@@ -468,9 +611,7 @@ substituteVarsHelp : Dict String Can.Type -> Can.Type -> Can.Type
 substituteVarsHelp subst tipe =
     case tipe of
         Can.Lambda from to ->
-            Can.Lambda
-                (substituteVarsHelp subst from)
-                (substituteVarsHelp subst to)
+            Can.Lambda (substituteVarsHelp subst from) (substituteVarsHelp subst to)
 
         Can.Var name ->
             case Dict.get name subst of
@@ -481,9 +622,7 @@ substituteVarsHelp subst tipe =
                     newType
 
         Can.Type moduleName name types ->
-            Can.Type moduleName
-                name
-                (List.map (substituteVarsHelp subst) types)
+            Can.Type moduleName name (List.map (substituteVarsHelp subst) types)
 
         Can.Record fields maybeVar ->
             case maybeVar of
@@ -518,15 +657,19 @@ substituteVarsHelp subst tipe =
             Can.Tuple (List.map (substituteVarsHelp subst) types)
 
 
-canonicalizeRecordField : ModuleName -> Module -> Node Src.RecordField -> ( String, Can.Type )
-canonicalizeRecordField moduleName currentModule recordField =
+canonicalizeRecordField :
+    ModuleName
+    -> Module
+    -> Local Type
+    -> Node Src.RecordField
+    -> Result Error ( String, Can.Type )
+canonicalizeRecordField currentModuleName currentModule localTypes recordField =
     let
         ( name, annotation ) =
             Node.value recordField
     in
-    ( Node.value name
-    , canonicalizeTypeAnnotation moduleName currentModule annotation
-    )
+    Result.map (Tuple.pair (Node.value name)) <|
+        canonicalizeTypeAnnotation currentModuleName currentModule localTypes annotation
 
 
 lookupValue : Module -> ModuleName -> String -> Maybe Annotation
@@ -536,25 +679,23 @@ lookupValue currentModule moduleName name =
 
 
 lookupType : Module -> ModuleName -> String -> Maybe Type
-lookupType currentModule moduleName name =
-    Dict.get moduleName currentModule.qualifiedTypes
-        |> Maybe.andThen (Dict.get name)
-
-
-lookupAlias : Module -> ModuleName -> String -> Maybe Alias
-lookupAlias currentModule moduleName name =
-    if List.isEmpty moduleName then
-        case Dict.get name currentModule.aliases of
+lookupType currentModule qualifier name =
+    if List.isEmpty qualifier then
+        case Dict.get name currentModule.types of
             Nothing ->
-                Dict.get moduleName currentModule.qualifiedAliases
+                Dict.get qualifier currentModule.qualifiedTypes
                     |> Maybe.andThen (Dict.get name)
 
-            maybeAlias ->
-                maybeAlias
+            maybeType ->
+                maybeType
 
     else
-        Dict.get moduleName currentModule.qualifiedAliases
+        Dict.get qualifier currentModule.qualifiedTypes
             |> Maybe.andThen (Dict.get name)
+
+
+
+---- EXPOSE
 
 
 expose : Exposing -> Module -> Module
@@ -563,7 +704,6 @@ expose exposingList currentModule =
         All _ ->
             { currentModule
                 | exposedTypes = currentModule.types
-                , exposedAliases = currentModule.aliases
                 , exposedConstructors = currentModule.constructors
                 , exposedValues = currentModule.values
                 , exposedBinops = currentModule.binops
@@ -583,9 +723,8 @@ exposeHelp topLevelExpose currentModule =
             exposeValue name currentModule
 
         TypeOrAliasExpose name ->
-            currentModule
-                |> exposeType name
-                |> exposeAlias name
+            exposeType name currentModule
+                |> exposeRecordConstructorsFor name
 
         TypeExpose exposedType ->
             case exposedType.open of
@@ -596,7 +735,7 @@ exposeHelp topLevelExpose currentModule =
                 Just _ ->
                     currentModule
                         |> exposeType exposedType.name
-                        |> exposeConstructors exposedType.name
+                        |> exposeConstructorsFor exposedType.name
 
 
 exposeBinop : String -> Module -> Module
@@ -607,8 +746,7 @@ exposeBinop name currentModule =
 
         Just binop ->
             { currentModule
-                | exposedBinops =
-                    Dict.insert name binop currentModule.exposedBinops
+                | exposedBinops = Dict.insert name binop currentModule.exposedBinops
             }
 
 
@@ -620,8 +758,7 @@ exposeValue name currentModule =
 
         Just annotation ->
             { currentModule
-                | exposedValues =
-                    Dict.insert name annotation currentModule.exposedValues
+                | exposedValues = Dict.insert name annotation currentModule.exposedValues
             }
 
 
@@ -633,45 +770,64 @@ exposeType name currentModule =
 
         Just tipe ->
             { currentModule
-                | exposedTypes =
-                    Dict.insert name tipe currentModule.exposedTypes
+                | exposedTypes = Dict.insert name tipe currentModule.exposedTypes
             }
 
 
-exposeAlias : String -> Module -> Module
-exposeAlias name currentModule =
-    case Dict.get name currentModule.aliases of
-        Nothing ->
-            currentModule
-
-        Just alias_ ->
-            { currentModule
-                | exposedAliases =
-                    Dict.insert name alias_ currentModule.exposedAliases
-            }
-
-
-exposeConstructors : String -> Module -> Module
-exposeConstructors name currentModule =
+exposeConstructorsFor : String -> Module -> Module
+exposeConstructorsFor name currentModule =
     case Dict.get name currentModule.types of
         Nothing ->
             currentModule
 
-        Just tipe ->
+        Just (Union _ _ _) ->
             { currentModule
                 | exposedConstructors =
-                    List.foldl
-                        (\tag ->
-                            case Dict.get tag currentModule.constructors of
-                                Nothing ->
-                                    identity
-
-                                Just constructor ->
-                                    Dict.insert tag constructor
-                        )
-                        currentModule.exposedConstructors
-                        tipe.tags
+                    currentModule.constructors
+                        |> Dict.filter (\_ -> isConstructorFor name)
+                        |> Dict.foldl Dict.insert currentModule.exposedConstructors
             }
+
+        Just (Alias _ _ _) ->
+            currentModule
+
+
+exposeRecordConstructorsFor : String -> Module -> Module
+exposeRecordConstructorsFor name currentModule =
+    case Dict.get name currentModule.types of
+        Nothing ->
+            currentModule
+
+        Just (Union _ _ _) ->
+            currentModule
+
+        Just (Alias _ _ _) ->
+            { currentModule
+                | exposedConstructors =
+                    currentModule.constructors
+                        |> Dict.filter (\_ -> isRecordConstructorFor name)
+                        |> Dict.foldl Dict.insert currentModule.exposedConstructors
+            }
+
+
+isConstructorFor : String -> Constructor -> Bool
+isConstructorFor name constructor =
+    case constructor of
+        Constructor thisName _ _ ->
+            name == thisName
+
+        RecordConstructor _ _ ->
+            False
+
+
+isRecordConstructorFor : String -> Constructor -> Bool
+isRecordConstructorFor name constructor =
+    case constructor of
+        Constructor _ _ _ ->
+            False
+
+        RecordConstructor thisName _ ->
+            name == thisName
 
 
 
@@ -681,7 +837,6 @@ exposeConstructors name currentModule =
 type alias Imports =
     { binops : Local Binop
     , qualifiedTypes : Qualified Type
-    , qualifiedAliases : Qualified Alias
     , qualifiedConstructors : Qualified Constructor
     , qualifiedValues : Qualified Annotation
     }
@@ -693,14 +848,9 @@ addImports importedModules =
         initialImports =
             { binops = Dict.empty
             , qualifiedTypes =
-                Dict.singleton []
-                    (Dict.singleton "List"
-                        { moduleName = [ "List" ]
-                        , vars = [ "a" ]
-                        , tags = []
-                        }
-                    )
-            , qualifiedAliases = Dict.empty
+                Dict.singleton [] <|
+                    Dict.singleton "List" <|
+                        Union [ "List" ] [] (Can.Type [ "List" ] "List" [ Can.Var "a" ])
             , qualifiedConstructors = Dict.empty
             , qualifiedValues = Dict.empty
             }
@@ -737,7 +887,6 @@ addImport importStatement moduleName importedModule imports =
     in
     imports
         |> addTypes qualifier importedModule
-        |> addAliases qualifier importedModule
         |> addConstructors qualifier importedModule
         |> addValues qualifier importedModule
         |> addExposings qualifier importedModule exposingList
@@ -754,7 +903,6 @@ addExposings qualifier importedModule exposingList imports =
                 All _ ->
                     imports
                         |> addTypes [] importedModule
-                        |> addAliases [] importedModule
                         |> addConstructors [] importedModule
                         |> addValues [] importedModule
                         |> addBinops importedModule
@@ -777,9 +925,7 @@ addExposing qualifier importedModule topLevelExpose imports =
             addValue name qualifier importedModule imports
 
         TypeOrAliasExpose name ->
-            imports
-                |> addType name qualifier importedModule
-                |> addAlias name qualifier importedModule
+            addType name qualifier importedModule imports
 
         TypeExpose exposedType ->
             case exposedType.open of
@@ -797,9 +943,7 @@ addExposing qualifier importedModule topLevelExpose imports =
 
 addTypes : ModuleName -> Module -> Imports -> Imports
 addTypes qualifier { exposedTypes } ({ qualifiedTypes } as imports) =
-    { imports
-        | qualifiedTypes = addQualified qualifier exposedTypes qualifiedTypes
-    }
+    { imports | qualifiedTypes = addQualified qualifier exposedTypes qualifiedTypes }
 
 
 addType : String -> ModuleName -> Module -> Imports -> Imports
@@ -810,8 +954,7 @@ addType name qualifer { exposedTypes } ({ qualifiedTypes } as imports) =
 
         Just tipe ->
             { imports
-                | qualifiedTypes =
-                    addSingleQualified qualifer name tipe qualifiedTypes
+                | qualifiedTypes = addSingleQualified qualifer name tipe qualifiedTypes
             }
 
 
@@ -821,40 +964,15 @@ addConstructorsFor name qualifer { exposedTypes, exposedConstructors } ({ qualif
         Nothing ->
             imports
 
-        Just tipe ->
+        Just _ ->
             { imports
                 | qualifiedConstructors =
-                    List.foldl
-                        (\tag ->
-                            case Dict.get tag exposedConstructors of
-                                Nothing ->
-                                    identity
-
-                                Just constructor ->
-                                    addSingleQualified qualifer tag constructor
-                        )
+                    (exposedConstructors
+                        |> Dict.filter (\_ -> isConstructorFor name)
+                        |> Dict.foldl Dict.insert Dict.empty
+                        |> addQualified qualifer
+                    )
                         qualifiedConstructors
-                        tipe.tags
-            }
-
-
-addAliases : ModuleName -> Module -> Imports -> Imports
-addAliases qualifier { exposedAliases } ({ qualifiedAliases } as imports) =
-    { imports
-        | qualifiedAliases = addQualified qualifier exposedAliases qualifiedAliases
-    }
-
-
-addAlias : String -> ModuleName -> Module -> Imports -> Imports
-addAlias name qualifer { exposedAliases } ({ qualifiedAliases } as imports) =
-    case Dict.get name exposedAliases of
-        Nothing ->
-            imports
-
-        Just tipe ->
-            { imports
-                | qualifiedAliases =
-                    addSingleQualified qualifer name tipe qualifiedAliases
             }
 
 
@@ -868,9 +986,7 @@ addConstructors qualifier { exposedConstructors } ({ qualifiedConstructors } as 
 
 addValues : ModuleName -> Module -> Imports -> Imports
 addValues qualifier { exposedValues } ({ qualifiedValues } as imports) =
-    { imports
-        | qualifiedValues = addQualified qualifier exposedValues qualifiedValues
-    }
+    { imports | qualifiedValues = addQualified qualifier exposedValues qualifiedValues }
 
 
 addValue : String -> ModuleName -> Module -> Imports -> Imports
@@ -893,15 +1009,14 @@ addQualified qualifier exposed qualified =
 
 addSingleQualified : ModuleName -> String -> a -> Qualified a -> Qualified a
 addSingleQualified qualifer name a =
-    Dict.update qualifer
-        (\maybeDictA ->
+    Dict.update qualifer <|
+        \maybeDictA ->
             case maybeDictA of
                 Nothing ->
                     Just (Dict.singleton name a)
 
                 Just dictA ->
                     Just (Dict.insert name a dictA)
-        )
 
 
 addBinops : Module -> Imports -> Imports
@@ -942,109 +1057,9 @@ type alias ModuleData =
     }
 
 
-type alias Store =
-    { todo : List TodoItem
-    , done : Dict ModuleName Module
-    }
-
-
-emptyStore : Store
-emptyStore =
-    { todo = []
-    , done = Dict.empty
-    }
-
-
-type alias TodoItem =
-    { blockedBy : Set ModuleName
-    , moduleData : ModuleData
-    }
-
-
-add : ModuleData -> Store -> Store
-add moduleData store =
-    { store | todo = TodoItem (requiredModules moduleData store) moduleData :: store.todo }
-        |> canonicalizeTodo Set.empty
-
-
-replace : ModuleData -> Store -> Store
-replace moduleData store =
-    { store
-        | todo = TodoItem (requiredModules moduleData store) moduleData :: store.todo
-        , done = Dict.remove moduleData.moduleName store.done
-    }
-        |> canonicalizeTodo Set.empty
-
-
-canonicalizeTodo : Set ModuleName -> Store -> Store
-canonicalizeTodo nowDone store =
+requiredModules : ModuleData -> Set ModuleName
+requiredModules moduleData =
     let
-        ( newlyDone, newTodo ) =
-            List.foldl
-                (\{ blockedBy, moduleData } ( done, todo ) ->
-                    let
-                        newBlockers =
-                            Set.diff blockedBy nowDone
-                    in
-                    if Set.isEmpty newBlockers then
-                        ( Dict.insert moduleData.moduleName
-                            (canonicalizeModule
-                                (Dict.union store.done done)
-                                moduleData.moduleName
-                                moduleData.file
-                                moduleData.interface
-                            )
-                            done
-                        , todo
-                        )
-
-                    else
-                        ( done
-                        , { blockedBy = newBlockers
-                          , moduleData = moduleData
-                          }
-                            :: todo
-                        )
-                )
-                ( Dict.empty, [] )
-                store.todo
-
-        newStore =
-            { store
-                | todo = newTodo
-                , done = Dict.union store.done newlyDone
-            }
-    in
-    if Dict.isEmpty newlyDone then
-        newStore
-
-    else
-        canonicalizeTodo
-            (Set.fromList (Dict.keys newlyDone))
-            newStore
-
-
-
--- REQUIRED MODULES
-
-
-requiredModules : ModuleData -> Store -> Set ModuleName
-requiredModules moduleData store =
-    let
-        needed =
-            if Set.member moduleData.moduleName coreModules then
-                List.map (.moduleName >> Node.value) moduleData.imports
-                    |> List.filter (not << isNative)
-                    |> Set.fromList
-
-            else
-                List.map (.moduleName >> Node.value)
-                    (moduleData.imports
-                        ++ List.map Node.value defaultImports
-                    )
-                    |> List.filter (not << isNative)
-                    |> Set.fromList
-
         isNative moduleName =
             case moduleName of
                 "Native" :: _ ->
@@ -1055,12 +1070,138 @@ requiredModules moduleData store =
 
                 _ ->
                     False
+    in
+    if Set.member moduleData.moduleName coreModules then
+        List.map (.moduleName >> Node.value) moduleData.imports
+            |> List.filter (not << isNative)
+            |> Set.fromList
 
-        availableModules =
+    else
+        List.map (.moduleName >> Node.value)
+            (moduleData.imports ++ List.map Node.value defaultImports)
+            |> List.filter (not << isNative)
+            |> Set.fromList
+
+
+
+---- STORE
+
+
+type alias Store comparable input output =
+    { todo : List (TodoItem comparable input)
+    , done : Dict comparable output
+    }
+
+
+emptyStore : Store comparable input output
+emptyStore =
+    { todo = []
+    , done = Dict.empty
+    }
+
+
+type alias TodoItem comparable input =
+    { name : comparable
+    , blockedBy : Set comparable
+    , input : input
+    }
+
+
+type alias StoreConfig comparable input output =
+    { required : input -> Set comparable
+    , process : Dict comparable output -> input -> Result Error output
+    }
+
+
+add :
+    StoreConfig comparable input output
+    -> comparable
+    -> input
+    -> Store comparable input output
+    -> Result Error (Store comparable input output)
+add { required, process } name input store =
+    let
+        available =
             Dict.keys store.done
                 |> Set.fromList
     in
-    Set.diff needed availableModules
+    { store
+        | todo =
+            { name = name
+            , blockedBy = Set.diff (required input) available
+            , input = input
+            }
+                :: store.todo
+    }
+        |> processTodo process Set.empty
+
+
+replace :
+    StoreConfig comparable input output
+    -> comparable
+    -> input
+    -> Store comparable input output
+    -> Result Error (Store comparable input output)
+replace { required, process } name input store =
+    let
+        available =
+            Dict.keys store.done
+                |> Set.fromList
+    in
+    { store
+        | todo =
+            { name = name
+            , blockedBy = Set.diff (required input) available
+            , input = input
+            }
+                :: store.todo
+        , done = Dict.remove name store.done
+    }
+        |> processTodo process Set.empty
+
+
+processTodo :
+    (Dict comparable output -> input -> Result Error output)
+    -> Set comparable
+    -> Store comparable input output
+    -> Result Error (Store comparable input output)
+processTodo process nowDone store =
+    let
+        processTodoItem todoItem stuff =
+            case stuff of
+                Err _ ->
+                    stuff
+
+                Ok ( done, todo ) ->
+                    let
+                        newBlockers =
+                            Set.diff todoItem.blockedBy nowDone
+                    in
+                    if Set.isEmpty newBlockers then
+                        case process (Dict.union store.done done) todoItem.input of
+                            Err error ->
+                                Err error
+
+                            Ok output ->
+                                Ok ( Dict.insert todoItem.name output done, todo )
+
+                    else
+                        Ok ( done, { todoItem | blockedBy = newBlockers } :: todo )
+    in
+    case List.foldl processTodoItem (Ok ( Dict.empty, [] )) store.todo of
+        Err error ->
+            Err error
+
+        Ok ( newlyDone, newTodo ) ->
+            let
+                newStore =
+                    { store | todo = newTodo, done = Dict.union store.done newlyDone }
+            in
+            if Dict.isEmpty newlyDone then
+                Ok newStore
+
+            else
+                processTodo process (Set.fromList (Dict.keys newlyDone)) newStore
 
 
 
@@ -1150,16 +1291,14 @@ defaultImports =
       , exposingList =
             Just <|
                 Node emptyRange <|
-                    Explicit
-                        [ Node emptyRange (TypeOrAliasExpose "String") ]
+                    Explicit [ Node emptyRange (TypeOrAliasExpose "String") ]
       }
     , { moduleName = Node emptyRange [ "Char" ]
       , moduleAlias = Nothing
       , exposingList =
             Just <|
                 Node emptyRange <|
-                    Explicit
-                        [ Node emptyRange (TypeOrAliasExpose "Char") ]
+                    Explicit [ Node emptyRange (TypeOrAliasExpose "Char") ]
       }
     , { moduleName = Node emptyRange [ "Tuple" ]
       , moduleAlias = Nothing
@@ -1174,24 +1313,21 @@ defaultImports =
       , exposingList =
             Just <|
                 Node emptyRange <|
-                    Explicit
-                        [ Node emptyRange (TypeOrAliasExpose "Program") ]
+                    Explicit [ Node emptyRange (TypeOrAliasExpose "Program") ]
       }
     , { moduleName = Node emptyRange [ "Platform", "Cmd" ]
       , moduleAlias = Just (Node emptyRange [ "Cmd" ])
       , exposingList =
             Just <|
                 Node emptyRange <|
-                    Explicit
-                        [ Node emptyRange (TypeOrAliasExpose "Cmd") ]
+                    Explicit [ Node emptyRange (TypeOrAliasExpose "Cmd") ]
       }
     , { moduleName = Node emptyRange [ "Platform", "Sub" ]
       , moduleAlias = Just (Node emptyRange [ "Sub" ])
       , exposingList =
             Just <|
                 Node emptyRange <|
-                    Explicit
-                        [ Node emptyRange (TypeOrAliasExpose "Sub") ]
+                    Explicit [ Node emptyRange (TypeOrAliasExpose "Sub") ]
       }
     ]
         |> List.map (Node emptyRange)

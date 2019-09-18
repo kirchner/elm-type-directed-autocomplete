@@ -2,13 +2,12 @@ port module Worker exposing (main)
 
 import Canonical
     exposing
-        ( Alias
-        , Constructor
+        ( Constructor(..)
         , Module
         , ModuleData
         , Store
         , TodoItem
-        , Type
+        , Type(..)
         )
 import Canonical.Annotation exposing (Annotation)
 import Canonical.Type as Can
@@ -135,7 +134,7 @@ store file data =
 
 
 type alias Model =
-    { store : Store }
+    { store : Store ModuleName ModuleData Module }
 
 
 type Msg
@@ -157,16 +156,20 @@ update msg model =
         Parse file ->
             case parse file of
                 Ok ( moduleData, data ) ->
-                    let
-                        newStore =
-                            Canonical.add moduleData model.store
-                    in
-                    ( { model | store = newStore }
-                    , Cmd.batch
-                        [ store file data
-                        , log ("reparsed " ++ file.fileName)
-                        ]
-                    )
+                    case Canonical.add config moduleData.moduleName moduleData model.store of
+                        Err e ->
+                            ( model
+                            , log
+                                (file.fileName ++ ": " ++ Canonical.errorToString e)
+                            )
+
+                        Ok newStore ->
+                            ( { model | store = newStore }
+                            , Cmd.batch
+                                [ store file data
+                                , log ("reparsed " ++ file.fileName)
+                                ]
+                            )
 
                 Err e ->
                     ( model
@@ -176,13 +179,17 @@ update msg model =
         Restore cached ->
             case parseCached cached of
                 Ok moduleData ->
-                    let
-                        newStore =
-                            Canonical.add moduleData model.store
-                    in
-                    ( { model | store = newStore }
-                    , log ("restored " ++ cached.fileName)
-                    )
+                    case Canonical.add config moduleData.moduleName moduleData model.store of
+                        Err e ->
+                            ( model
+                            , log
+                                (cached.fileName ++ ": " ++ Canonical.errorToString e)
+                            )
+
+                        Ok newStore ->
+                            ( { model | store = newStore }
+                            , log ("restored " ++ cached.fileName)
+                            )
 
                 Err e ->
                     ( model
@@ -219,11 +226,15 @@ type Error
     = CannotGetRange
     | ParserError (List Parser.DeadEnd)
     | CannotFindFunctionDeclaration
-    | CannotFindCurrentModule (List TodoItem) (Dict ModuleName Module) ModuleName
+    | CannotFindCurrentModule (List (TodoItem ModuleName ModuleData)) (Dict ModuleName Module) ModuleName
     | InferenceError CompletionRequest (Dict String Annotation) Module Range Function Inference.Error
+    | CanonicalizationError Canonical.Error
 
 
-computeCompletions : Store -> CompletionRequest -> Result Error CompletionResult
+computeCompletions :
+    Store ModuleName ModuleData Module
+    -> CompletionRequest
+    -> Result Error CompletionResult
 computeCompletions currentStore ({ row, column, src, fileName } as request) =
     Result.andThen2 (runInfer request currentStore)
         (computeRange row column src)
@@ -264,18 +275,37 @@ parseModule src =
     Result.mapError ParserError (Parser.parse src)
 
 
-runInfer : CompletionRequest -> Store -> Range -> RawFile -> Result Error CompletionResult
+runInfer :
+    CompletionRequest
+    -> Store ModuleName ModuleData Module
+    -> Range
+    -> RawFile
+    -> Result Error CompletionResult
 runInfer request currentStore range rawFile =
     let
         ({ moduleName, file } as currentModuleData) =
             toModuleData request.fileName rawFile
-
-        newStore =
-            Canonical.replace currentModuleData currentStore
     in
-    Result.andThen2 (infer request range moduleName)
-        (getFunctionDeclaration range file)
-        (findModule newStore.todo newStore.done moduleName)
+    Canonical.replace config currentModuleData.moduleName currentModuleData currentStore
+        |> Result.mapError CanonicalizationError
+        |> Result.andThen
+            (\newStore ->
+                Result.andThen2 (infer request range moduleName)
+                    (getFunctionDeclaration range file)
+                    (findModule newStore.todo newStore.done moduleName)
+            )
+
+
+config =
+    { required = Canonical.requiredModules
+    , process =
+        \done moduleData ->
+            Canonical.canonicalizeModule
+                done
+                moduleData.moduleName
+                moduleData.file
+                moduleData.interface
+    }
 
 
 getFunctionDeclaration : Range -> File -> Result Error Function
@@ -285,7 +315,11 @@ getFunctionDeclaration range file =
         (Src.functionDeclarationAt range file)
 
 
-findModule : List TodoItem -> Dict ModuleName Module -> ModuleName -> Result Error Module
+findModule :
+    List (TodoItem ModuleName ModuleData)
+    -> Dict ModuleName Module
+    -> ModuleName
+    -> Result Error Module
 findModule todo done moduleName =
     Result.fromMaybe
         (CannotFindCurrentModule todo done moduleName)
@@ -330,7 +364,6 @@ infer request range moduleName function currentModule =
             (generateCompletions request
                 range
                 [ currentModule.values, standardValues, globalValues ]
-                currentModule.aliases
                 currentModule.types
                 currentModule.constructors
             )
@@ -371,12 +404,11 @@ generateCompletions :
     CompletionRequest
     -> Range
     -> List (Dict String Annotation)
-    -> Dict String Alias
     -> Dict String Type
     -> Dict String Constructor
     -> ( Can.Type, Bool, Dict String Can.Type )
     -> CompletionResult
-generateCompletions request range globalValues aliases types constructors ( tipe, isArgument, localValues ) =
+generateCompletions request range globalValues types constructors ( tipe, isArgument, localValues ) =
     let
         addGlobalValues generator =
             List.foldl Generator.addValues generator globalValues
@@ -391,12 +423,65 @@ generateCompletions request range globalValues aliases types constructors ( tipe
         Generator.default
             |> addGlobalValues
             |> Generator.addValues (Dict.map (\_ -> Canonical.Annotation.fromType) localValues)
-            |> Generator.addTypes types
-            |> Generator.addConstructors constructors
-            |> Generator.addAliases aliases
+            |> Generator.addUnions (unions types constructors)
             |> Generator.for tipe
     , isArgument = isArgument
     }
+
+
+unions : Dict String Type -> Dict String Constructor -> List Generator.Union
+unions types constructors =
+    let
+        addConstructor tag args union =
+            { union
+                | constructors =
+                    { tag = tag
+                    , types = args
+                    }
+                        :: union.constructors
+            }
+
+        addUnion tag args typeName =
+            case Dict.get typeName types of
+                Nothing ->
+                    Nothing
+
+                Just (Union moduleName vars tipe) ->
+                    Just
+                        { name = typeName
+                        , tipe = tipe
+                        , constructors =
+                            [ { tag = tag
+                              , types = args
+                              }
+                            ]
+                        }
+
+                Just (Alias _ _ _) ->
+                    Nothing
+    in
+    constructors
+        |> Dict.foldl
+            (\tag constructor allUnions ->
+                case constructor of
+                    Constructor typeName args _ ->
+                        Dict.update typeName
+                            (\maybeUnion ->
+                                case maybeUnion of
+                                    Nothing ->
+                                        addUnion tag args typeName
+
+                                    Just union ->
+                                        Just <|
+                                            addConstructor tag args union
+                            )
+                            allUnions
+
+                    RecordConstructor _ _ ->
+                        allUnions
+            )
+            Dict.empty
+        |> Dict.values
 
 
 completionToString : Range -> Bool -> Expr -> String
@@ -545,8 +630,7 @@ errorToString error =
             let
                 todoToString todoItem =
                     String.concat
-                        [ moduleNameToString
-                            todoItem.moduleData.moduleName
+                        [ moduleNameToString todoItem.name
                         , " blocked by "
                         , String.join ", " <|
                             List.map moduleNameToString <|
@@ -559,6 +643,8 @@ errorToString error =
             wrap <|
                 String.concat
                     [ title "CANNOT FIND MODULE"
+                    , "\n\n"
+                    , "I cannot find the module "
                     , moduleNameToString moduleName
                     , ". The following modules are available:\n\n  "
                     , String.join "\n  " (List.map moduleNameToString (Dict.keys done))
@@ -580,38 +666,38 @@ errorToString error =
                     , ""
                     , availableDataToString
                         (Dict.union globalValues currentModule.values)
-                        currentModule.aliases
                         currentModule.types
                         currentModule.constructors
+                    ]
+
+        CanonicalizationError canonicalizationError ->
+            wrap <|
+                String.join "\n"
+                    [ title "CANNOT CANONICALIZE"
+                    , ""
+                    , Canonical.errorToString canonicalizationError
                     ]
 
 
 availableDataToString :
     Dict String Annotation
-    -> Dict String Alias
     -> Dict String Type
     -> Dict String Constructor
     -> String
-availableDataToString values aliases types constructors =
+availableDataToString values types constructors =
     let
-        unionToString ( name, union ) =
+        unionToString union =
             String.concat
-                [ String.join " " (name :: union.vars)
+                [ Can.toString union.tipe
                 , " = "
-                , union.tags
+                , union.constructors
                     |> List.map constructorToString
                     |> String.join " | "
                 ]
 
-        constructorToString tag =
-            case Dict.get tag constructors of
-                Nothing ->
-                    "UNKNOWN CONSTRUCTOR '" ++ tag ++ "'"
-
-                Just constructor ->
-                    tag
-                        :: List.map Can.toString constructor.args
-                        |> String.join " "
+        constructorToString constructor =
+            String.join " "
+                (constructor.tag :: List.map Can.toString constructor.types)
 
         valueToString ( fieldName, fieldAnnotation ) =
             String.concat
@@ -623,8 +709,7 @@ availableDataToString values aliases types constructors =
     String.join "\n"
         [ "Unions:"
         , ""
-        , types
-            |> Dict.toList
+        , unions types constructors
             |> List.map unionToString
             |> List.map (\line -> "  " ++ line)
             |> String.join "\n"

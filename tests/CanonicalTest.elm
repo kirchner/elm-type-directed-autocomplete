@@ -3,8 +3,9 @@ module CanonicalTest exposing (suite)
 import Canonical
     exposing
         ( Associativity(..)
-        , Constructor
+        , Constructor(..)
         , Module
+        , ModuleData
         , Store
         )
 import Canonical.Annotation exposing (Annotation(..))
@@ -17,10 +18,14 @@ import Elm.RawFile exposing (RawFile)
 import Elm.Syntax.ModuleName exposing (ModuleName)
 import Expect exposing (Expectation)
 import Fixtures.Basics
+import Fixtures.Char
 import Fixtures.List
 import Fixtures.Main
 import Fixtures.Maybe
 import Fixtures.Platform.Cmd
+import Fixtures.Platform.Sub
+import Fixtures.Result
+import Fixtures.String
 import Fuzz exposing (Fuzzer)
 import Set exposing (Set)
 import Test exposing (..)
@@ -41,7 +46,7 @@ testBasics =
     test "Basics" <|
         \_ ->
             Canonical.emptyStore
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Basics" ]
                     , fileName = "Basics.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawBasics
@@ -52,8 +57,6 @@ testBasics =
                     [ .todo >> Expect.equal []
                     , exposedTypes [ "Basics" ]
                         >> Expect.equal Fixtures.Basics.exposedTypes
-                    , exposedAliases [ "Basics" ]
-                        >> Expect.equal Fixtures.Basics.exposedAliases
                     , exposedConstructors [ "Basics" ]
                         >> Expect.equal Fixtures.Basics.exposedConstructors
                     , exposedValues [ "Basics" ]
@@ -66,14 +69,14 @@ testMaybe =
     test "Maybe" <|
         \_ ->
             Canonical.emptyStore
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Basics" ]
                     , fileName = "Basics.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawBasics
                     , imports = Elm.RawFile.imports rawBasics
                     , interface = Elm.Interface.build rawBasics
                     }
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Maybe" ]
                     , fileName = "Maybe.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawMaybe
@@ -84,8 +87,6 @@ testMaybe =
                     [ .todo >> Expect.equal []
                     , exposedTypes [ "Maybe" ]
                         >> Expect.equal Fixtures.Maybe.exposedTypes
-                    , exposedAliases [ "Maybe" ]
-                        >> Expect.equal Fixtures.Maybe.exposedAliases
                     , exposedConstructors [ "Maybe" ]
                         >> Expect.equal Fixtures.Maybe.exposedConstructors
                     , exposedValues [ "Maybe" ]
@@ -100,21 +101,21 @@ testList =
     test "List" <|
         \_ ->
             Canonical.emptyStore
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Basics" ]
                     , fileName = "Basics.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawBasics
                     , imports = Elm.RawFile.imports rawBasics
                     , interface = Elm.Interface.build rawBasics
                     }
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Maybe" ]
                     , fileName = "Maybe.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawMaybe
                     , imports = Elm.RawFile.imports rawMaybe
                     , interface = Elm.Interface.build rawMaybe
                     }
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "List" ]
                     , fileName = "List.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawList
@@ -125,8 +126,6 @@ testList =
                     [ .todo >> Expect.equal []
                     , exposedTypes [ "List" ]
                         >> Expect.equal Fixtures.List.exposedTypes
-                    , exposedAliases [ "List" ]
-                        >> Expect.equal Fixtures.List.exposedAliases
                     , exposedConstructors [ "List" ]
                         >> Expect.equal Fixtures.List.exposedConstructors
                     , exposedValues [ "List" ]
@@ -139,42 +138,69 @@ testMain =
     test "Main" <|
         \_ ->
             Canonical.emptyStore
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Basics" ]
                     , fileName = "Basics.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawBasics
                     , imports = Elm.RawFile.imports rawBasics
                     , interface = Elm.Interface.build rawBasics
                     }
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Maybe" ]
                     , fileName = "Maybe.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawMaybe
                     , imports = Elm.RawFile.imports rawMaybe
                     , interface = Elm.Interface.build rawMaybe
                     }
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "List" ]
                     , fileName = "List.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawList
                     , imports = Elm.RawFile.imports rawList
                     , interface = Elm.Interface.build rawList
                     }
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Platform", "Cmd" ]
                     , fileName = "Platform/Cmd.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawPlatformCmd
                     , imports = Elm.RawFile.imports rawPlatformCmd
                     , interface = Elm.Interface.build rawPlatformCmd
                     }
+                |> unsafeAdd
+                    { moduleName = [ "Platform", "Sub" ]
+                    , fileName = "Platform/Sub.elm"
+                    , file = Elm.Processing.process Elm.Processing.init rawPlatformSub
+                    , imports = Elm.RawFile.imports rawPlatformSub
+                    , interface = Elm.Interface.build rawPlatformSub
+                    }
+                |> unsafeAdd
+                    { moduleName = [ "Char" ]
+                    , fileName = "Char.elm"
+                    , file = Elm.Processing.process Elm.Processing.init rawChar
+                    , imports = Elm.RawFile.imports rawChar
+                    , interface = Elm.Interface.build rawChar
+                    }
+                |> unsafeAdd
+                    { moduleName = [ "Result" ]
+                    , fileName = "Result.elm"
+                    , file = Elm.Processing.process Elm.Processing.init rawResult
+                    , imports = Elm.RawFile.imports rawResult
+                    , interface = Elm.Interface.build rawResult
+                    }
+                |> unsafeAdd
+                    { moduleName = [ "String" ]
+                    , fileName = "String.elm"
+                    , file = Elm.Processing.process Elm.Processing.init rawString
+                    , imports = Elm.RawFile.imports rawString
+                    , interface = Elm.Interface.build rawString
+                    }
+                |> addMock [ "Bitwise" ]
                 |> addMock [ "Result" ]
-                |> addMock [ "String" ]
                 |> addMock [ "Char" ]
                 |> addMock [ "Tuple" ]
                 |> addMock [ "Debug" ]
                 |> addMock [ "Platform" ]
-                |> addMock [ "Platform", "Sub" ]
-                |> Canonical.add
+                |> unsafeAdd
                     { moduleName = [ "Main" ]
                     , fileName = "Main.elm"
                     , file = Elm.Processing.process Elm.Processing.init rawMain
@@ -182,11 +208,9 @@ testMain =
                     , interface = Elm.Interface.build rawMain
                     }
                 |> Expect.all
-                    [ .todo >> Expect.equal []
+                    [ .todo >> List.map .name >> Expect.equal []
                     , exposedTypes [ "Main" ]
                         >> Expect.equal Fixtures.Main.exposedTypes
-                    , exposedAliases [ "Main" ]
-                        >> Expect.equal Fixtures.Main.exposedAliases
                     , exposedConstructors [ "Main" ]
                         >> Expect.equal Fixtures.Main.exposedConstructors
                     , exposedValues [ "Main" ]
@@ -199,9 +223,34 @@ testMain =
                                 Lambda
                                     (Type [ "Main" ] "Msg" [])
                                     (Lambda
-                                        (Record [] Nothing)
+                                        (Record
+                                            [ ( "users"
+                                              , Type [ "List" ]
+                                                    "List"
+                                                    [ Record
+                                                        [ ( "name", Type [ "String" ] "String" [] )
+                                                        , ( "age", Type [ "Basics" ] "Int" [] )
+                                                        ]
+                                                        Nothing
+                                                    ]
+                                              )
+                                            ]
+                                            Nothing
+                                        )
                                         (Tuple
-                                            [ Record [] Nothing
+                                            [ Record
+                                                [ ( "users"
+                                                  , Type [ "List" ]
+                                                        "List"
+                                                        [ Record
+                                                            [ ( "name", Type [ "String" ] "String" [] )
+                                                            , ( "age", Type [ "Basics" ] "Int" [] )
+                                                            ]
+                                                            Nothing
+                                                        ]
+                                                  )
+                                                ]
+                                                Nothing
                                             , Type [ "Platform", "Cmd" ]
                                                 "Cmd"
                                                 [ Type [ "Main" ] "Msg" [] ]
@@ -211,14 +260,16 @@ testMain =
                             )
                     , qualifiedConstructor [ "Main" ] [ "Maybe" ] "Just"
                         >> Expect.equal
-                            { args = [ Var "a" ]
-                            , tipe = Type [ "Maybe" ] "Maybe" [ Var "a" ]
-                            }
+                            (Constructor "Maybe"
+                                [ Var "a" ]
+                                (Type [ "Maybe" ] "Maybe" [ Var "a" ])
+                            )
                     , qualifiedConstructor [ "Main" ] [ "Maybe" ] "Nothing"
                         >> Expect.equal
-                            { args = []
-                            , tipe = Type [ "Maybe" ] "Maybe" [ Var "a" ]
-                            }
+                            (Constructor "Maybe"
+                                []
+                                (Type [ "Maybe" ] "Maybe" [ Var "a" ])
+                            )
                     ]
 
 
@@ -226,7 +277,7 @@ testMain =
 ---- HELPER
 
 
-exposedTypes : ModuleName -> Store -> Set String
+exposedTypes : ModuleName -> Store ModuleName ModuleData Module -> Set String
 exposedTypes moduleName store =
     case Dict.get moduleName store.done of
         Nothing ->
@@ -238,19 +289,7 @@ exposedTypes moduleName store =
                 |> Set.fromList
 
 
-exposedAliases : ModuleName -> Store -> Set String
-exposedAliases moduleName store =
-    case Dict.get moduleName store.done of
-        Nothing ->
-            Debug.todo "no done module"
-
-        Just module_ ->
-            module_.exposedAliases
-                |> Dict.keys
-                |> Set.fromList
-
-
-exposedConstructors : ModuleName -> Store -> Set String
+exposedConstructors : ModuleName -> Store ModuleName ModuleData Module -> Set String
 exposedConstructors moduleName store =
     case Dict.get moduleName store.done of
         Nothing ->
@@ -262,7 +301,7 @@ exposedConstructors moduleName store =
                 |> Set.fromList
 
 
-exposedValues : ModuleName -> Store -> Set String
+exposedValues : ModuleName -> Store ModuleName ModuleData Module -> Set String
 exposedValues moduleName store =
     case Dict.get moduleName store.done of
         Nothing ->
@@ -274,7 +313,7 @@ exposedValues moduleName store =
                 |> Set.fromList
 
 
-values : ModuleName -> Store -> Set String
+values : ModuleName -> Store ModuleName ModuleData Module -> Set String
 values moduleName store =
     case Dict.get moduleName store.done of
         Nothing ->
@@ -286,7 +325,7 @@ values moduleName store =
                 |> Set.fromList
 
 
-value : ModuleName -> String -> Store -> Annotation
+value : ModuleName -> String -> Store ModuleName ModuleData Module -> Annotation
 value moduleName name store =
     case Dict.get moduleName store.done of
         Nothing ->
@@ -301,7 +340,12 @@ value moduleName name store =
                     v
 
 
-qualifiedConstructor : ModuleName -> ModuleName -> String -> Store -> Constructor
+qualifiedConstructor :
+    ModuleName
+    -> ModuleName
+    -> String
+    -> Store ModuleName ModuleData Module
+    -> Constructor
 qualifiedConstructor moduleName qualifier name store =
     case Dict.get moduleName store.done of
         Nothing ->
@@ -355,6 +399,26 @@ rawPlatformCmd =
     parse Fixtures.Platform.Cmd.src
 
 
+rawPlatformSub : RawFile
+rawPlatformSub =
+    parse Fixtures.Platform.Sub.src
+
+
+rawString : RawFile
+rawString =
+    parse Fixtures.String.src
+
+
+rawChar : RawFile
+rawChar =
+    parse Fixtures.Char.src
+
+
+rawResult : RawFile
+rawResult =
+    parse Fixtures.Result.src
+
+
 rawMain : RawFile
 rawMain =
     parse Fixtures.Main.src
@@ -370,13 +434,16 @@ rawMock moduleName =
             ]
 
 
-addMock : ModuleName -> Store -> Store
+addMock :
+    ModuleName
+    -> Store ModuleName ModuleData Module
+    -> Store ModuleName ModuleData Module
 addMock moduleName =
     let
         rawFile =
             rawMock moduleName
     in
-    Canonical.add
+    unsafeAdd
         { moduleName = moduleName
         , fileName = String.join "/" moduleName ++ ".elm"
         , file =
@@ -384,3 +451,24 @@ addMock moduleName =
         , imports = Elm.RawFile.imports rawFile
         , interface = Elm.Interface.build rawFile
         }
+
+
+unsafeAdd data currentStore =
+    let
+        config =
+            { required = Canonical.requiredModules
+            , process =
+                \done moduleData ->
+                    Canonical.canonicalizeModule
+                        done
+                        moduleData.moduleName
+                        moduleData.file
+                        moduleData.interface
+            }
+    in
+    case Canonical.add config data.moduleName data currentStore of
+        Err error ->
+            Debug.todo (Canonical.errorToString error)
+
+        Ok newStore ->
+            newStore

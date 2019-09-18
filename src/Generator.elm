@@ -1,19 +1,19 @@
 module Generator exposing
     ( Generator, Expr
-    , addTypes, addConstructors, addAliases, addValues, takeValues, default, for
+    , addUnions, addValues, takeValues, default, for
     , value, call
     , tuple, cases
     , record, recordUpdate, field, accessor
     , all
     , first, firstN
     , exprToString, exprToText
-    , constructor, jsonDecoder, todo
+    , Union, constructor, jsonDecoder, todo
     )
 
 {-|
 
 @docs Generator, Expr
-@docs addTypes, addConstructors, addAliases, addValues, takeValues, default, for
+@docs addUnions, addValues, takeValues, default, for
 
 @docs value, call
 @docs tuple, cases
@@ -44,7 +44,7 @@ module Generator exposing
 -}
 
 import BranchedState exposing (BranchedState)
-import Canonical exposing (Alias, Constructor, Type)
+import Canonical exposing (Constructor, Type)
 import Canonical.Annotation exposing (Annotation(..))
 import Canonical.Type as Can
 import Dict exposing (Dict)
@@ -94,10 +94,21 @@ type alias GeneratorState =
 type alias GeneratorConfig =
     { targetTypeVars : Set String
     , isRoot : Bool
-    , types : Dict String Type
-    , constructors : Dict String Constructor
-    , aliases : Dict String Alias
     , values : List (Dict String Annotation)
+    , unions : List Union
+    }
+
+
+type alias Union =
+    { name : String
+    , tipe : Can.Type
+    , constructors : List Constructor
+    }
+
+
+type alias Constructor =
+    { tag : String
+    , types : List Can.Type
     }
 
 
@@ -118,111 +129,112 @@ available. Take a look at its source code, to get an idea of what is possible.
 -}
 default : Generator
 default =
-    all
-        [ jsonDecoder
-        , recordUpdate <|
-            all
-                [ value
-                , field
-                ]
-        , record <|
-            all
-                [ value
-                , todo
-                ]
-        , value
-        , constructor
-        , field
-        , accessor
-        , tuple
-            { first =
+    firstN 42 <|
+        all
+            [ jsonDecoder
+            , recordUpdate <|
                 all
-                    [ recordUpdate value
-                    , value
-                    , call [ value ]
+                    [ value
+                    , field
                     ]
-            , second =
+            , record <|
                 all
-                    [ recordUpdate value
-                    , value
-                    , call [ value ]
+                    [ value
+                    , todo
                     ]
-            }
-        , cases
-            { matched =
-                takeValues 1 <|
+            , value
+            , constructor
+            , field
+            , accessor
+            , tuple
+                { first =
                     all
-                        [ value
-                        , field
-                        , tuple
-                            { first = value
+                        [ recordUpdate value
+                        , value
+                        , call [ value ]
+                        ]
+                , second =
+                    all
+                        [ recordUpdate value
+                        , value
+                        , call [ value ]
+                        ]
+                }
+            , cases
+                { matched =
+                    takeValues 1 <|
+                        all
+                            [ value
+                            , field
+                            , tuple
+                                { first = value
+                                , second = value
+                                }
+                            ]
+                , branch =
+                    \_ ->
+                        first <|
+                            all
+                                [ tuple
+                                    { first =
+                                        all
+                                            [ todo
+                                            , value
+                                            ]
+                                    , second =
+                                        all
+                                            [ value
+                                            , call [ value ]
+                                            ]
+                                    }
+                                , value
+                                ]
+                }
+            , cases
+                { matched =
+                    takeValues 1 <|
+                        all
+                            [ value
+                            , field
+                            ]
+                , branch =
+                    \_ ->
+                        tuple
+                            { first = todo
                             , second = value
                             }
-                        ]
-            , branch =
-                \_ ->
-                    first <|
+                }
+            , cases
+                { matched =
+                    takeValues 1 <|
                         all
-                            [ tuple
-                                { first =
-                                    all
-                                        [ todo
-                                        , value
-                                        ]
-                                , second =
-                                    all
-                                        [ value
-                                        , call [ value ]
-                                        ]
-                                }
-                            , value
+                            [ value
+                            , field
                             ]
-            }
-        , cases
-            { matched =
-                takeValues 1 <|
-                    all
-                        [ value
-                        , field
-                        ]
-            , branch =
-                \_ ->
-                    tuple
-                        { first = todo
-                        , second = value
-                        }
-            }
-        , cases
-            { matched =
-                takeValues 1 <|
-                    all
-                        [ value
-                        , field
-                        ]
-            , branch =
-                \_ ->
-                    todo
-            }
-        , call
-            [ all
-                [ value
-                , field
-                , accessor
+                , branch =
+                    \_ ->
+                        todo
+                }
+            , call
+                [ all
+                    [ value
+                    , field
+                    , accessor
+                    ]
+                ]
+            , call
+                [ all
+                    [ value
+                    , field
+                    , accessor
+                    ]
+                , all
+                    [ value
+                    , field
+                    , accessor
+                    ]
                 ]
             ]
-        , call
-            [ all
-                [ value
-                , field
-                , accessor
-                ]
-            , all
-                [ value
-                , field
-                , accessor
-                ]
-            ]
-        ]
 
 
 {-| If your `Generator` should potentially output case expression, you have to
@@ -249,39 +261,14 @@ add known custom types to it. For example
                 ]
 
 -}
-addTypes : Dict String Type -> Generator -> Generator
-addTypes newTypes (Generator stuff) =
+addUnions : List Union -> Generator -> Generator
+addUnions newUnions (Generator stuff) =
     Generator
         { stuff
             | generate =
                 \config ->
                     stuff.generate
-                        { config | types = Dict.union newTypes config.types }
-        }
-
-
-addConstructors : Dict String Constructor -> Generator -> Generator
-addConstructors newConstructors (Generator stuff) =
-    Generator
-        { stuff
-            | generate =
-                \config ->
-                    stuff.generate
-                        { config
-                            | constructors =
-                                Dict.union newConstructors config.constructors
-                        }
-        }
-
-
-addAliases : Dict String Alias -> Generator -> Generator
-addAliases newAliases (Generator stuff) =
-    Generator
-        { stuff
-            | generate =
-                \config ->
-                    stuff.generate
-                        { config | aliases = Dict.union newAliases config.aliases }
+                        { config | unions = newUnions ++ config.unions }
         }
 
 
@@ -312,9 +299,7 @@ for targetType (Generator stuff) =
         (stuff.generate
             { targetTypeVars = Can.freeTypeVars targetType
             , isRoot = True
-            , types = Dict.empty
-            , constructors = Dict.empty
-            , aliases = Dict.empty
+            , unions = []
             , values = stuff.transform []
             }
             targetType
@@ -666,45 +651,35 @@ cases generator =
                         generator.matched
 
                     exprs =
-                        config.types
-                            |> Dict.toList
+                        config.unions
                             |> BranchedState.traverse generateMatched
                             |> BranchedState.andThen generateCase
 
-                    generateMatched ( name, tipe ) =
-                        BranchedState.map (Tuple.pair tipe.tags) <|
+                    generateMatched union =
+                        BranchedState.map (Tuple.pair union.constructors) <|
                             stuffMatched.generate
                                 { config
                                     | values = stuffMatched.transform config.values
                                 }
-                                (Can.Type tipe.moduleName
-                                    name
-                                    (List.map Can.Var tipe.vars)
-                                )
+                                union.tipe
 
-                    generateCase ( tags, matched ) =
-                        tags
+                    generateCase ( constructors, matched ) =
+                        constructors
                             |> BranchedState.combine generateBranch
                             |> BranchedState.map (Case matched)
 
-                    generateBranch tag =
-                        case Dict.get tag config.constructors of
-                            Nothing ->
-                                BranchedState.state []
+                    generateBranch { tag, types } =
+                        BranchedState.map (Tuple.pair (branch tag types)) <|
+                            run (generator.branch (toNewValues types))
+                                { config | isRoot = False }
+                                targetType
 
-                            Just { args } ->
-                                BranchedState.map (Tuple.pair (branch tag args)) <|
-                                    run (generator.branch (toNewValues args))
-                                        { config | isRoot = False }
-                                        targetType
-
-                    branch name subTypes =
-                        if List.isEmpty subTypes then
-                            name
+                    branch tag types =
+                        if List.isEmpty types then
+                            tag
 
                         else
-                            String.join " "
-                                (name :: List.map newValueFromType subTypes)
+                            String.join " " (tag :: List.map newValueFromType types)
 
                     toNewValues types =
                         types
@@ -808,38 +783,34 @@ customDecoder ({ unwrap, wrap, toCall, toInit } as customization) =
             \config targetType ->
                 case unwrap targetType of
                     Just decoded ->
-                        case decoded of
-                            Can.Record fields Nothing ->
-                                let
-                                    generateField ( fieldName, fieldType ) =
-                                        wrap fieldType
-                                            |> run (customDecoder customization)
-                                                config
-                                            |> BranchedState.map (toCall fieldName)
-
-                                    maybeRecordName =
-                                        config.aliases
-                                            |> Dict.toList
-                                            |> List.filterMap
-                                                (\( name, alias_ ) ->
-                                                    if alias_.tipe == decoded then
-                                                        Just name
-
-                                                    else
-                                                        Nothing
-                                                )
-                                            |> List.head
-                                in
-                                case maybeRecordName of
-                                    Nothing ->
-                                        BranchedState.state []
-
-                                    Just recordName ->
-                                        BranchedState.combine generateField fields
-                                            |> BranchedState.map (toInit recordName)
-
-                            tipe ->
-                                run value config targetType
+                        --case decoded of
+                        --    Can.Record fields Nothing ->
+                        --        let
+                        --            generateField ( fieldName, fieldType ) =
+                        --                wrap fieldType
+                        --                    |> run (customDecoder customization) config
+                        --                    |> BranchedState.map (toCall fieldName)
+                        --            maybeRecordName =
+                        --                config.aliases
+                        --                    |> Dict.toList
+                        --                    |> List.filterMap
+                        --                        (\( name, alias_ ) ->
+                        --                            if alias_.tipe == decoded then
+                        --                                Just name
+                        --                            else
+                        --                                Nothing
+                        --                        )
+                        --                    |> List.head
+                        --        in
+                        --        case maybeRecordName of
+                        --            Nothing ->
+                        --                BranchedState.state []
+                        --            Just recordName ->
+                        --                BranchedState.combine generateField fields
+                        --                    |> BranchedState.map (toInit recordName)
+                        --    tipe ->
+                        --        run value config targetType
+                        BranchedState.state []
 
                     Nothing ->
                         BranchedState.state []

@@ -1,6 +1,5 @@
 module Fixtures.Main exposing
-    ( exposedAliases
-    , exposedConstructors
+    ( exposedConstructors
     , exposedTypes
     , exposedValues
     , src
@@ -12,17 +11,12 @@ import Set exposing (Set)
 
 exposedTypes : Set String
 exposedTypes =
-    Set.fromList []
-
-
-exposedAliases : Set String
-exposedAliases =
-    Set.empty
+    Set.fromList [ "Model" ]
 
 
 exposedConstructors : Set String
 exposedConstructors =
-    Set.empty
+    Set.fromList [ "Model" ]
 
 
 exposedValues : Set String
@@ -38,11 +32,18 @@ values =
 src : String
 src =
     """
-module Main exposing ()
+module Main exposing (Model)
+
+
+type alias User =
+    { name : String
+    , age : Int
+    }
 
 
 type alias Model =
-    {}
+    { users : List User
+    }
 
 
 type Msg
