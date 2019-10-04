@@ -1,7 +1,8 @@
 module Fixtures.String exposing (src)
 
 
-src = """module String exposing
+src =
+    """module String exposing
   ( String
   , isEmpty, length, reverse, repeat, replace
   , append, concat, split, join, words, lines
@@ -59,8 +60,9 @@ import Result exposing (Result)
     "How are you?"
     "🙈🙉🙊"
     -- strings with escape characters
-    "this\n\t\"that\""
-    "\u{1F648}\u{1F649}\u{1F64A}" -- "🙈🙉🙊"
+    "this
+\t"that""
+    "🙈🙉🙊" -- "🙈🙉🙊"
     -- multiline strings
 A `String` can represent any sequence of [unicode characters][u]. You can use
 the unicode escapes from `\u{0000}` to `\u{10FFFF}` to represent characters
@@ -172,7 +174,8 @@ join sep chunks =
 
 
 {-| Break a string into words, splitting on chunks of whitespace.
-    words "How are \t you? \n Good?" == ["How","are","you?","Good?"]
+    words "How are \t you?
+ Good?" == ["How","are","you?","Good?"]
 -}
 words : String -> List String
 words =
@@ -180,7 +183,8 @@ words =
 
 
 {-| Break a string into lines, splitting on newlines.
-    lines "How are you?\nGood?" == ["How are you?", "Good?"]
+    lines "How are you?
+Good?" == ["How are you?", "Good?"]
 -}
 lines : String -> List String
 lines =
@@ -351,7 +355,8 @@ padRight n char string =
 
 
 {-| Get rid of whitespace on both sides of a string.
-    trim "  hats  \n" == "hats"
+    trim "  hats
+" == "hats"
 -}
 trim : String -> String
 trim =
@@ -359,7 +364,9 @@ trim =
 
 
 {-| Get rid of whitespace on the left of a string.
-    trimLeft "  hats  \n" == "hats  \n"
+    trimLeft "  hats
+" == "hats
+"
 -}
 trimLeft : String -> String
 trimLeft =
@@ -367,7 +374,8 @@ trimLeft =
 
 
 {-| Get rid of whitespace on the right of a string.
-    trimRight "  hats  \n" == "  hats"
+    trimRight "  hats
+" == "  hats"
 -}
 trimRight : String -> String
 trimRight =
